@@ -10,6 +10,16 @@ files:
   # List committed files that shouldn't be judged (lock files, generated output).
   exclude:
     - "**/.git/**"
+    # Lockfiles: resolver output, not authored text.
+    - "Cargo.lock"
+    - "bun.lock"
+    # Verbatim copies of the create-repo skill's scripts, which its --ci-cd step writes and
+    # its baseline checker holds to the skill's copy; findings there belong to the skill.
+    - "scripts/actions-budget-figures.sh"
+    - "scripts/actions-cache-prune.mjs"
+    - "scripts/gate-time-budget.mjs"
+    - "scripts/nx-remote-cache.mjs"
+    - "scripts/nx-version-free-inputs.mjs"
 rationales: true
 # No `agents` block: the harness/model are NOT pinned here. `oneharness.toml`
 # (composed alongside this file) selects them in fallback mode — codex + gpt-5.5

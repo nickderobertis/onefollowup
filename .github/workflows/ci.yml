@@ -85,7 +85,7 @@ jobs:
           cache-save-if: false
       - uses: taiki-e/install-action@v2
         with:
-          tool: cargo-deny@${{ steps.pins.outputs.cargo-deny }},cargo-hack@${{ steps.pins.outputs.cargo-hack }}
+          tool: cargo-deny@${{ steps.pins.outputs.cargo-deny }},cargo-hack@${{ steps.pins.outputs.cargo-hack }},cargo-machete@${{ steps.pins.outputs.cargo-machete }}
       - name: Decide cache trust and configure the sidecar
         id: nx-cache-trust
         shell: bash
@@ -192,6 +192,11 @@ jobs:
         with:
           cache-shared-key: test-linux
           cache-save-if: false
+      # The crate's `test` target measures coverage with cargo-llvm-cov over nextest, and the
+      # e2e crate's `e2e` target runs under nextest.
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov@${{ steps.pins.outputs.cargo-llvm-cov }},cargo-nextest@${{ steps.pins.outputs.cargo-nextest }}
       - name: Decide cache trust and configure the sidecar
         id: nx-cache-trust
         shell: bash
@@ -282,6 +287,11 @@ jobs:
         with:
           cache-shared-key: test-windows
           cache-save-if: false
+      # The crate's `test` target measures coverage with cargo-llvm-cov over nextest, and the
+      # e2e crate's `e2e` target runs under nextest.
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov@${{ steps.pins.outputs.cargo-llvm-cov }},cargo-nextest@${{ steps.pins.outputs.cargo-nextest }}
       - name: Decide cache trust and configure the sidecar
         id: nx-cache-trust
         shell: bash
@@ -362,6 +372,11 @@ jobs:
         with:
           cache-shared-key: test-macos
           cache-save-if: false
+      # The crate's `test` target measures coverage with cargo-llvm-cov over nextest, and the
+      # e2e crate's `e2e` target runs under nextest.
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov@${{ steps.pins.outputs.cargo-llvm-cov }},cargo-nextest@${{ steps.pins.outputs.cargo-nextest }}
       - name: Decide cache trust and configure the sidecar
         id: nx-cache-trust
         shell: bash

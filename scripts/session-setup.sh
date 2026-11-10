@@ -14,7 +14,7 @@
 #   2. Verifies the rest of the toolchain and logs an actionable pointer for
 #      anything missing rather than attempting an install a startup hook can't do
 #      reliably — edit the `verify_prereqs` list to your stack's tools.
-#   3. Hands off to the optional llmlint-tier installer (setup-llmlint.sh) if you
+#   3. Hands off to the optional installer of the llmlint tier (setup-llmlint.sh) if you
 #      bundle one, kept separate so `just setup-llmlint` can run it standalone.
 #
 # CI provisions the toolchain itself (asdf/.tool-versions, setup-* actions), so
@@ -83,7 +83,7 @@ ensure_just
 verify_prereqs
 persist_session_env
 
-# Hand off to the optional llmlint-tier installer beside this script, if present.
+# Hand off to the optional installer of the llmlint tier beside this script, if present.
 setup_llmlint="$(dirname "$0")/setup-llmlint.sh"
 if [ -x "$setup_llmlint" ]; then
   log "running setup-llmlint.sh"

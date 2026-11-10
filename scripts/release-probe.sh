@@ -21,10 +21,13 @@
 #
 # Called as a direct subprocess with no shell interposed, from the repository
 # root, with an environment carrying only PATH and HOME (and their two Windows
-# equivalents). It therefore takes no credential and reads no variable of its
-# own: every artifact this repository publishes is on a public registry, so an
-# unauthenticated read is all it needs and all it may need. Nor can anything in
-# that environment change an answer: curl runs with `--disable`, so a `.curlrc`
+# equivalents). It therefore takes no credential: every artifact this repository
+# publishes is on a public registry, so an unauthenticated read is all it needs and
+# all it may need. The one variables it reads are where each registry's API is
+# (RELEASE_PROBE_CRATES_API, RELEASE_PROBE_PYPI_API, RELEASE_PROBE_NPM_REGISTRY),
+# unset in that environment and so the public registries; npm/test/release-probe.test.mjs
+# points them at a loopback registry to drive every answer below. Nothing else in
+# the environment can change an answer: curl runs with `--disable`, so a `.curlrc`
 # under HOME cannot turn a "no release yet" into a "not answered". It must answer
 # well inside sixty seconds, which is what the timeouts below are sized for.
 #
@@ -111,18 +114,8 @@ fetch() {
     printf '%s' "$status"
     return 0
   fi
-  # llmlint: ignore-block[changed_behavior_has_e2e] reaching this needs the
-  # registry to be unreachable while the probe runs, and the only way to arrange
-  # that is to put a fake curl or a fake registry in front of the script — at
-  # which point the fake is what is under test, and a fake is exactly what cannot
-  # tell you that crates.io moved. `release.yml` and `published-smoke.yml` carry
-  # the same exclusion for the same reason. What this branch is *for* — never
-  # letting a failure read as an empty answer — is proven end to end by
-  # npm/test/release-probe.test.mjs, over every route to it that does not require
-  # the registry to misbehave.
   not_answered "could not reach $url: $(tr -d '\r\n' <"$curl_err")" \
     "check network access to the registry, then re-run; this is NOT evidence that nothing is published"
-  # llmlint: ignore-end[changed_behavior_has_e2e]
 }
 
 # The value of a `"key": "value"` pair that occurs exactly once in `$2`.
@@ -154,9 +147,9 @@ case "$registry" in
   # crates.io's own summary of the crate, which is where "what a `cargo add`
   # resolves" is stated rather than inferred: the sparse index lists every
   # version in publish order, which is not the same question.
-  crate) url="https://crates.io/api/v1/crates/$name" ;;
-  pypi) url="https://pypi.org/pypi/$name/json" ;;
-  npm) url="https://registry.npmjs.org/$name" ;;
+  crate) url="${RELEASE_PROBE_CRATES_API:-https://crates.io/api/v1/crates}/$name" ;;
+  pypi) url="${RELEASE_PROBE_PYPI_API:-https://pypi.org/pypi}/$name/json" ;;
+  npm) url="${RELEASE_PROBE_NPM_REGISTRY:-https://registry.npmjs.org}/$name" ;;
   *)
     not_answered "unknown registry '$registry' in '$identifier'" \
       "qualify the name with one of: crate, pypi, npm"
@@ -173,13 +166,8 @@ case "$status" in
   # how a released artifact ends up reading as unreleased.
   404) exit 0 ;;
   *)
-    # llmlint: ignore-block[changed_behavior_has_e2e] the same exclusion the retry
-    # branch above carries: a status that is neither 200 nor 404 is a rate limit
-    # or an outage at a public registry, which cannot be arranged from a test
-    # without standing a fake registry in front of the script.
     not_answered "$url answered HTTP $status" \
       "re-run in a moment — a rate limit or an outage is not evidence that nothing is published"
-    # llmlint: ignore-end[changed_behavior_has_e2e]
     ;;
 esac
 
@@ -209,15 +197,8 @@ case "$registry" in
 esac
 
 if [ -z "${version:-}" ]; then
-  # llmlint: ignore-block[changed_behavior_has_e2e] reaching this needs a registry
-  # to answer 200 with a document this cannot read — a shape change at crates.io,
-  # PyPI or npm. A fixture asserting it would be a fixture asserting itself: the
-  # thing this guards against is precisely the shape nobody has seen yet. The live
-  # tier proves the readers against the real documents on every run, which is what
-  # turns this branch from a guess into a tripwire.
   not_answered "$url answered, but no version could be read from it unambiguously" \
     "the registry's response shape changed — fix the reader in this script; a released artifact must never read as unreleased"
-  # llmlint: ignore-end[changed_behavior_has_e2e]
 fi
 
 printf '%s\n' "$version"

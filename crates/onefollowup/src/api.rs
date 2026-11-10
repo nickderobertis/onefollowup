@@ -444,8 +444,20 @@ pub struct KindShown {
     pub destination: String,
     /// The dispositions its inputs may be given.
     pub dispositions: Vec<String>,
-    /// Where `dispositions` came from: `kind`, `default_dispositions` or `catalogue`.
-    pub dispositions_from: &'static str,
+    /// Where `dispositions` came from.
+    pub dispositions_from: DispositionsFrom,
+}
+
+/// Where a kind's allowed dispositions came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DispositionsFrom {
+    /// The kind's own `dispositions`.
+    Kind,
+    /// The top-level `default_dispositions`.
+    DefaultDispositions,
+    /// Neither, so every catalogued disposition.
+    Catalogue,
 }
 
 /// The shipped ticket template's name.
@@ -469,9 +481,9 @@ pub fn kinds(settings: &Settings, _args: NoArgs) -> Result<KindsShown, Error> {
         .iter()
         .map(|kind| {
             let (dispositions, from) = match (&kind.dispositions, &config.default_dispositions) {
-                (Some(own), _) => (own.clone(), "kind"),
-                (None, Some(defaults)) => (defaults.clone(), "default_dispositions"),
-                (None, None) => (catalogue.clone(), "catalogue"),
+                (Some(own), _) => (own.clone(), DispositionsFrom::Kind),
+                (None, Some(defaults)) => (defaults.clone(), DispositionsFrom::DefaultDispositions),
+                (None, None) => (catalogue.clone(), DispositionsFrom::Catalogue),
             };
             KindShown {
                 name: kind.name.clone(),

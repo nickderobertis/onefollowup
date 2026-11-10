@@ -253,5 +253,5 @@ the batch id stands where they say `run`.
 
 ## Development
 
-`just bootstrap` from a clean clone, then `just check` (the deterministic gate) — see
-[AGENTS.md](AGENTS.md) and `just --list`.
+`just bootstrap` from a clean clone, then `just check`, the deterministic gate; `just --list`
+names every recipe.

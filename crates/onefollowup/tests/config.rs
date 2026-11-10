@@ -377,7 +377,10 @@ hooks: {{batch_preparing: [inputs, --json], batch_settled: [notify]}}
     assert_eq!(&reread, settings.config());
     let kinds = onefollowup::api::kinds(&settings, onefollowup::api::NoArgs {}).expect("kinds");
     assert_eq!(kinds.kinds[0].dispositions, ["filed", "wont-fix"]);
-    assert_eq!(kinds.kinds[0].dispositions_from, "default_dispositions");
+    assert_eq!(
+        kinds.kinds[0].dispositions_from,
+        onefollowup::api::DispositionsFrom::DefaultDispositions
+    );
     assert_eq!(settings.config().relations.len(), 2);
     assert_eq!(
         settings.config().routes[0].set.assignee.as_deref(),

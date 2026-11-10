@@ -17,6 +17,8 @@ use crate::config::{
     Settings, StatusRole,
 };
 use crate::error::Error;
+use crate::formats::HeldPriority;
+use crate::formats::outbox::StagedWrite;
 
 /// The version of every JSON document a verb prints.
 pub const SCHEMA_VERSION: u32 = 1;
@@ -33,9 +35,305 @@ fn key_value(text: &str) -> Result<String, String> {
     }
 }
 
-/// A JSON document a verb prints whose shape lands with the verb's implementation.
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct Report(pub serde_json::Value);
+/// The status an item holds: the store's category and the destination's own name for it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ItemStatus {
+    /// The store status category.
+    pub category: String,
+    /// The destination's own name for it.
+    pub name: String,
+}
+
+/// What `draft` recorded.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Drafted {
+    /// [`SCHEMA_VERSION`].
+    pub schema_version: u32,
+    /// The batch.
+    pub batch: String,
+    /// The draft, as the store qualifies it.
+    pub draft: String,
+    /// The draft's file.
+    pub path: PathBuf,
+}
+
+/// What `ticket validate` found.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct TicketValidated {
+    /// [`SCHEMA_VERSION`].
+    pub schema_version: u32,
+    /// The batch.
+    pub batch: String,
+    /// The ticket.
+    pub ticket: String,
+    /// Whether it breaks no rule.
+    pub sound: bool,
+    /// Each rule it breaks.
+    pub problems: Vec<String>,
+}
+
+/// One comment on a destination item.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct BoardComment {
+    /// The comment's id.
+    pub id: String,
+    /// Its author, when the destination names one.
+    pub author: Option<String>,
+    /// Its URL.
+    pub url: Option<String>,
+    /// When it last changed.
+    pub last_changed: String,
+    /// Its text.
+    pub body: String,
+}
+
+/// What `ticket board-status` read of one item.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct BoardStatus {
+    /// [`SCHEMA_VERSION`].
+    pub schema_version: u32,
+    /// The batch.
+    pub batch: String,
+    /// The item, qualified.
+    pub item: String,
+    /// Its title.
+    pub title: String,
+    /// Its status.
+    pub status: Option<ItemStatus>,
+    /// Its priority.
+    pub priority: HeldPriority,
+    /// Its version.
+    pub version: Option<String>,
+    /// Its URL.
+    pub url: Option<String>,
+    /// Its comments.
+    pub comments: Vec<BoardComment>,
+}
+
+/// One item a search found.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SearchHit {
+    /// The item, qualified.
+    pub item: String,
+    /// Its title.
+    pub title: String,
+    /// Its status.
+    pub status: Option<ItemStatus>,
+    /// Its URL.
+    pub url: Option<String>,
+}
+
+/// What `ticket search` found.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SearchResults {
+    /// [`SCHEMA_VERSION`].
+    pub schema_version: u32,
+    /// The batch.
+    pub batch: String,
+    /// The ticket the question is for.
+    pub ticket: String,
+    /// The question.
+    pub query: String,
+    /// What it found.
+    pub hits: Vec<SearchHit>,
+}
+
+/// What `ticket copy|comment|re-estimate|relate` staged.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Staged {
+    /// [`SCHEMA_VERSION`].
+    pub schema_version: u32,
+    /// The batch.
+    pub batch: String,
+    /// The write's position in the batch's outbox.
+    pub index: usize,
+    /// The outbox entry staged.
+    pub write: StagedWrite,
+}
+
+/// One rule a batch breaks.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Problem {
+    /// What breaks it: an input, a ticket or a staged write.
+    pub subject: String,
+    /// The rule, and what to do.
+    pub message: String,
+}
+
+/// What `check` found.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Checked {
+    /// [`SCHEMA_VERSION`].
+    pub schema_version: u32,
+    /// The batch.
+    pub batch: String,
+    /// Whether the batch breaks no rule.
+    pub sound: bool,
+    /// Each rule it breaks.
+    pub problems: Vec<Problem>,
+}
+
+/// The operation of a staged write, as the outbox spells it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum StagedOp {
+    /// A ticket's copy.
+    Copy,
+    /// A comment.
+    Comment,
+    /// A re-estimate.
+    ReEstimate,
+    /// An edge.
+    Relate,
+}
+
+/// One staged write's outcome.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct PublishOutcome {
+    /// The write's position in the outbox.
+    pub index: usize,
+    /// What it was.
+    pub op: StagedOp,
+    /// The destination item written, qualified.
+    pub item: Option<String>,
+    /// The receipt's action, or the error's kind.
+    pub outcome: String,
+}
+
+/// What `publish` sent.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Published {
+    /// [`SCHEMA_VERSION`].
+    pub schema_version: u32,
+    /// The batch.
+    pub batch: String,
+    /// The receipt journal every outcome is in.
+    pub receipts: PathBuf,
+    /// Each staged write's outcome.
+    pub outcomes: Vec<PublishOutcome>,
+}
+
+/// A hook that ran.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct HookRun {
+    /// Its argv.
+    pub argv: Vec<String>,
+    /// Its exit code.
+    pub exit: i32,
+}
+
+/// What `settle` closed out.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Settled {
+    /// [`SCHEMA_VERSION`].
+    pub schema_version: u32,
+    /// The batch.
+    pub batch: String,
+    /// How many writes no answer confirmed, read back.
+    pub read_back: usize,
+    /// How many of those the read confirmed.
+    pub confirmed: usize,
+    /// The `batch_settled` hook, when one is configured.
+    pub hook: Option<HookRun>,
+    /// The working files retired.
+    pub retired: Vec<PathBuf>,
+}
+
+/// What `comments gather` gathered.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Gathered {
+    /// [`SCHEMA_VERSION`].
+    pub schema_version: u32,
+    /// The snapshot taken; `None` on a dry run.
+    pub snapshot: Option<PathBuf>,
+    /// Whether it was a dry run.
+    pub dry_run: bool,
+    /// How many items it read.
+    pub items: usize,
+    /// How many comments each batch is to answer.
+    pub selected: IndexMap<String, usize>,
+    /// How many comments or items it left out.
+    pub left: usize,
+}
+
+/// One answering dispatch a snapshot launches.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Launch {
+    /// The batch that answers.
+    pub batch: String,
+    /// Its feedback file.
+    pub feedback: PathBuf,
+}
+
+/// What `comments launches` planned.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Launches {
+    /// [`SCHEMA_VERSION`].
+    pub schema_version: u32,
+    /// The snapshot.
+    pub snapshot: PathBuf,
+    /// Each dispatch.
+    pub launches: Vec<Launch>,
+}
+
+/// What `comments check` found.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct CommentsChecked {
+    /// [`SCHEMA_VERSION`].
+    pub schema_version: u32,
+    /// The feedback file.
+    pub feedback: PathBuf,
+    /// Whether its responses break no rule.
+    pub sound: bool,
+    /// Each rule they break.
+    pub problems: Vec<String>,
+}
+
+/// One launched batch's settled answers.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SettledLaunch {
+    /// The batch.
+    pub batch: String,
+    /// Its feedback file.
+    pub feedback: PathBuf,
+    /// How many writes it made.
+    pub writes: usize,
+    /// How many writes are pending.
+    pub pending: usize,
+}
+
+/// What `comments settle` settled.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct CommentsSettled {
+    /// [`SCHEMA_VERSION`].
+    pub schema_version: u32,
+    /// The snapshot.
+    pub snapshot: PathBuf,
+    /// Each launched batch.
+    pub settled: Vec<SettledLaunch>,
+}
+
+/// One status role against the destination.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RoleStatus {
+    /// The role.
+    pub role: StatusRole,
+    /// The store category it maps to.
+    pub category: String,
+    /// The destination's own names for that category.
+    pub destination_names: Vec<String>,
+}
+
+/// What `statuses` read.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct StatusesShown {
+    /// [`SCHEMA_VERSION`].
+    pub schema_version: u32,
+    /// The destination read.
+    pub destination: String,
+    /// Each role.
+    pub roles: Vec<RoleStatus>,
+}
 
 /// `onefollowup draft`: record one draft. Its body is read from stdin.
 #[derive(Debug, Clone, PartialEq, Eq, Args)]
@@ -68,7 +366,7 @@ pub struct DraftArgs {
 /// # Errors
 ///
 /// [`Error::NotImplemented`] in this release.
-pub fn draft(_settings: &Settings, _args: DraftArgs) -> Result<Report, Error> {
+pub fn draft(_settings: &Settings, _args: DraftArgs) -> Result<Drafted, Error> {
     not_implemented("draft")
 }
 
@@ -129,7 +427,10 @@ pub struct TicketValidateArgs {
 /// # Errors
 ///
 /// [`Error::NotImplemented`] in this release.
-pub fn ticket_validate(_settings: &Settings, _args: TicketValidateArgs) -> Result<Report, Error> {
+pub fn ticket_validate(
+    _settings: &Settings,
+    _args: TicketValidateArgs,
+) -> Result<TicketValidated, Error> {
     not_implemented("ticket validate")
 }
 
@@ -152,7 +453,7 @@ pub struct TicketBoardStatusArgs {
 pub fn ticket_board_status(
     _settings: &Settings,
     _args: TicketBoardStatusArgs,
-) -> Result<Report, Error> {
+) -> Result<BoardStatus, Error> {
     not_implemented("ticket board-status")
 }
 
@@ -175,7 +476,10 @@ pub struct TicketSearchArgs {
 /// # Errors
 ///
 /// [`Error::NotImplemented`] in this release.
-pub fn ticket_search(_settings: &Settings, _args: TicketSearchArgs) -> Result<Report, Error> {
+pub fn ticket_search(
+    _settings: &Settings,
+    _args: TicketSearchArgs,
+) -> Result<SearchResults, Error> {
     not_implemented("ticket search")
 }
 
@@ -195,7 +499,7 @@ pub struct TicketCopyArgs {
 /// # Errors
 ///
 /// [`Error::NotImplemented`] in this release.
-pub fn ticket_copy(_settings: &Settings, _args: TicketCopyArgs) -> Result<Report, Error> {
+pub fn ticket_copy(_settings: &Settings, _args: TicketCopyArgs) -> Result<Staged, Error> {
     not_implemented("ticket copy")
 }
 
@@ -222,7 +526,7 @@ pub struct TicketCommentArgs {
 /// # Errors
 ///
 /// [`Error::NotImplemented`] in this release.
-pub fn ticket_comment(_settings: &Settings, _args: TicketCommentArgs) -> Result<Report, Error> {
+pub fn ticket_comment(_settings: &Settings, _args: TicketCommentArgs) -> Result<Staged, Error> {
     not_implemented("ticket comment")
 }
 
@@ -245,7 +549,7 @@ pub struct TicketReEstimateArgs {
 pub fn ticket_re_estimate(
     _settings: &Settings,
     _args: TicketReEstimateArgs,
-) -> Result<Report, Error> {
+) -> Result<Staged, Error> {
     not_implemented("ticket re-estimate")
 }
 
@@ -271,7 +575,7 @@ pub struct TicketRelateArgs {
 /// # Errors
 ///
 /// [`Error::NotImplemented`] in this release.
-pub fn ticket_relate(_settings: &Settings, _args: TicketRelateArgs) -> Result<Report, Error> {
+pub fn ticket_relate(_settings: &Settings, _args: TicketRelateArgs) -> Result<Staged, Error> {
     not_implemented("ticket relate")
 }
 
@@ -288,7 +592,7 @@ pub struct BatchArgs {
 /// # Errors
 ///
 /// [`Error::NotImplemented`] in this release.
-pub fn check(_settings: &Settings, _args: BatchArgs) -> Result<Report, Error> {
+pub fn check(_settings: &Settings, _args: BatchArgs) -> Result<Checked, Error> {
     not_implemented("check")
 }
 
@@ -297,7 +601,7 @@ pub fn check(_settings: &Settings, _args: BatchArgs) -> Result<Report, Error> {
 /// # Errors
 ///
 /// [`Error::NotImplemented`] in this release.
-pub fn publish(_settings: &Settings, _args: BatchArgs) -> Result<Report, Error> {
+pub fn publish(_settings: &Settings, _args: BatchArgs) -> Result<Published, Error> {
     not_implemented("publish")
 }
 
@@ -306,7 +610,7 @@ pub fn publish(_settings: &Settings, _args: BatchArgs) -> Result<Report, Error> 
 /// # Errors
 ///
 /// [`Error::NotImplemented`] in this release.
-pub fn settle(_settings: &Settings, _args: BatchArgs) -> Result<Report, Error> {
+pub fn settle(_settings: &Settings, _args: BatchArgs) -> Result<Settled, Error> {
     not_implemented("settle")
 }
 
@@ -330,7 +634,7 @@ pub struct CommentsGatherArgs {
 /// # Errors
 ///
 /// [`Error::NotImplemented`] in this release.
-pub fn comments_gather(_settings: &Settings, _args: CommentsGatherArgs) -> Result<Report, Error> {
+pub fn comments_gather(_settings: &Settings, _args: CommentsGatherArgs) -> Result<Gathered, Error> {
     not_implemented("comments gather")
 }
 
@@ -350,7 +654,7 @@ pub struct CommentsLaunchesArgs {
 pub fn comments_launches(
     _settings: &Settings,
     _args: CommentsLaunchesArgs,
-) -> Result<Report, Error> {
+) -> Result<Launches, Error> {
     not_implemented("comments launches")
 }
 
@@ -367,7 +671,10 @@ pub struct CommentsCheckArgs {
 /// # Errors
 ///
 /// [`Error::NotImplemented`] in this release.
-pub fn comments_check(_settings: &Settings, _args: CommentsCheckArgs) -> Result<Report, Error> {
+pub fn comments_check(
+    _settings: &Settings,
+    _args: CommentsCheckArgs,
+) -> Result<CommentsChecked, Error> {
     not_implemented("comments check")
 }
 
@@ -387,7 +694,10 @@ pub struct CommentsSettleArgs {
 /// # Errors
 ///
 /// [`Error::NotImplemented`] in this release.
-pub fn comments_settle(_settings: &Settings, _args: CommentsSettleArgs) -> Result<Report, Error> {
+pub fn comments_settle(
+    _settings: &Settings,
+    _args: CommentsSettleArgs,
+) -> Result<CommentsSettled, Error> {
     not_implemented("comments settle")
 }
 
@@ -400,7 +710,7 @@ pub struct NoArgs {}
 /// # Errors
 ///
 /// [`Error::NotImplemented`] in this release.
-pub fn statuses(_settings: &Settings, _args: NoArgs) -> Result<Report, Error> {
+pub fn statuses(_settings: &Settings, _args: NoArgs) -> Result<StatusesShown, Error> {
     not_implemented("statuses")
 }
 

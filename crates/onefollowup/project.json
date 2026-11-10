@@ -15,7 +15,7 @@
     "test": {
       "command": "bash scripts/crate-test.sh",
       "options": { "cwd": "{workspaceRoot}" },
-      "inputs": ["testInputs", "{workspaceRoot}/scripts/crate-test.sh"],
+      "inputs": ["testInputs", "{workspaceRoot}/scripts/crate-test.sh", "{workspaceRoot}/README.md"],
       "cache": true
     },
     "test-compile": {

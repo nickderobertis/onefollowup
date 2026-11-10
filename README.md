@@ -55,6 +55,297 @@ Every verb prints a JSON document on success. Exit codes: **0** success; **1** f
 running; **2** refused — a usage error, a refused configuration, or a verb not implemented
 in this release.
 
+### Results
+
+Each verb's result is one typed document of the library (`onefollowup::api`), stated here
+once by example; `tests/contract.rs` holds every example to the library's type, so the two
+cannot drift. A field shown `null`-able in the type (`status`, `version`, `url`, `author`,
+`item`, `hook`, a dry run's `snapshot`) is `null` when there is none. Every document carries
+`schema_version` 1. The nodes that implement a verb may add optional fields; changing a
+field declared here is a contract change agreed with the manager first. `kinds` and
+`config show` print the documents the configuration section describes.
+
+#### `check`
+
+```json
+{
+  "schema_version": 1,
+  "batch": "nightly-2026-11-01",
+  "sound": false,
+  "problems": [
+    {
+      "subject": "drafts:nightly-2026-11-01/drafts/20261101T102500Z-flaky-resize-test",
+      "message": "the input has no disposition; give it exactly one"
+    }
+  ]
+}
+```
+
+#### `comments check`
+
+```json
+{
+  "schema_version": 1,
+  "feedback": "feedback/nightly-2026-11-01/20261101T120000Z.md",
+  "sound": true,
+  "problems": []
+}
+```
+
+#### `comments gather`
+
+```json
+{
+  "schema_version": 1,
+  "snapshot": "feedback/.snapshots/20261101T120000Z",
+  "dry_run": false,
+  "items": 3,
+  "selected": {
+    "nightly-2026-11-01": 2
+  },
+  "left": 1
+}
+```
+
+#### `comments launches`
+
+```json
+{
+  "schema_version": 1,
+  "snapshot": "feedback/.snapshots/20261101T120000Z",
+  "launches": [
+    {
+      "batch": "nightly-2026-11-01",
+      "feedback": "feedback/nightly-2026-11-01/20261101T120000Z.md"
+    }
+  ]
+}
+```
+
+#### `comments settle`
+
+```json
+{
+  "schema_version": 1,
+  "snapshot": "feedback/.snapshots/20261101T120000Z",
+  "settled": [
+    {
+      "batch": "nightly-2026-11-01",
+      "feedback": "feedback/nightly-2026-11-01/20261101T120000Z.md",
+      "writes": 2,
+      "pending": 0
+    }
+  ]
+}
+```
+
+#### `draft`
+
+```json
+{
+  "schema_version": 1,
+  "batch": "nightly-2026-11-01",
+  "draft": "drafts:nightly-2026-11-01/drafts/20261101T101500Z-layout-save-loses-resize",
+  "path": ".follow-ups/tasks/nightly-2026-11-01/drafts/20261101T101500Z-layout-save-loses-resize.md"
+}
+```
+
+#### `prepare`
+
+```json
+{
+  "schema_version": 1,
+  "batch": "nightly-2026-11-01",
+  "drafts": 3,
+  "inputs": 1,
+  "answers": "dispositions/nightly-2026-11-01.json",
+  "task_template": "tasks/nightly-2026-11-01/task.md"
+}
+```
+
+#### `publish`
+
+```json
+{
+  "schema_version": 1,
+  "batch": "nightly-2026-11-01",
+  "receipts": "receipts/nightly-2026-11-01.jsonl",
+  "outcomes": [
+    {
+      "index": 0,
+      "op": "copy",
+      "item": "followups:item-42",
+      "outcome": "created"
+    }
+  ]
+}
+```
+
+#### `settle`
+
+```json
+{
+  "schema_version": 1,
+  "batch": "nightly-2026-11-01",
+  "read_back": 1,
+  "confirmed": 1,
+  "hook": {
+    "argv": [
+      "notify",
+      "--batch-settled"
+    ],
+    "exit": 0
+  },
+  "retired": [
+    "outbox/nightly-2026-11-01.json"
+  ]
+}
+```
+
+#### `statuses`
+
+```json
+{
+  "schema_version": 1,
+  "destination": "followups",
+  "roles": [
+    {
+      "role": "proposal",
+      "category": "backlog",
+      "destination_names": [
+        "Proposal"
+      ]
+    }
+  ]
+}
+```
+
+#### `ticket board-status`
+
+```json
+{
+  "schema_version": 1,
+  "batch": "nightly-2026-11-01",
+  "item": "followups:item-42",
+  "title": "widgets: a layout save reads one window size",
+  "status": {
+    "category": "backlog",
+    "name": "Proposal"
+  },
+  "priority": "high",
+  "version": "2026-11-01T11:59:58Z",
+  "url": "https://github.com/example/widgets/issues/42",
+  "comments": [
+    {
+      "id": "IC_kwDOA1001",
+      "author": "alice",
+      "url": "https://github.com/example/widgets/issues/42#issuecomment-1001",
+      "last_changed": "2026-11-01T11:00:00Z",
+      "body": "Seen again after a resize."
+    }
+  ]
+}
+```
+
+#### `ticket comment`
+
+```json
+{
+  "schema_version": 1,
+  "batch": "nightly-2026-11-01",
+  "index": 1,
+  "write": {
+    "op": "comment",
+    "item": "followups:item-13",
+    "root_cause": "export-dialog-drops-unicode",
+    "body": "Additional evidence from follow-up run `nightly-2026-11-01`.\n\nSeen again.\n\n<!-- orchestrator:follow-up-comment run=\"nightly-2026-11-01\" root_cause=\"export-dialog-drops-unicode\" -->\n"
+  }
+}
+```
+
+#### `ticket copy`
+
+```json
+{
+  "schema_version": 1,
+  "batch": "nightly-2026-11-01",
+  "index": 0,
+  "write": {
+    "op": "copy",
+    "ticket": "drafts:nightly-2026-11-01/tickets/layout-save-reads-size-twice",
+    "destination": "followups"
+  }
+}
+```
+
+#### `ticket re-estimate`
+
+```json
+{
+  "schema_version": 1,
+  "batch": "nightly-2026-11-01",
+  "index": 2,
+  "write": {
+    "op": "re-estimate",
+    "item": "followups:item-13",
+    "priority_estimate": "high"
+  }
+}
+```
+
+#### `ticket relate`
+
+```json
+{
+  "schema_version": 1,
+  "batch": "nightly-2026-11-01",
+  "index": 3,
+  "write": {
+    "op": "relate",
+    "relation": "of-error",
+    "from": "drafts:nightly-2026-11-01/tickets/client-acme-e1042",
+    "to": "followups:item-7"
+  }
+}
+```
+
+#### `ticket search`
+
+```json
+{
+  "schema_version": 1,
+  "batch": "nightly-2026-11-01",
+  "ticket": "layout-save-reads-size-twice",
+  "query": "layout save window size",
+  "hits": [
+    {
+      "item": "followups:item-42",
+      "title": "widgets: a layout save reads one window size",
+      "status": {
+        "category": "backlog",
+        "name": "Proposal"
+      },
+      "url": "https://github.com/example/widgets/issues/42"
+    }
+  ]
+}
+```
+
+#### `ticket validate`
+
+```json
+{
+  "schema_version": 1,
+  "batch": "nightly-2026-11-01",
+  "ticket": "layout-save-reads-size-twice",
+  "sound": false,
+  "problems": [
+    "the ticket records the field `client`, which `fields` does not declare"
+  ]
+}
+```
+.
+
 ### As a library
 
 Each command is one function in `onefollowup::api`, taking the resolved settings and the

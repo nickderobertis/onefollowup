@@ -38,5 +38,7 @@ thiserror.workspace = true
 regex.workspace = true
 onetaskgraph-plugin-api.workspace = true
 schemars.workspace = true
+serde.workspace = true
+serde-saphyr.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true

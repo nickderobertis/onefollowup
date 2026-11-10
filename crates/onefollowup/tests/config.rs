@@ -31,21 +31,29 @@ fn refused(text: &str) -> (ConfigError, Origin) {
     (error, file_origin(&directory))
 }
 
-/// The configuration a refusal case starts from: two declared fields, kinds of both
-/// `duplicates` forms, so each case changes one thing.
-const BASE: &str = r"
-fields:
-  error_code: {description: The error's code.}
-  client: {description: The client's id.}
-kinds:
-  - {name: root-cause, description: One root cause.}
-  - {name: error, description: One error code., duplicates: {same: [error_code]}}
-  - {name: client-error, description: One client's error., duplicates: {same: [error_code, client]}}
-  - {name: incident, description: An incident., priority: {fixed: urgent}}
-";
+/// The refusal cases `tests/fixtures/config/refusals.yaml` holds, shared with the e2e suite.
+#[derive(serde::Deserialize)]
+struct Refusals {
+    base: String,
+    cases: Vec<Refusal>,
+}
 
-fn refused_over_base(extra: &str) -> (ConfigError, Origin) {
-    refused(&format!("{BASE}{extra}"))
+#[derive(serde::Deserialize)]
+struct Refusal {
+    #[serde(default)]
+    over_base: bool,
+    document: String,
+    key: String,
+    message: String,
+}
+
+fn refusals() -> Refusals {
+    let path = format!(
+        "{}/tests/fixtures/config/refusals.yaml",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    serde_saphyr::from_str(&std::fs::read_to_string(path).expect("the refusal cases"))
+        .expect("the refusal cases are YAML")
 }
 
 #[test]
@@ -149,6 +157,38 @@ fn a_file_overrides_what_it_states_and_leaves_the_rest_defaulted() {
         source("namespace"),
         Some(("namespace".to_owned(), Origin::Default))
     );
+}
+
+#[test]
+fn a_refusal_names_its_layer_in_words() {
+    let directory = tempfile::tempdir().expect("a temporary directory");
+    let mut inputs = inputs(directory.path());
+    inputs.environment = vec![("ONEFOLLOWUP_ESTIMATE__RAISE_AT".to_owned(), "x".to_owned())];
+    let message = config::resolve(&inputs).expect_err("refused").to_string();
+    assert!(message.starts_with("configuration key `estimate.raise_at` from the environment variable ONEFOLLOWUP_ESTIMATE__RAISE_AT: "), "{message}");
+    inputs.environment.clear();
+    inputs.set = vec!["estimate.raise_at=x".to_owned()];
+    let message = config::resolve(&inputs).expect_err("refused").to_string();
+    assert!(message.contains("from the flag --set: "), "{message}");
+    let (error, _) = refused("estimate: {raise_at: x}\n");
+    assert!(error.to_string().contains("from the file "), "{error}");
+    let mut broken = config::defaults("h");
+    broken.kinds.clear();
+    let message = Settings::new(broken).expect_err("refused").to_string();
+    assert!(message.contains("from the default: "), "{message}");
+}
+
+#[test]
+fn an_empty_file_states_nothing() {
+    for text in ["", "# nothing\n", "{}\n", "~\n"] {
+        let (_directory, inputs) = with_file(text);
+        let settings = config::resolve(&inputs).expect("an empty file resolves");
+        assert_eq!(
+            settings.config(),
+            &config::defaults("test-host"),
+            "{text:?}"
+        );
+    }
 }
 
 #[test]
@@ -280,281 +320,25 @@ fn an_unknown_key_or_a_wrong_type_is_refused_naming_the_key_and_the_layer() {
 
 #[test]
 fn every_rule_refuses_naming_its_key_and_its_layer() {
-    let cases: &[(&str, &str, &str)] = &[
-        (
-            "default_kind: nothing\n",
-            "default_kind",
-            "names no configured kind",
-        ),
-        ("kinds: []\ndefault_kind: x\n", "kinds", "names no kind"),
-        (
-            "routes: [{name: r, match: {kind: [nothing]}}]\n",
-            "routes[0].match.kind",
-            "names no configured kind",
-        ),
-        (
-            "routes: [{name: r, set: {status_role: nothing}}]\n",
-            "routes[0].set.status_role",
-            "unknown variant",
-        ),
-        (
-            "routes: [{name: r, match: {relations: {nothing: {min: 1}}}}]\n",
-            "routes[0].match.relations",
-            "names no configured relation",
-        ),
-        (
-            "routes: [{name: r, match: {severity: [dire]}}]\n",
-            "routes[0].match.severity",
-            "names no rubric level",
-        ),
-        (
-            "routes: [{name: r, set: {assignees: [alice]}}]\n",
-            "routes[0].set.assignees",
-            "one assignee",
-        ),
-        (
-            "routes: [{name: r, command: []}]\n",
-            "routes[0].command",
-            "empty argv",
-        ),
-        (
-            "routes: [{name: r, set: {assignee: ' '}}]\n",
-            "routes[0].set.assignee",
-            "names nobody",
-        ),
-        ("routes: [{name: r}, {name: r}]\n", "routes", "twice"),
-        (
-            "dispositions: [{name: d, description: D, requires: [ticket, nothing]}]\ndefault_kind: root-cause\n",
-            "dispositions[0].requires[1]",
-            "unknown variant",
-        ),
-        (
-            "dispositions: [{name: d, description: D, requires: [ticket], files_ticket: true}]\n",
-            "dispositions[0].files_ticket",
-            "requires: [ticket]",
-        ),
-        (
-            "dispositions: []\n",
-            "dispositions",
-            "catalogues no disposition",
-        ),
-        (
-            "kinds: [{name: k, description: K, identity: x}]\ndefault_kind: k\n",
-            "kinds[0].identity",
-            "not a kind key",
-        ),
-        (
-            "kinds: [{name: k, description: K, dedupe: x}]\ndefault_kind: k\n",
-            "kinds[0].dedupe",
-            "not a kind key",
-        ),
-        (
-            "kinds: [{name: k, description: K, classification: x}]\ndefault_kind: k\n",
-            "kinds[0].classification",
-            "not a kind key",
-        ),
-        (
-            "kinds: [{name: k, description: K, purpose: x}]\ndefault_kind: k\n",
-            "kinds[0].purpose",
-            "not a kind key",
-        ),
-        (
-            "kinds: [{name: k, description: K, duplicates: judge}]\ndefault_kind: k\n",
-            "kinds[0].duplicates",
-            "`duplicates` is `agent`",
-        ),
-        (
-            "kinds: [{name: k, description: K, duplicates: {same: x}}]\ndefault_kind: k\n",
-            "kinds[0].duplicates",
-            "list of names",
-        ),
-        (
-            "kinds: [{name: k, description: K, duplicates: {same: []}}]\ndefault_kind: k\n",
-            "kinds[0].duplicates.same",
-            "is empty",
-        ),
-        (
-            "kinds: [{name: k, description: K, duplicates: {same: [undeclared]}}]\ndefault_kind: k\n",
-            "kinds[0].duplicates.same",
-            "does not declare",
-        ),
-        (
-            "kinds: [{name: k, description: K, priority: {model: guess}}]\ndefault_kind: k\n",
-            "kinds[0].priority",
-            "`priority` is",
-        ),
-        (
-            "kinds: [{name: k, description: K, priority: {fixed: soon}}]\ndefault_kind: k\n",
-            "kinds[0].priority",
-            "`priority` is",
-        ),
-        (
-            "kinds: [{name: k, description: K}, {name: k, description: K}]\ndefault_kind: k\n",
-            "kinds",
-            "twice",
-        ),
-        (
-            "kinds: [{name: k, description: K, dispositions: []}]\ndefault_kind: k\n",
-            "kinds[0].dispositions",
-            "is empty",
-        ),
-        (
-            "kinds: [{name: k, description: K, dispositions: [nothing]}]\ndefault_kind: k\n",
-            "kinds[0].dispositions",
-            "does not catalogue",
-        ),
-        (
-            "fields: {code: {}}\n",
-            "fields.code",
-            "missing field `description`",
-        ),
-        (
-            "fields: {code: {description: ' '}}\n",
-            "fields.code.description",
-            "is empty",
-        ),
-        (
-            "review_sink_command: [x]\n",
-            "review_sink_command",
-            "`hooks.batch_settled` hook replaced it",
-        ),
-        (
-            "inputs_command: [x]\n",
-            "inputs_command",
-            "`hooks.batch_preparing` hook replaced it",
-        ),
-        (
-            "hooks: {batch_started: [x]}\n",
-            "hooks.batch_started",
-            "unknown field",
-        ),
-        (
-            "hooks: {batch_settled: []}\n",
-            "hooks.batch_settled",
-            "empty argv",
-        ),
-        (
-            "default_dispositions: []\n",
-            "default_dispositions",
-            "is empty",
-        ),
-        (
-            "default_dispositions: [nothing]\n",
-            "default_dispositions",
-            "does not catalogue",
-        ),
-        (
-            "relations: [{name: r, from: nothing, to: root-cause, cardinality: many-to-one, decided_by: agent, store: link}]\n",
-            "relations[0].from",
-            "names no configured kind",
-        ),
-        (
-            "relations: [{name: r, from: root-cause, to: nothing, cardinality: many-to-one, decided_by: agent, store: link}]\n",
-            "relations[0].to",
-            "names no configured kind",
-        ),
-        (
-            "relations: [{name: r, from: root-cause, to: root-cause, cardinality: many-to-one, decided_by: guess, store: link}]\n",
-            "relations[0].decided_by",
-            "`decided_by` is",
-        ),
-        (
-            "relations: [{name: r, from: root-cause, to: root-cause, cardinality: many-to-one, decided_by: agent, store: link}, {name: r, from: root-cause, to: root-cause, cardinality: many-to-one, decided_by: agent, store: link}]\n",
-            "relations",
-            "twice",
-        ),
-        (
-            "statuses: {done: {category: finished, description: D, protected: true, selected: false}}\n",
-            "statuses.done.category",
-            "not a store status category",
-        ),
-        (
-            "rubric: {levels: []}\n",
-            "rubric.levels",
-            "names no severity level",
-        ),
-        (
-            "snapshot: {launchable_for: soon}\n",
-            "snapshot.launchable_for",
-            "not a duration",
-        ),
-        (
-            "batch_id_pattern: '('\n",
-            "batch_id_pattern",
-            "not a regular expression",
-        ),
-    ];
-    for (text, key, message) in cases {
-        let (error, origin) = refused(text);
-        assert_eq!(error.key, *key, "{text}: {error}");
-        assert_eq!(error.origin, origin, "{text}: {error}");
-        assert!(error.message.contains(message), "{text}: {error}");
-    }
-
-    let relation = |rest: &str| format!("relations: [{{name: r, {rest}}}]\n");
-    let over_base: &[(String, &str, &str)] = &[
-        (
-            relation(
-                "from: error, to: root-cause, cardinality: many-to-many, decided_by: agent, store: parent",
-            ),
-            "relations[0].store",
-            "many-to-one",
-        ),
-        (
-            relation(
-                "from: client-error, to: error, cardinality: many-to-many, decided_by: {match: [error_code]}, store: link",
-            ),
-            "relations[0].decided_by",
-            "many-to-one",
-        ),
-        (
-            relation(
-                "from: root-cause, to: error, cardinality: many-to-one, decided_by: {match: [error_code]}, store: link",
-            ),
-            "relations[0].decided_by",
-            "both find duplicates by `same`",
-        ),
-        (
-            relation(
-                "from: client-error, to: root-cause, cardinality: many-to-one, decided_by: {match: [error_code]}, store: link",
-            ),
-            "relations[0].decided_by",
-            "both find duplicates by `same`",
-        ),
-        (
-            relation(
-                "from: client-error, to: error, cardinality: many-to-one, decided_by: {match: [client]}, store: link",
-            ),
-            "relations[0].decided_by.match",
-            "exactly the `to` kind's `same` fields",
-        ),
-        (
-            relation(
-                "from: error, to: client-error, cardinality: many-to-one, decided_by: {match: [error_code, client]}, store: link",
-            ),
-            "relations[0].decided_by.match",
-            "all among the `from` kind's",
-        ),
-        (
-            relation(
-                "from: error, to: incident, cardinality: many-to-one, decided_by: agent, store: link, rollup: max",
-            ),
-            "relations[0].rollup",
-            "priority is fixed",
-        ),
-    ];
-    for (text, key, message) in over_base {
-        let (error, origin) = refused_over_base(text);
-        assert_eq!(error.key, *key, "{text}: {error}");
-        assert_eq!(error.origin, origin, "{text}: {error}");
-        assert!(error.message.contains(message), "{text}: {error}");
+    let refusals = refusals();
+    assert!(refusals.cases.len() > 40);
+    for case in &refusals.cases {
+        let document = if case.over_base {
+            format!("{}{}", refusals.base, case.document)
+        } else {
+            case.document.clone()
+        };
+        let (error, origin) = refused(&document);
+        assert_eq!(error.key, case.key, "{document}: {error}");
+        assert_eq!(error.origin, origin, "{document}: {error}");
+        assert!(error.message.contains(&case.message), "{document}: {error}");
     }
 }
 
 #[test]
 fn a_full_triage_configuration_resolves() {
     let (_directory, inputs) = with_file(&format!(
-        "{BASE}
+        "{}
 relations:
   - {{name: of-error, from: client-error, to: error, cardinality: many-to-one, decided_by: {{match: [error_code]}}, store: parent, rollup: occurrences}}
   - {{name: caused-by, from: error, to: root-cause, cardinality: many-to-many, decided_by: agent, store: link, rollup: max}}
@@ -566,9 +350,32 @@ default_dispositions: [filed, wont-fix]
 routes:
   - {{name: on-call, match: {{kind: [error], severity: [critical], repository: ['github.com/example/*'], path: ['src/**'], relations: {{of-error: {{min: 2}}}}}}, set: {{status_role: accepted, priority: urgent, labels: [incident], assignee: alice}}, command: [rotation, --today]}}
 hooks: {{batch_preparing: [inputs, --json], batch_settled: [notify]}}
-"
+",
+        refusals().base
     ));
     let settings: Settings = config::resolve(&inputs).expect("a full configuration resolves");
+    let written = serde_json::to_value(settings.config()).expect("the configuration serializes");
+    assert_eq!(
+        written["kinds"][1]["duplicates"],
+        serde_json::json!({"same": ["error_code"]})
+    );
+    assert_eq!(
+        written["kinds"][3]["priority"],
+        serde_json::json!({"fixed": "urgent"})
+    );
+    assert_eq!(
+        written["relations"][0]["decided_by"],
+        serde_json::json!({"match": ["error_code"]})
+    );
+    assert_eq!(
+        written["routes"][0]["match"]["relations"],
+        serde_json::json!({"of-error": {"min": 2}})
+    );
+    let reread: onefollowup::Config = serde_json::from_value(written).expect("and reads back");
+    assert_eq!(&reread, settings.config());
+    let kinds = onefollowup::api::kinds(&settings, onefollowup::api::NoArgs {}).expect("kinds");
+    assert_eq!(kinds.kinds[0].dispositions, ["filed", "wont-fix"]);
+    assert_eq!(kinds.kinds[0].dispositions_from, "default_dispositions");
     assert_eq!(settings.config().relations.len(), 2);
     assert_eq!(
         settings.config().routes[0].set.assignee.as_deref(),

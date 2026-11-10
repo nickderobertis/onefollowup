@@ -252,7 +252,7 @@ mod tests {
         let value = json!("é — \u{7f}\u{1}\"\\/\t😀");
         assert_eq!(
             to_string(&value, Style::LINE),
-            r#""é — \u007f\u0001\"\\/\t😀""#
+            "\"\\u00e9 \\u2014 \\u007f\\u0001\\\"\\\\/\\t\\ud83d\\ude00\""
         );
         assert_eq!(
             to_string(&value, Style::SORTED_RAW),

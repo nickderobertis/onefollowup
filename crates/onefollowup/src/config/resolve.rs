@@ -259,7 +259,6 @@ pub fn resolve(inputs: &Inputs) -> Result<Settings, ConfigError> {
     let config: Config = serde_path_to_error::deserialize(&value).map_err(|error| {
         let key = error.path().to_string();
         let message = error.inner().to_string();
-        let key = unknown_key(&key, &message).unwrap_or(key);
         ConfigError {
             origin: origin_of(&merged, &key),
             key,
@@ -373,6 +372,8 @@ fn stated(path: &[String], value: &Value, origin: &Origin) -> Result<(), ConfigE
 
 fn flatten(path: &mut Vec<String>, value: &Value, origin: &Origin, into: &mut Vec<Setting>) {
     match value {
+        // An empty document states nothing; it is not a whole configuration replaced.
+        Value::Object(map) if map.is_empty() && path.is_empty() => {}
         Value::Object(map) if !map.is_empty() => {
             for (key, inner) in map {
                 path.push(key.clone());
@@ -425,36 +426,26 @@ fn unflatten(settings: &[Setting]) -> Value {
     root
 }
 
-/// The dotted path of an unknown key serde names in its message, under the path it reports.
-fn unknown_key(path: &str, message: &str) -> Option<String> {
-    let rest = message.strip_prefix("unknown field `")?;
-    let (field, _) = rest.split_once('`')?;
-    if path == field || path.ends_with(&format!(".{field}")) {
-        return Some(path.to_owned());
-    }
-    Some(if path.is_empty() || path == "." {
-        field.to_owned()
-    } else {
-        format!("{path}.{field}")
-    })
-}
-
-/// The layer that stated `key`: the setting at or above it, or else the highest below it.
+/// The layer that stated `key`: the most specific setting at or above it. A key no layer
+/// stated at or above (a whole configuration's own refusal) is the default's.
 fn origin_of(settings: &[Setting], key: &str) -> Origin {
-    let segments = segments(key);
     settings
         .iter()
-        .filter(|setting| prefixes(&setting.path, &segments))
+        .filter(|setting| under(key, &dotted(&setting.path)))
         .max_by_key(|setting| setting.path.len())
-        .map(|setting| setting.origin.clone())
-        .unwrap_or_else(|| {
-            settings
-                .iter()
-                .filter(|setting| prefixes(&segments, &setting.path))
-                .map(|setting| setting.origin.clone())
-                .max_by_key(rank)
-                .unwrap_or(Origin::Default)
-        })
+        .map_or(Origin::Default, |setting| setting.origin.clone())
+}
+
+fn dotted(path: &[String]) -> String {
+    path.join(".")
+}
+
+/// Whether the dotted key `inner` is `outer` or lies under it (`kinds[0].name` under `kinds`).
+fn under(inner: &str, outer: &str) -> bool {
+    inner == outer
+        || inner
+            .strip_prefix(outer)
+            .is_some_and(|rest| rest.starts_with('.') || rest.starts_with('['))
 }
 
 fn highest(settings: &[Setting], key: &str) -> Origin {
@@ -474,13 +465,4 @@ fn rank(origin: &Origin) -> u8 {
         Origin::Flag(flag) if flag == "--set" => 3,
         Origin::Flag(_) => 4,
     }
-}
-
-/// `kinds[0].duplicates` as path segments: `kinds`, `duplicates` — list indexes dropped,
-/// since a list is stated whole by one layer.
-fn segments(key: &str) -> Vec<String> {
-    key.split('.')
-        .map(|segment| segment.split('[').next().unwrap_or(segment).to_owned())
-        .filter(|segment| !segment.is_empty())
-        .collect()
 }

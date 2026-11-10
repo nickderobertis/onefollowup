@@ -426,14 +426,23 @@ fn unflatten(settings: &[Setting]) -> Value {
     root
 }
 
-/// The layer that stated `key`: the most specific setting at or above it. A key no layer
-/// stated at or above (a whole configuration's own refusal) is the default's.
+/// The layer that stated `key`: the most specific setting at or above it, or else — for a
+/// key stated only as the keys beneath it, such as a mapping where a list belongs — the
+/// highest layer among those. A key no layer stated is the default's.
 fn origin_of(settings: &[Setting], key: &str) -> Origin {
     settings
         .iter()
         .filter(|setting| under(key, &dotted(&setting.path)))
         .max_by_key(|setting| setting.path.len())
-        .map_or(Origin::Default, |setting| setting.origin.clone())
+        .map(|setting| setting.origin.clone())
+        .or_else(|| {
+            settings
+                .iter()
+                .filter(|setting| under(&dotted(&setting.path), key))
+                .map(|setting| setting.origin.clone())
+                .max_by_key(rank)
+        })
+        .unwrap_or(Origin::Default)
 }
 
 fn dotted(path: &[String]) -> String {

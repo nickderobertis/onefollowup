@@ -280,6 +280,8 @@ fn an_unknown_key_or_a_wrong_type_is_refused_naming_the_key_and_the_layer() {
         (error.key.as_str(), error.origin),
         ("estimate.raise_at", origin)
     );
+    let (error, origin) = refused("kinds: {name: root-cause}\n");
+    assert_eq!((error.key.as_str(), error.origin), ("kinds", origin));
     let (error, origin) = refused("estimate: {raise_soon: 1}\n");
     assert_eq!(
         (error.key.as_str(), error.origin),

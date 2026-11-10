@@ -36,15 +36,14 @@ when they are the lowest-error path and drafting follow-ups otherwise:
 - **Projects in the graph:** `onefollowup` (`crates/onefollowup`: the library, the
   `onefollowup` binary over it, their unit and library tests — format, lint, test,
   build), `onefollowup-e2e` (`crates/onefollowup-e2e`: drives the built binary as a
-  subprocess; depends on `onefollowup:build`), `packaging` (`packaging/`: the PyPI wheel
-  and npm launcher and carriers, built from the tree, installed and run — the install
-  e2e), and `workspace` (the root: dependency bans, project-boundary and
-  release-target reconciliation checks), plus the composed `github-workflows` and
-  `report-job` projects.
+  subprocess; depends on `onefollowup:build`), `packaging` (`npm/`: the npm launcher, the
+  release-targets reconciliation test, and as its `e2e` the wheel and npm packages built
+  from the tree, installed and run), `workspace` (the root: the project-boundary check),
+  and the composed `report-job`.
 - **Excluded, and why:** asdf/direnv — `rust-toolchain.toml` pins the toolchain and
   nothing else needs a version manager; a separate repo-level `coverage` target — the
-  library crate's `test` target measures and enforces the 95% line bar itself, the e2e
-  crate holding no library code to combine; splitting the record formats or the
+  library crate's `test` target measures and enforces the 95% line bar itself over its
+  own suite (which drives the CLI in process), the e2e crate holding no library code; splitting the record formats or the
   configuration into crates of their own — the distribution publishes one crate, so they
   are modules of it, and the architecture test holds the store boundary; a bench tier —
   no hot path has a performance requirement yet; GitHub Release archives and an install
@@ -63,8 +62,8 @@ is the judged tier, out of `check`.
   override. The PR title (Conventional Commits, linted in CI) becomes the squash subject
   and the PR body (`.github/pull_request_template.md`: What, Why) its body.
 - **Required checks** are exactly those in `.github/governance.json`; branches need not be
-  up to date. `scripts/setup_github_governance.py`'s settings are applied by the
-  repository owner (it needs admin rights).
+  up to date. The repository owner applies them with the create-repo skill's
+  `setup_github_governance.py` (it needs admin rights).
 - **No broader-tier sweep runs in CI**: the composed CI/CD shape gates each pull request
   at the affected tier, and a push to main runs only `budgets`; the release re-gates
   nothing.

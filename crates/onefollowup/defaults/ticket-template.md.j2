@@ -1,0 +1,133 @@
+{#-
+  The default `root-cause` kind's ticket body shape: every level-2 heading in order, each
+  with the guidance it carries, the optional ones too. A verifying agent replaces every
+  `<...>` placeholder and leaves out each optional section it has nothing for.
+
+  Variables:
+    rubric    the policy's rubric ({levels, areas, guidance, impact_lines, no_workaround,
+              impact_parts, workaround_costs}); its table and prose are the `## Impact`
+              guidance.
+    fields    optional: the ticket's declared field values, a map name -> value (a value
+              may also be a mapping carrying `description`, when the shape is rendered
+              before any value is known). When non-empty, a `## Fields` section lists them.
+-#}
+{%- set parts = rubric.impact_parts -%}
+{%- set lines = rubric.impact_lines -%}
+{%- set costs = rubric.workaround_costs -%}
+## Root cause
+
+<plain prose, with no labelled parts, for a reader who knows what the project does but not
+how it is built: the guarantee that is missing or broken, in the product's own terms — what
+the system should do and does not, and what a user or developer sees when it fails. Name no
+file, module, function, `path:line` or code identifier here; every one goes under
+`## Suggested fix`'s `**Contributing locations.**`. A root cause is the **invariant or
+guarantee that is missing or broken**, in words that do not depend on which file a report
+happened to see. It is **one root cause when a single change to the rule removes every
+instance, even if that change touches several places; two when they need independent fixes
+that each stand alone.** The invariant is specific enough that one concrete suggested fix
+removes it, so no catch-all ticket stands>
+
+## Impact
+
+<the {{ parts | length }} labelled parts below, each in one or two sentences, in this order;
+then the {{ lines | length }} lines below, each exactly once, in this order, with nothing
+between or after them. Both severities are judged by this rubric:
+
+| | {{ rubric.areas.users }} | {{ rubric.areas.development }} | {{ rubric.areas.resources }} |
+|---|---|---|---|
+{% for level in rubric.levels -%}
+| `{{ level.name }}` | {{ level.users | trim }} | {{ level.development | trim }} | {{ level.resources | trim }} |
+{% endfor %}
+{{ rubric.guidance | trim }}
+
+The severity with the workaround follows from the {{ costs | length }} workaround costs you
+state, rated on the rubric's scale, and is never above the severity. A workaround of exactly
+`{{ rubric.no_workaround }}` leaves the two the same, and its `**{{ parts[-1] }}.**` part says
+there is no acceptable workaround and why, in place of the bullets. Any other workaround
+lowers a severity above `{{ (rubric.levels | last).name }}` at least one level. The last line,
+the priority estimate and why, is written by `onefollowup ticket board-status` and never by
+you>
+
+**{{ parts[0] }}.** <each affected group by name: users of X, developers of Y, or spend only>
+**{{ parts[1] }}.** <the concrete cost per occurrence, and how often it happens>
+**{{ parts[2] }}.** <the impact itself, in plain words and with no label naming which area
+decides: how many users lose what, how much a regularly used workflow slows, or the
+$/month and quota share>
+**{{ parts[3] }}.**
+- {{ costs[0] }}: <effort, and who does it>
+- {{ costs[1] }}: <what is lost or degraded, or none>
+- {{ costs[2] }}: <the failure names it (free), or how long finding it takes and whether a
+  person must step in>
+
+- {{ lines[0] }}: <the severity with no workaround applied>
+- {{ lines[1] }}: <the workaround in place and how it is applied, or {{ rubric.no_workaround }}>
+- {{ lines[2] }}: <the severity that remains once the workaround is taken>
+- Priority estimate: <written by `onefollowup ticket board-status`: the estimate and why>
+
+## Examples
+
+<one or more examples of it>
+
+## Suggested fix
+
+<one paragraph: what changes overall, and why that removes the root cause. The one fix this
+ticket recommends, concrete enough that whoever picks it up has nothing left to choose; never
+a list of options or alternatives to choose between>
+
+**Contributing locations.**
+- <repository name> `<path>`: <what this location does that breaks the guarantee>
+- <one bullet per location that contributes, in whichever repository it is: every specific
+  code reference this ticket carries belongs in this section>
+
+### <unit> — `<repository>` (`<package or path>`)
+
+<one subsection per unit that changes: a unit is a repository, or a part of a project, and
+the parenthesis appears only when the unit is part of a repository. Say what changes in this
+unit in a sentence or two, then show only the contracts that change — public interfaces, CLI
+flags, schemas, output shapes and documented behaviour — each as a diff or the full shape. A
+fix that changes behaviour with no interface change says so in one sentence. Leave out line
+numbers, internal or private functions, refactoring steps, test names and implementation
+walkthroughs: those are for whoever picks the ticket up to work out>
+
+## Rejected fixes
+
+<optional: leave this section out when no other fix was considered. Otherwise each fix that
+was considered and not chosen, and why it was rejected>
+
+## Owning batches
+
+<every batch whose evidence this ticket carries>
+
+{% if fields -%}
+## Fields
+
+{% for name, value in fields | items -%}
+{% if value is mapping -%}
+- {{ name }}: <{{ value.description | trim }}>
+{% else -%}
+- {{ name }}: {{ value }}
+{% endif -%}
+{% endfor %}
+{% endif -%}
+## Related tickets
+
+<optional: leave this section out, heading and all, when it has no entries; never write
+`none`. Each entry is one bullet and nothing more: every ticket this one depends on, marked
+`dependency`, and each ticket that clearly addresses a similar root cause or suggests a
+similar fix, at whatever status, marked `related`. An item at a proposal or deferred status is
+only ever `related`. An entry is a link whose text is that ticket's title, never a bare URL,
+its mark, and exactly one sentence saying why it is related to this ticket — for a
+dependency, what this ticket needs from it — never a restatement of the other ticket. List
+only a ticket clearly addressing a similar root cause, suggesting a similar fix, or supplying
+a dependency this ticket needs. Mere shared area or a broader problem is insufficient.
+Exclude a candidate meeting none of these three tests, and never mention a rejected
+irrelevant candidate elsewhere, even in Evidence>
+
+- [<that ticket's title>](<its URL>) — dependency: <one sentence: what this ticket needs from it>
+- [<that ticket's title>](<its URL>) — related: <one sentence: why it is related to this ticket>
+
+## Evidence
+
+<the host the verification ran on, exactly as `hostname` printed it; then per draft or input:
+its id, where it came from, the verified claim with `path:line` at the basis commit, and the
+command that shows the transcript or source it was drafted from, where it names one>

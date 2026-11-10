@@ -1,0 +1,229 @@
+# The shipped default configuration of onefollowup: every key a configuration file may set,
+# at its default. A host's onefollowup.yaml, ONEFOLLOWUP_ variables and --set flags override
+# any key (README.md, "Configuration"). Two defaults are not written here because they are
+# not constants: `store` (absent: the store's own discovery) and `host_label` (the machine's
+# hostname). This file is embedded into the binary; `onefollowup config show` prints it as
+# the effective configuration when nothing overrides it.
+
+store: null
+drafts_source: drafts
+destination: followups
+namespace: orchestrator
+# A batch id: word characters, dots, `@`, `+` and `-`, not dots alone — the shape
+# today's records hold where they say `run`.
+batch_id_pattern: '[\w.@+-]*[\w@+-][\w.@+-]*'
+task_template: builtin:task-template.md.j2
+persona: builtin:persona.yaml
+statuses:
+  proposal:
+    category: backlog
+    description: >-
+      A proposal awaiting a person's decision. A batch's first publish of a new ticket puts
+      it here; a person moving it to accepted is what accepts it.
+    protected: false
+    selected: false
+  accepted:
+    category: todo
+    description: >-
+      Accepted, and not yet taken up. Only a person moves an item here, which is what
+      accepting a ticket is.
+    protected: true
+    selected: true
+  deferred:
+    category: draft
+    description: >-
+      Deferred for later by a person: not accepted, picked up by no agent, and still taking
+      new evidence. Only a person moves an item here.
+    protected: true
+    selected: false
+  queued:
+    category: queued
+    description: >-
+      Accepted and claimed by work that has not started yet, returning to accepted if that
+      work does not happen. No person moves an item here; the tooling that claims the work
+      does.
+    protected: true
+    selected: false
+  in-progress:
+    category: in-progress
+    description: >-
+      Accepted and taken up. A person moves an item here, or an agent whose own task says
+      to.
+    protected: true
+    selected: false
+  done:
+    category: done
+    description: >-
+      Accepted and finished; closed as completed. A person, an agent whose own task says to,
+      or the tooling that lands the fix moves an item here, whatever status it held.
+    protected: true
+    selected: false
+  cancelled:
+    category: cancelled
+    description: >-
+      Withdrawn; closed as not planned. A person moves an item here, or a follow-up batch
+      withdrawing its own ticket that nobody accepted or deferred.
+    protected: false
+    selected: false
+
+rubric:
+  # Most severe first. `priority` is the estimate each severity with the workaround gives
+  # before any raise, one level for one level.
+  levels:
+    - name: critical
+      priority: urgent
+      users: >-
+        a large outage, substantial functionality unavailable to many or all users, or data
+        or work lost or corrupted
+      development: >-
+        **blocks a regularly used development workflow completely, for everyone working
+        through it**, or slows it **2× or more** (by lengthening it, repeating gates, and so
+        on)
+      resources: see the resources rule below
+    - name: high
+      priority: high
+      users: >-
+        a capability fails or is unusable for some users or in some situations, with real
+        consequence
+      development: >-
+        slows a regularly used development workflow by **more than 1.1× and under 2×**, or
+        blocks it **only for some developers or in some situations**
+      resources: see the resources rule below
+    - name: medium
+      priority: medium
+      users: a degraded experience or recurring friction
+      development: a recurring slowdown under 1.1×, or a real risk to output quality
+      resources: see the resources rule below
+    - name: low
+      priority: low
+      users: cosmetic, or rare with negligible cost
+      development: a test or tooling improvement that blocks nothing
+      resources: see the resources rule below
+  areas:
+    users: Users (the people who use what the repository ships)
+    development: Development (people and agents working on it)
+    resources: Resources (money, subscription quota)
+  guidance: |
+    **Severity** is judged from the product owner's perspective across three impact areas:
+    users, development and resources. The most severe area decides. Users come first: an
+    impact on users is never ranked below an equal impact on development.
+
+    A slowdown is measured against the affected workflow, for the work that regularly passes
+    through it. Doubling a rarely used side path is not `critical`. A block that holds only
+    on some hosts, in some setups or in some situations is never `critical`: it is `high` at
+    most, and lower when that situation is uncommon. A test improvement reaches `high` only
+    when it blocks or very substantially slows work.
+
+    **Resources rule.** Measure the **extra** spend the root cause causes, projected per
+    month at the rate it is seen. That includes dollars, and subscription quota as a share of
+    the provider's weekly allowance. The ticket's `## Impact` prose states that estimate and
+    its basis. Apply the first step that matches:
+
+    1. **Negligible means `low` whatever the multiple:** under $25/month **and** under 2% of
+       weekly quota.
+    2. **Large in absolute terms means `critical` whatever the multiple, even if nothing is
+       blocked:** $1,000/month or more, **or** 25% or more of weekly quota, **or** a quota or
+       budget exhausted so that work stops.
+    3. **Otherwise, the higher of:**
+       - absolute: $250–1,000/month or 10–25% of weekly quota is `high`; $25–250/month or
+         2–10% is `medium`
+       - relative to the affected work's normal spend: 2× or more is `high`; over 1.1× and
+         under 2× is `medium`; under 1.1× is `low`
+
+    The resources area is judged only by dollars and by subscription quota as a share of the
+    provider's weekly allowance, with the negligible floor applied first. A shared API rate
+    allowance (such as a code host's hourly API limit) is neither. Judge what exhausting or
+    straining it does in the users or development area instead: work that stops or slows,
+    and by how much. Never infer a spend multiple where no absolute estimate is established.
+
+    **Severity with the workaround** is the severity of what remains once the workaround is
+    taken. It is judged only on the workaround's own costs, rated on the same scale:
+
+    - the cost of applying it, counted per occurrence: a step done once per host or
+      checkout, such as an install or a bootstrap, is cheap however many failures it ends;
+    - its side effects on the outcome;
+    - discovery: when the person or agent who hits the problem is reliably directed to the
+      workaround (the failure names it, or names what is missing so that providing it is the
+      obvious response), discovery costs nothing. Otherwise, how long finding it takes, and
+      whether a person has to get involved, are costs.
+
+    A one-time setup step with no side effects on the outcome, which the failure points to,
+    leaves `low` with the workaround.
+
+    It equals the raw severity **only when there is no acceptable workaround**. An acceptable
+    workaround **always lowers** the severity, at least one level unless the raw severity is
+    already `low`. A workaround too costly to lower it is not acceptable, and the ticket says
+    `none`. This rule also covers an exhausted quota that a wait or an identity switch works
+    around.
+
+    **Priority estimate.** The severity with the workaround maps one level for one level
+    (`critical` gives `urgent`). The `consistent` raise and the 3-or-more-occurrences raise
+    are kept, but each is **capped at `high`**. So `urgent` comes only from a severity that is
+    still `critical` with the workaround. Under this rule, a ticket reading raw `high`, `low`
+    with the workaround, and firing consistently has the priority estimate `medium`.
+  impact_lines: [Severity, Workaround, Severity with the workaround]
+  no_workaround: none
+  impact_parts:
+    - Who is affected
+    - What it costs them
+    - What it costs the product owner
+    - Cost of the workaround
+  workaround_costs: [Applying it, Side effects on the outcome, Discovery]
+
+# The estimate is the severity with the workaround, mapped through `rubric.levels[].priority`,
+# raised one level — capped at `raise_cap` — when the root cause fires consistently or has
+# `raise_at` or more occurrences (once, when both hold).
+estimate:
+  raise_at: 3
+  raise_cap: high
+
+dispositions:
+  - name: filed
+    description: >-
+      Its claim holds, and its evidence reached the destination: as a ticket this batch
+      wrote, or as this batch's evidence comment on an existing open item for the same root
+      cause. Names every root cause it supports, each the root cause of a ticket this batch
+      holds whose drafts name this input.
+    requires: [ticket]
+  - name: not-reproducible
+    description: >-
+      Its claim does not hold at the basis commit, or nothing in the tree or the transcript
+      bears it out.
+    requires: [reason]
+  - name: already-fixed
+    description: >-
+      The basis already carries the fix, or an accepted ticket's fix removes the root cause
+      too, in which case the reason names that item by URL.
+    requires: [reason]
+  - name: too-low-impact
+    description: >-
+      Its claim holds and nothing follows from it worth a ticket; the reason says what the
+      impact is and why it is below the bar.
+    requires: [reason]
+
+kinds:
+  - name: root-cause
+    description: >-
+      One root cause: the invariant or guarantee that is missing or broken — what the system
+      should do and does not — stated in the product's own terms. It is one root cause when a
+      single change to the rule removes every instance, even if that change touches several
+      places; two when they need independent fixes that each stand alone.
+    duplicates: agent
+    priority: {model: estimate}
+    initial_status: proposal
+
+default_kind: root-cause
+
+# Fields a ticket may record beyond the record's own keys: none by default.
+fields: {}
+# Relations between kinds: none by default.
+relations: []
+# Every kind allows every catalogued disposition unless this or the kind's own list says less.
+default_dispositions: null
+# Ordered routes, first match wins: none by default.
+routes: []
+# Commands run at named moments (`batch_preparing`, `batch_settled`): none by default.
+hooks: {}
+snapshot:
+  # How long a comment snapshot stays launchable after it is taken.
+  launchable_for: 24h

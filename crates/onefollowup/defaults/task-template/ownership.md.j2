@@ -1,0 +1,47 @@
+{#- Who owns what at the destination. Included whole by `task-template.md.j2`; it reads
+    the same variables (`batch`, `destination`, `namespace`). -#}
+## Ownership at the destination
+
+- **Ownership is by batch.** An item at `{{ destination }}`, or at a destination a kind
+  routes to, belongs to the batch its `{{ namespace }}` record says created it. A comment
+  belongs to the batch its marker names. This batch, `{{ batch }}`, may create, edit (by
+  staging its ticket again with `onefollowup ticket copy`) or withdraw only items it
+  created, and may edit only comments whose marker names `{{ batch }}`. It never changes an
+  item or a comment belonging to another batch, but for the one write below:
+  `onefollowup ticket re-estimate` on that item.
+- **`onefollowup ticket re-estimate` re-estimates an item's priority after this batch
+  comments on it.** It recounts the item's occurrences from its comments, stores the
+  estimate in its `{{ namespace }}` record, rewrites the `- Priority estimate:` line of its
+  `## Impact` section, and moves its priority only while the destination holds the estimate
+  its record stored (or holds none, where it stored none), so a priority a person set
+  stays. It changes nothing else about the item, its status included. Stage it on the item
+  each time this batch adds or edits an evidence comment there, and on no other occasion.
+- **An evidence comment** carries this batch's evidence on another batch's item.
+  `onefollowup ticket comment` gives it its visible opening line and its closing marker,
+  naming this batch and the item's root cause; you write only what goes between.
+
+  **It carries only this batch's new occurrence**, because the item already states the
+  ticket and a comment that re-renders it hides the one new fact it adds. Its body is, in
+  this order:
+
+  1. this batch's occurrence: the host it was verified on, read with `hostname`; the basis
+     commit of each repository; what was observed; and the drafts or inputs it rests on;
+  2. one short paragraph headed in plain text `Bears on the ticket:`, naming the section of
+     the item the new evidence contradicts or extends (its root cause, impact or suggested
+     fix) and stating only the delta, since this batch cannot edit another batch's ticket.
+     It is optional, but **required where this batch's evidence shows the root cause
+     broader than the item states**, and then states only the widened root cause, in the
+     same plain words a ticket's `## Root cause` is written in, and names each location it
+     adds as a contributing location of the suggested fix. A batch widens its own item by
+     rewriting its ticket and staging it again instead.
+
+  It never repeats what the item already says — its root cause, impact, examples,
+  suggested fix, rejected fixes or owning batches — and never carries one of a ticket's
+  level-2 section headings. `onefollowup ticket comment` refuses a body that carries one.
+
+  It goes only on an open item another batch created for the same root cause, which
+  receives at most **one** from this batch, whatever open status the destination holds it
+  at, so an item at a deferred status receives this batch's one comment like any other open
+  item. Where this batch's evidence comment is already there, edit it in place with
+  `onefollowup ticket comment`; never add a second. This batch never adds an evidence
+  comment to an item it created: it edits that item by staging its ticket again instead.

@@ -1,0 +1,99 @@
+{
+  "schema": 3,
+  "queried_at": "2026-11-01T12:00:00Z",
+  "board": "followups",
+  "boards": [
+    "followups",
+    "tracker"
+  ],
+  "named_board": false,
+  "scope": null,
+  "issue": null,
+  "starts": {
+    "followups": {
+      "since": "2026-11-01T11:45:00Z",
+      "origin": "the board's watermark"
+    },
+    "tracker": {
+      "since": "2026-10-30T08:00:00Z",
+      "origin": "run nightly-2026-11-01's boundary \u2014 derived"
+    }
+  },
+  "store": "onetaskgraph 0.13.0",
+  "dry_run": false,
+  "items": [
+    {
+      "id": "followups:item-42",
+      "snapshot_id": "snapshot:followups-item-42",
+      "version": "2026-11-01T11:59:58Z",
+      "title": "widgets: a layout save reads one window size \u2014 not two",
+      "owner": "nightly-2026-11-01",
+      "host": "build-host-1",
+      "url": "https://github.com/example/widgets/issues/42"
+    },
+    {
+      "id": "followups:item-43",
+      "snapshot_id": "snapshot:followups-item-43",
+      "version": null,
+      "title": "gadgets: export keeps unicode titles",
+      "owner": "nightly-2026-11-01",
+      "host": "build-host-1",
+      "url": "https://github.com/example/gadgets/issues/43"
+    },
+    {
+      "id": "tracker:WID-9",
+      "snapshot_id": "snapshot:tracker-WID-9",
+      "version": null,
+      "title": "Unowned item",
+      "owner": null,
+      "host": null,
+      "url": null
+    }
+  ],
+  "boundaries": {
+    "nightly-2026-11-01": {
+      "boundary": "2026-10-30T08:00:00Z",
+      "computed": true
+    },
+    "nightly-2026-10-25": {
+      "boundary": null,
+      "computed": false
+    }
+  },
+  "selection": {
+    "nightly-2026-11-01": [
+      {
+        "issue": "followups:item-42",
+        "comment": "IC_kwDOA1001",
+        "last_changed": "2026-11-01T11:00:00.123000Z",
+        "body_sha256": "649f74bdc8472516fcc8991288f45651a3395151921b91d2a9a318609b2b84dd"
+      },
+      {
+        "issue": "followups:item-43",
+        "comment": "IC_kwDOA1002",
+        "last_changed": "2026-11-01T11:05:00Z",
+        "body_sha256": "986e548db32da8980b01aaf161e640ab0102dc9af33b470b9f5d4cfba4f7eef3"
+      }
+    ]
+  },
+  "left": [
+    {
+      "issue": "followups:item-42",
+      "comment": "IC_kwDOA0999",
+      "reason": "a run's own reply \u2014 r\u00e9sum\u00e9",
+      "outcome": "comment"
+    },
+    {
+      "issue": "tracker:WID-9",
+      "comment": null,
+      "reason": "not captured: the snapshot's copy failed for this item: timed out",
+      "outcome": "not-captured"
+    },
+    {
+      "issue": "followups:item-50",
+      "comment": null,
+      "reason": "not at Proposal or Deferred: the snapshot's copy read only its status, no comment: status is todo",
+      "outcome": "not-answered"
+    }
+  ]
+}

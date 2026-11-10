@@ -1,0 +1,359 @@
+{#-
+  The verifying agent's task for one follow-up batch, rendered by `onefollowup prepare`.
+
+  Variables:
+    batch            the batch id.
+    answers          path to the batch's task answers file.
+    drafts           list of {id, title, repository, paths, body}: the drafts to verify.
+    inputs           list of {id, source, summary, detail}: additional inputs to verify.
+    destination      the default destination source name.
+    namespace        the metadata namespace a ticket's record sits under.
+    kinds            list of {name, description, duplicates, priority, initial_status,
+                     destination, dispositions}; `priority` is {model}, `destination` may be
+                     empty (then `destination` applies), `dispositions` may be empty (then
+                     every disposition applies).
+    fields           map name -> {description}: the fields a ticket records.
+    relations        list of {name, description}: the relations a ticket may carry to
+                     another item (for `onefollowup ticket relate`).
+    dispositions     list of {name, description, requires}.
+    statuses         map role -> {category, description, protected, selected}.
+    rubric           the policy's rubric ({levels, areas, guidance, impact_lines,
+                     no_workaround, impact_parts, workaround_costs}).
+    estimate         {raise_at, raise_cap}.
+    ticket_template  the rendered example ticket shape text.
+
+  Beyond those, this template reads one optional variable:
+    tickets          path of the directory the batch's tickets are written to; when
+                     undefined, the task says "the batch's tickets directory".
+-#}
+{%- set tickets_at = tickets if tickets is defined and tickets else "the batch's tickets directory" -%}
+## What
+
+Verify the follow-up drafts and inputs batch `{{ batch }}` was prepared with, give each one
+exactly one kind and one disposition, group what stands by root cause, and stage one
+verified ticket per root cause for its destination (`{{ destination }}` unless its kind
+names another). Where another batch already has an open item for the same root cause, stage
+this batch's evidence on it as a comment instead of a duplicate ticket.
+
+## Why
+
+While work runs, the people and agents doing it draft what they noticed outside their own
+scope as unverified follow-ups, and nobody has checked them. This task checks them. A draft
+is worth a ticket only once its claim holds in the tree it names. Every batch's tickets
+accumulate at one destination, so a root cause already filed there gets this batch's
+evidence rather than a second item.
+
+## Where everything is
+
+- **The drafts and inputs.** They are listed under "The drafts" and "The inputs" at the end
+  of this task, each with its id. Every one of them is accounted for in the answers file.
+- **The repositories' trees.** Read each repository a draft names in an existing checkout:
+  fetch its remote, then read the remote's base branch with `git show <ref>:<path>` and
+  `git grep <pattern> <ref>`. Never check out, commit to or otherwise modify a checkout, and
+  never clone. A repository with no checkout available cannot be verified.
+- **The tickets.** Write each ticket as a Markdown file under {{ tickets_at }}, named
+  `<root-cause>.md`, where `<root-cause>` is a kebab-case slug naming the invariant rather
+  than a file.
+- **The destination.** `{{ destination }}` is where verified tickets go, unless a kind names
+  another. Never list a destination whole: ask it one narrowing question at a time with
+  `onefollowup ticket search`, naming the ticket the question is for. Read one item's state
+  and comments through `onefollowup ticket board-status`.
+- **Staged writes.** You never write to a destination directly. `onefollowup ticket copy`,
+  `onefollowup ticket comment`, `onefollowup ticket re-estimate` and
+  `onefollowup ticket relate` stage a write; nothing reaches the destination until
+  `onefollowup publish` runs, after this task, and `onefollowup settle` reconciles what it
+  wrote. Run `onefollowup <verb> --help` for each command's exact arguments, and
+  `onefollowup kinds` and `onefollowup statuses` to read the policy below as the tool holds
+  it.
+
+## What each status means
+
+{% for role, status in statuses | items -%}
+- **`{{ role }}`** (category `{{ status.category }}`): {{ status.description | trim }}
+  {%- if status.selected %} **Selected** by an agent sent to pick up accepted tickets.
+  {%- else %} Not selected by an agent sent to pick up accepted tickets.{% endif %}
+  {%- if status.protected %} Protected: no batch withdraws an item here, because a person decided on it.{% endif %}
+{% endfor %}
+A brief to pick up "accepted" follow-up tickets means the items at a selected status and
+nothing else: never an item at any other open status, and never a closed one.
+
+## The kinds an input can be
+
+Every draft and input is exactly one of these kinds:
+
+{% for kind in kinds -%}
+- **`{{ kind.name }}`**: {{ kind.description | trim }}
+  Duplicates: {% if kind.duplicates == "agent" %}you search the destination for an
+  existing item for the same root cause, as step 7 states{% else %}matched by
+  `onefollowup` itself (`{{ kind.duplicates }}`); do not search for them{% endif %}.
+  Priority: {% if kind.priority.model == "estimate" %}estimated from the ticket's facts,
+  never chosen{% else %}`{{ kind.priority.model }}`{% endif %}. A new ticket is staged at
+  `{{ kind.initial_status }}`{% if kind.destination %}, for `{{ kind.destination }}`{% endif %}.
+  {%- if kind.dispositions %} Dispositions allowed: {% for d in kind.dispositions %}`{{ d }}`{% if not loop.last %}, {% endif %}{% endfor %}.{% endif %}
+{% endfor %}
+## The dispositions
+
+Every draft and input takes exactly one of these:
+
+{% for disposition in dispositions -%}
+- **`{{ disposition.name }}`**: {{ disposition.description | trim }}
+  {%- if disposition.requires %} Requires: {% for r in disposition.requires %}`{{ r }}`{% if not loop.last %}, {% endif %}{% endfor %}.{% endif %}
+{% endfor %}
+## What to do, in order
+
+1. **Record the basis first.** Before verifying anything, fetch the remote of every
+   repository a draft or input names, and record the commit its base branch points at.
+   That commit is the basis every claim about that repository is verified at, and it is
+   what the ticket's basis records for every repository its fix changes.
+2. **Verify each draft and input against that basis.** Read what it claims, the transcript
+   or source it names, and the tree, and decide whether the claim holds at the basis
+   commit.
+3. **Drop one you cannot verify, or one the basis already fixes.** Keep its id and the
+   reason: every draft and input, dropped or not, is accounted for at step 11.
+4. **Report what should have been surfaced live.** A draft that reads as something that
+   should have been raised while the work ran — a decision fork, a constraint that could
+   not be met, something a person needed to act on then — is a finding in its own right.
+   Report it, naming the draft, its author and why it was blocking, rather than filing it
+   quietly as a ticket.
+5. **Give each one a kind, then group what stands by root cause**, and write one ticket per
+   root cause, to the shape under "The verified ticket" below. Drafts whose evidence points
+   at different files but shares one invariant become one ticket, its suggested fix's
+   `**Contributing locations.**` listing each location they name; drafts whose fixes would
+   each stand alone stay separate tickets, each listing the other under
+   `## Related tickets` only where it clearly addresses a similar root cause or suggests a
+   similar fix. One ticket states one concrete suggested fix, which may change several
+   units in several repositories.
+6. **Judge each ticket's facts.** **Judge both severities by the rubric** in the example's
+   `## Impact` guidance, from the product owner's perspective across users, development and
+   resources, and write the parts that judgment rests on —
+   {% for part in rubric.impact_parts %}`**{{ part }}.**`{% if not loop.last %}, {% endif %}{% endfor %} —
+   before the severity lines: the severity with the workaround follows from the workaround
+   costs you state there, and an acceptable workaround always lowers a severity above
+   `{{ (rubric.levels | last).name }}`. Then **judge from the original evidence whether the
+   root cause fires consistently** — every time its conditions hold — or only
+   intermittently or in certain situations, and record that as the ticket's `frequency`.
+   {%- if fields %} Record every declared field too:
+   {% for name, field in fields | items %}`{{ name }}` ({{ field.description | trim }}){% if not loop.last %}; {% endif %}{% endfor %}.
+   {%- endif %} The frequency and the severities are the facts the priority is estimated
+   from; the estimate and the priority themselves are never yours to write.
+7. **Search the destination for the same root cause, and for the accepted fixes that bear
+   on it**, for each ticket whose kind's duplicates are yours to search and whose record
+   does not already name its item. A ticket already placed — its record names its item — is
+   not searched for again; stage it again only once its content, dependencies or status
+   changed. Otherwise ask `onefollowup ticket search`, each distinct question once, in this
+   order:
+   - **first, in the words of the invariant and its symptom** — the broken guarantee as
+     `## Root cause` states it in plain language, which a report of this problem would
+     carry whichever file it was found in;
+   - then once per distinct further question about the symptom, the command or the message;
+   - **last, the failing file or function**, because the file is exactly what differs
+     between two reports of one root cause.
+
+   The slug is no question to ask: each batch names its own, so another batch's item for the
+   same root cause almost never carries this ticket's slug. Reuse every answer an earlier
+   step already obtained; never repeat a search. Search for words an item would carry rather
+   than a fragment of one, and expect an item written seconds ago to be missing from the
+   answer. Keep search results out of the ticket: never mention a rejected irrelevant
+   candidate anywhere in its body, including Evidence, and keep no query or candidate log.
+   A ticket you then do not file is deleted before you record its drafts' dispositions.
+   - **The same root cause.** An open item, at any open status, whose stated root cause
+     meets the bar of step 5 — one change to the rule would remove this ticket's instances
+     and its own — is the same root cause **even when its location and its slug differ**,
+     and is where this batch's evidence goes, as a comment, at step 10, rather than a new
+     ticket. This batch's ticket for it then **takes that item's root-cause slug**: its file
+     is renamed to `<that slug>.md` and its record's root cause is that slug, so the
+     comment's marker, the answers and the item's occurrence recount all name the one root
+     cause. An item at a proposal or deferred status is open: no agent picks it up to work
+     on, but it is searched like any other and still takes this batch's evidence. Where this
+     batch's evidence shows the cause broader than that item states, the comment's
+     `Bears on the ticket:` paragraph is required, as "Ownership at the destination" states.
+   - **The accepted fixes.** Write each ticket as if the accepted fixes those searches
+     returned were already in. They are the items the searches returned for *other* root
+     causes at an accepted status, whichever repository they live in. Read each one's
+     `## Suggested fix`, and decide against each as if it were in:
+     - **unchanged** — the fix does not bear on it: nothing changes;
+     - **evaporates** — the fix removes this root cause too: the ticket is not filed. Delete
+       its file, and account for its drafts as `already-fixed`, naming the accepted item's
+       URL. Where the destination already holds this batch's own item for it, withdraw that
+       item instead, under the withdrawal rule of "The verified ticket";
+     - **shrinks** — the fix removes part of the impact or narrows where the root cause
+       bites: write `## Impact` to what remains, both severities re-judged by the rubric,
+       and, where the scope narrows, `## Root cause` too;
+     - **needs a different fix** — the fix the evidence would otherwise support conflicts
+       with, duplicates or is superseded by the accepted one: `## Suggested fix` states what
+       remains right once the accepted fix is in, and the displaced fix goes under
+       `## Rejected fixes` with the accepted item as the reason.
+
+     A finished item's fix is assumed only where it has not reached the basis — read the
+     tree; where it has, the verification already accounts for it. A proposal's or a
+     deferred item's fix is never assumed; one that clearly addresses a similar root cause
+     or suggests a similar fix is a `related` entry of `## Related tickets`.
+
+     For every fate but unchanged, the ticket depends on the accepted item: stage that
+     relation with `onefollowup ticket relate`, list it as a `dependency` entry of
+     `## Related tickets`, and say in the text where and how its fix changed the ticket, with
+     the item's URL.
+8. **Decide each ticket's status from the destination, before every staged copy.** For every
+   ticket step 7 left, run `onefollowup ticket board-status` on it (asking for a withdrawal
+   where this batch withdraws it). It reads the item the ticket's record names, checks its
+   dependencies are still accepted, and writes the ticket's priority estimate, its estimate
+   line and its priority. Write the status it prints as the ticket's status, then run
+   `onefollowup ticket validate` on it and correct the ticket until it reports it sound.
+   Whenever you change a ticket's `## Impact`, frequency or dependencies after that, run
+   `board-status` on it again, then validate it. When either refuses, stage nothing for that
+   ticket and keep what it printed for your report.
+9. **Stage each ticket.** Where no open item carries the root cause, or the item that does
+   is this batch's own, stage the ticket with `onefollowup ticket copy`. When it refuses,
+   stage nothing more for that ticket and keep what it printed for your report. Never edit a
+   ticket only to make a copy write it.
+10. **Stage evidence on another batch's item.** Where an open item for the root cause was
+    created by another batch, stage no copy: stage this batch's one comment on that item
+    with `onefollowup ticket comment`, or edit the one this batch already left there, under
+    "Ownership at the destination" below, and **after every such comment, stage a
+    re-estimate of that item** with `onefollowup ticket re-estimate`.
+11. **Account for every draft and input.** Write one answer per draft and per input into
+    `{{ answers }}`, to the shape under "The answers" below, then run `onefollowup check` and
+    correct the answers until it reports them sound.
+12. **Report** every ticket you staged (and whether it creates or updates an item), every
+    comment and re-estimate you staged with the item it is on, every dropped draft or input
+    with its reason, every ticket dropped or withdrawn under an accepted item with that
+    item's URL, every refusal a command printed, and every finding that should have been
+    surfaced live. The answers file is the record of what became of each draft and input;
+    the report says what the reader needs beyond it.
+
+## The answers
+
+**Every draft and input is answered exactly once**, in `{{ answers }}`. Each answer names:
+
+- the draft's or input's id;
+- its **kind**, one of {% for kind in kinds %}`{{ kind.name }}`{% if not loop.last %}, {% endif %}{% endfor %};
+- its **disposition**, one of {% for d in dispositions %}`{{ d.name }}`{% if not loop.last %}, {% endif %}{% endfor %},
+  allowed for its kind;
+- everything that disposition requires: {% for d in dispositions %}`{{ d.name }}` requires {% for r in d.requires %}`{{ r }}`{% if not loop.last %} and {% endif %}{% else %}nothing{% endfor %}{% if not loop.last %}; {% endif %}{% endfor %}.
+
+A `ticket` names the root-cause slug of a ticket this batch holds under {{ tickets_at }} whose
+drafts name this one — under the existing item's own slug where it took it, since that is
+also what an evidence comment carries. A `reason` is one or two sentences, in your words, of
+why it became this. Every answer the file already holds was given by an earlier pass and is
+carried forward as it stands: never change, remove or re-answer one, and add answers only
+for what it does not answer yet.
+
+**`onefollowup check` is what says the answers are complete.** It refuses each draft or input
+that is unanswered or answered twice, whose kind or disposition is unknown or not allowed
+for its kind, that lacks what its disposition requires, or whose ticket this batch does not
+hold. This task is not finished while it refuses.
+
+## The verified ticket
+
+- **Its record** sits under the `{{ namespace }}` metadata key, with every key present: its
+  root cause, its kind, the repository its item is filed in, the repositories its fix
+  changes (each once, as a normalized origin), the basis commit of each, the drafts and
+  inputs it consumed, the time it was verified, the host, its frequency, and this batch as
+  its creator and among its owners.
+- **Its title** is `<repository name>: <the invariant in one line>`, where the repository
+  name is the last segment of the repository its item is filed in.
+- **Its status is the destination's to decide.** A new ticket is staged at its kind's
+  initial status, a proposal awaiting a person's decision; a person accepting it is what
+  moves it on. A ticket the destination already holds carries the status the destination
+  holds it at, which `onefollowup ticket board-status` prints, so a staged copy never undoes
+  a person's decision. **A withdrawn ticket** is `cancelled`, closed as not planned, and only
+  ever from a status that is not protected: this batch never withdraws an item a person
+  accepted or deferred. Where `board-status` refuses a withdrawal, leave the local ticket as
+  it is and report that you would have withdrawn it and why. No item is ever deleted.
+- **A refusal is reported, never worked around.** When a command refuses a ticket, stage
+  nothing for it, never retry it with its repositories removed or changed to get it filed,
+  and report what was printed.
+- **`## Root cause` is plain prose for a reader who knows what the project does but not how
+  it is built**: the guarantee that is missing or broken, in the product's own terms, with
+  no labelled parts and no file path, module, function, `path:line`, qualified name or
+  backticked call. Read it back as the person deciding whether to accept the ticket would,
+  on a phone, and rewrite whatever that reader could not follow.
+- **Every location is listed in `## Suggested fix`**, as its `**Contributing locations.**`
+  part: after its opening paragraph and before its unit subsections, one bullet per location
+  that contributes to the root cause, possibly several and in several repositories. Every
+  specific code reference the ticket carries belongs there.
+- **`## Suggested fix` states one concrete fix**: a single change, or a single set of
+  changes that together remove the root cause, never a list of options. `## Rejected fixes`
+  is optional: when another fix was considered, it comes directly after `## Suggested fix`
+  and gives each rejected fix with why; otherwise it is left out.
+- **`## Impact` states what the severities rest on, concisely**: its labelled parts in order
+  before its lines, each in one or two sentences, the last carrying
+  {% for cost in rubric.workaround_costs %}`- {{ cost }}:`{% if not loop.last %}, {% endif %}{% endfor %}
+  — or, with a workaround of `{{ rubric.no_workaround }}`, saying there is no acceptable
+  workaround and why. The product owner's part states the impact itself in plain words —
+  how many users lose what, how much a regularly used workflow slows, or the $/month and
+  quota share — never opening on a label naming which area decides.
+- **Its priority is estimated from facts, never chosen.** The estimate is the severity with
+  the workaround, one level for one level
+  ({% for level in rubric.levels %}`{{ level.name }}` is `{{ level.priority }}`{% if not loop.last %}, {% endif %}{% endfor %}),
+  raised one level, capped at `{{ estimate.raise_cap }}`, when the frequency is `consistent`
+  or the root cause has {{ estimate.raise_at }} or more occurrences — once, when both hold —
+  so `{{ (rubric.levels | first).priority }}` comes only from a severity still
+  `{{ (rubric.levels | first).name }}` with the workaround. Occurrences are the ticket's own
+  evidence plus each evidence comment another batch left on its item, recounted every time.
+  The estimate, the estimate line and the priority are `board-status`'s to write; when you
+  rewrite a ticket, keep them as it wrote them. The item's priority follows the estimate only
+  while it holds the estimate it last received; otherwise it is a person's decision, which
+  every copy keeps.
+- **`## Related tickets` is optional, directly before `## Evidence`**, and omitted entirely
+  when empty. Each entry is one linked bullet with its relation and exactly one explanatory
+  sentence.
+  {%- if relations %} The relations are:
+  {% for relation in relations %}`{{ relation.name }}`{% if relation.description %} ({{ relation.description | trim }}){% endif %}{% if not loop.last %}; {% endif %}{% endfor %}.
+  {%- endif %} Stage each dependency with `onefollowup ticket relate` as well.
+- **Where an accepted fix changed the ticket, the text says so with the item's URL** — on
+  its `dependency` entry, beside it in `## Impact` or `## Root cause` for a ticket the fix
+  narrowed, in `## Suggested fix` for one it re-fixed, and in `## Rejected fixes` beside the
+  fix it displaced, stating what is assumed ("assuming the fix in <URL> lands, …").
+- **`## Evidence` closes the ticket**, after every section a person reads to decide on it.
+- **`host` is read, never typed.** Run `hostname` and write exactly what it prints, both in
+  the record and in `## Evidence`.
+- **The ticket's item is the one its record names**, once a publish has placed it. When you
+  rewrite a ticket, keep every key the tool wrote into its record exactly as it stands.
+- **It reaches the destination only through `onefollowup ticket copy` and
+  `onefollowup publish`.** Never write an item, its state or its comments any other way —
+  not through a destination's own CLI or API — since each would write a status without the
+  decision `board-status` makes.
+
+The shape, with every placeholder to fill:
+
+````markdown
+{{ ticket_template | trim }}
+````
+
+{% include "task-template/ownership.md.j2" %}
+
+## Acceptance criteria
+
+- Every ticket left under {{ tickets_at }} is one `onefollowup ticket validate` reports sound,
+  over the tree as it finally stands.
+- `onefollowup check` reports the answers at `{{ answers }}` sound: every draft and input
+  carries exactly one kind and one disposition, with what that disposition requires. Run it
+  last, after the final edit to the answers.
+- Every claim the report makes about what was staged is true of what the staging commands
+  printed.
+
+## The drafts
+{% for draft in drafts %}
+### `{{ draft.id }}` — {{ draft.title }}
+
+- Repository: {{ draft.repository }}
+{%- if draft.paths %}
+- Paths: {% for path in draft.paths %}`{{ path }}`{% if not loop.last %}, {% endif %}{% endfor %}
+{%- endif %}
+
+{{ draft.body | trim }}
+{% else %}
+None.
+{% endfor %}
+
+## The inputs
+{% for input in inputs %}
+### `{{ input.id }}` — {{ input.summary }}
+
+- Source: {{ input.source }}
+
+{{ input.detail | trim }}
+{% else %}
+None.
+{% endfor %}

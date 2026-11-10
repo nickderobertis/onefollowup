@@ -1,0 +1,44 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+# onetaskgraph's crates require 1.97; nothing here needs newer.
+rust-version = "1.97"
+license = "MIT"
+repository = "https://github.com/nickderobertis/onefollowup"
+authors = ["Nick DeRobertis"]
+
+[workspace.dependencies]
+# Every store access: the engine and, through its features, every destination plugin
+# (local-md built in, GitHub Projects and Linear switched on). onetaskgraph's pre-1.0
+# crates release in lock step and are not compatible across patches, so the pin is exact.
+onetaskgraph-core = { version = "=0.14.10", features = ["github-projects", "linear"] }
+# The contract crate, for the status vocabulary a status role maps to.
+onetaskgraph-plugin-api = "=0.14.10"
+clap = { version = "4.6.6", features = ["derive"] }
+gethostname = "1.1.0"
+indexmap = { version = "2.12.1", features = ["serde"] }
+regex = "1.13.1"
+serde = { version = "1.0.229", features = ["derive"] }
+# `preserve_order`: every record keeps the key order it was written in, which is what lets
+# a record round-trip byte for byte.
+serde_json = { version = "1.0.151", features = ["preserve_order"] }
+# Every YAML read: safe Rust (deny.toml bans the libyaml translations).
+serde-saphyr = "1.3"
+serde_path_to_error = "0.1.20"
+thiserror = "2.0.20"
+
+assert_cmd = "2.2.2"
+# Tests read onetaskgraph's status vocabulary off its own JSON schema.
+schemars = "1.2.2"
+predicates = "3.1.4"
+tempfile = "3.24.0"
+
+[profile.release]
+strip = true
+
+[profile.dev.package."*"]
+opt-level = 1

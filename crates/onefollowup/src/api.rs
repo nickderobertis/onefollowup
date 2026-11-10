@@ -1,0 +1,540 @@
+//! The library's verbs: **one public function per command of the CLI**, each taking the
+//! resolved [`Settings`] and the same arguments the command parses, and returning the typed
+//! result the command prints. The CLI is a thin layer over these (`tests/parity.rs` holds
+//! that), so anything the command line does, a Rust caller does by calling the function.
+//!
+//! In this release only [`config_show`] and [`kinds`] are implemented; every other verb
+//! refuses with [`Error::NotImplemented`], after its arguments are parsed.
+
+use std::path::PathBuf;
+
+use clap::{ArgGroup, Args};
+use indexmap::IndexMap;
+use serde::Serialize;
+
+use crate::config::{
+    Config, Disposition, Duplicates, FieldDeclaration, Origin, PriorityModel, Relation, Route,
+    Settings, StatusRole,
+};
+use crate::error::Error;
+
+/// The version of every JSON document a verb prints.
+pub const SCHEMA_VERSION: u32 = 1;
+
+fn not_implemented<T>(verb: &'static str) -> Result<T, Error> {
+    Err(Error::NotImplemented { verb })
+}
+
+/// A `KEY=VALUE` argument, refused at parse time when it is not one.
+fn key_value(text: &str) -> Result<String, String> {
+    match text.split_once('=') {
+        Some((key, _)) if !key.is_empty() => Ok(text.to_owned()),
+        _ => Err(format!("`{text}` is not KEY=VALUE")),
+    }
+}
+
+/// A JSON document a verb prints whose shape lands with the verb's implementation.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Report(pub serde_json::Value);
+
+/// `onefollowup draft`: record one draft. Its body is read from stdin.
+#[derive(Debug, Clone, PartialEq, Eq, Args)]
+pub struct DraftArgs {
+    /// The batch the draft belongs to.
+    #[arg(long, value_name = "ID")]
+    pub batch: String,
+    /// The draft's title.
+    #[arg(long, value_name = "T")]
+    pub title: String,
+    /// The repository it is about, as an origin.
+    #[arg(long, value_name = "ORIGIN")]
+    pub repository: String,
+    /// A path it names; repeat for each.
+    #[arg(long = "path", value_name = "P")]
+    pub paths: Vec<String>,
+    /// Who drafted it.
+    #[arg(long, value_name = "LABEL")]
+    pub author: Option<String>,
+    /// A stamp recorded with it; repeat for each.
+    #[arg(long = "stamp", value_name = "KEY=VALUE", value_parser = key_value)]
+    pub stamps: Vec<String>,
+    /// The body; `None` reads it from stdin.
+    #[arg(skip)]
+    pub body: Option<String>,
+}
+
+/// Record one draft.
+///
+/// # Errors
+///
+/// [`Error::NotImplemented`] in this release.
+pub fn draft(_settings: &Settings, _args: DraftArgs) -> Result<Report, Error> {
+    not_implemented("draft")
+}
+
+/// `onefollowup prepare`: snapshot a batch's inputs and write the verifying agent's task.
+#[derive(Debug, Clone, PartialEq, Eq, Args)]
+pub struct PrepareArgs {
+    /// The batch.
+    #[arg(long, value_name = "ID")]
+    pub batch: String,
+    /// Another id the batch's drafts were recorded under; repeat for each.
+    #[arg(long = "alias", value_name = "ID")]
+    pub aliases: Vec<String>,
+    /// Prepare only the inputs no answer accounts for yet.
+    #[arg(long)]
+    pub unanswered: bool,
+}
+
+/// What `prepare` prepared.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Prepared {
+    /// [`SCHEMA_VERSION`].
+    pub schema_version: u32,
+    /// The batch.
+    pub batch: String,
+    /// How many drafts were snapshotted.
+    pub drafts: usize,
+    /// How many additional inputs `hooks.batch_preparing` supplied.
+    pub inputs: usize,
+    /// Where the verifying agent writes its answers.
+    pub answers: PathBuf,
+    /// The verifying agent's rendered task.
+    pub task_template: PathBuf,
+}
+
+/// Snapshot a batch's input set, make its destination reads, and write the verifying
+/// agent's task.
+///
+/// # Errors
+///
+/// [`Error::NotImplemented`] in this release.
+pub fn prepare(_settings: &Settings, _args: PrepareArgs) -> Result<Prepared, Error> {
+    not_implemented("prepare")
+}
+
+/// `onefollowup ticket validate`: hold one ticket to the rules.
+#[derive(Debug, Clone, PartialEq, Eq, Args)]
+pub struct TicketValidateArgs {
+    /// The batch.
+    #[arg(long, value_name = "ID")]
+    pub batch: String,
+    /// The ticket: its root cause, or its file.
+    #[arg(value_name = "TICKET")]
+    pub ticket: String,
+}
+
+/// Hold one ticket to the rules.
+///
+/// # Errors
+///
+/// [`Error::NotImplemented`] in this release.
+pub fn ticket_validate(_settings: &Settings, _args: TicketValidateArgs) -> Result<Report, Error> {
+    not_implemented("ticket validate")
+}
+
+/// `onefollowup ticket board-status`: read one destination item's state and comments.
+#[derive(Debug, Clone, PartialEq, Eq, Args)]
+pub struct TicketBoardStatusArgs {
+    /// The batch.
+    #[arg(long, value_name = "ID")]
+    pub batch: String,
+    /// The item, qualified.
+    #[arg(value_name = "ITEM")]
+    pub item: String,
+}
+
+/// Read one destination item's state and comments, from the batch's prepared reads.
+///
+/// # Errors
+///
+/// [`Error::NotImplemented`] in this release.
+pub fn ticket_board_status(
+    _settings: &Settings,
+    _args: TicketBoardStatusArgs,
+) -> Result<Report, Error> {
+    not_implemented("ticket board-status")
+}
+
+/// `onefollowup ticket search`: search the destination for a ticket's duplicates.
+#[derive(Debug, Clone, PartialEq, Eq, Args)]
+pub struct TicketSearchArgs {
+    /// The batch.
+    #[arg(long, value_name = "ID")]
+    pub batch: String,
+    /// The ticket the question is for.
+    #[arg(long, value_name = "TICKET")]
+    pub ticket: String,
+    /// What to search for.
+    #[arg(value_name = "QUERY")]
+    pub query: String,
+}
+
+/// Search the destination, from the batch's prepared reads.
+///
+/// # Errors
+///
+/// [`Error::NotImplemented`] in this release.
+pub fn ticket_search(_settings: &Settings, _args: TicketSearchArgs) -> Result<Report, Error> {
+    not_implemented("ticket search")
+}
+
+/// `onefollowup ticket copy`: stage a ticket's copy to its destination.
+#[derive(Debug, Clone, PartialEq, Eq, Args)]
+pub struct TicketCopyArgs {
+    /// The batch.
+    #[arg(long, value_name = "ID")]
+    pub batch: String,
+    /// The ticket: its root cause, or its file.
+    #[arg(value_name = "TICKET")]
+    pub ticket: String,
+}
+
+/// Stage a ticket's copy into the batch's outbox; nothing is written to the destination.
+///
+/// # Errors
+///
+/// [`Error::NotImplemented`] in this release.
+pub fn ticket_copy(_settings: &Settings, _args: TicketCopyArgs) -> Result<Report, Error> {
+    not_implemented("ticket copy")
+}
+
+/// `onefollowup ticket comment`: stage the batch's evidence comment on an item. The
+/// comment's text is read from stdin.
+#[derive(Debug, Clone, PartialEq, Eq, Args)]
+pub struct TicketCommentArgs {
+    /// The batch.
+    #[arg(long, value_name = "ID")]
+    pub batch: String,
+    /// The item, qualified.
+    #[arg(long, value_name = "ITEM")]
+    pub item: String,
+    /// The root cause the evidence is for.
+    #[arg(long, value_name = "ROOT_CAUSE")]
+    pub root_cause: String,
+    /// The evidence; `None` reads it from stdin.
+    #[arg(skip)]
+    pub evidence: Option<String>,
+}
+
+/// Stage an evidence comment into the batch's outbox.
+///
+/// # Errors
+///
+/// [`Error::NotImplemented`] in this release.
+pub fn ticket_comment(_settings: &Settings, _args: TicketCommentArgs) -> Result<Report, Error> {
+    not_implemented("ticket comment")
+}
+
+/// `onefollowup ticket re-estimate`: stage an item's re-estimate.
+#[derive(Debug, Clone, PartialEq, Eq, Args)]
+pub struct TicketReEstimateArgs {
+    /// The batch.
+    #[arg(long, value_name = "ID")]
+    pub batch: String,
+    /// The item, qualified.
+    #[arg(value_name = "ITEM")]
+    pub item: String,
+}
+
+/// Stage a re-estimate into the batch's outbox.
+///
+/// # Errors
+///
+/// [`Error::NotImplemented`] in this release.
+pub fn ticket_re_estimate(
+    _settings: &Settings,
+    _args: TicketReEstimateArgs,
+) -> Result<Report, Error> {
+    not_implemented("ticket re-estimate")
+}
+
+/// `onefollowup ticket relate`: stage an edge of a configured relation.
+#[derive(Debug, Clone, PartialEq, Eq, Args)]
+pub struct TicketRelateArgs {
+    /// The batch.
+    #[arg(long, value_name = "ID")]
+    pub batch: String,
+    /// The relation's name.
+    #[arg(long, value_name = "NAME")]
+    pub relation: String,
+    /// The `from` ticket.
+    #[arg(long, value_name = "TICKET")]
+    pub from: String,
+    /// The `to` ticket.
+    #[arg(long, value_name = "TICKET")]
+    pub to: String,
+}
+
+/// Stage an edge into the batch's outbox.
+///
+/// # Errors
+///
+/// [`Error::NotImplemented`] in this release.
+pub fn ticket_relate(_settings: &Settings, _args: TicketRelateArgs) -> Result<Report, Error> {
+    not_implemented("ticket relate")
+}
+
+/// The arguments of a verb over one batch.
+#[derive(Debug, Clone, PartialEq, Eq, Args)]
+pub struct BatchArgs {
+    /// The batch.
+    #[arg(long, value_name = "ID")]
+    pub batch: String,
+}
+
+/// Hold the batch's dispositions, tickets and staged writes to the rules.
+///
+/// # Errors
+///
+/// [`Error::NotImplemented`] in this release.
+pub fn check(_settings: &Settings, _args: BatchArgs) -> Result<Report, Error> {
+    not_implemented("check")
+}
+
+/// Send the batch's staged writes and receipt every outcome.
+///
+/// # Errors
+///
+/// [`Error::NotImplemented`] in this release.
+pub fn publish(_settings: &Settings, _args: BatchArgs) -> Result<Report, Error> {
+    not_implemented("publish")
+}
+
+/// Close out a published batch.
+///
+/// # Errors
+///
+/// [`Error::NotImplemented`] in this release.
+pub fn settle(_settings: &Settings, _args: BatchArgs) -> Result<Report, Error> {
+    not_implemented("settle")
+}
+
+/// `onefollowup comments gather`: gather people's comments to answer.
+#[derive(Debug, Clone, PartialEq, Eq, Args)]
+#[command(group(ArgGroup::new("scope").args(["batch", "item"])))]
+pub struct CommentsGatherArgs {
+    /// Only this batch's tickets.
+    #[arg(long, value_name = "ID")]
+    pub batch: Option<String>,
+    /// Only this item.
+    #[arg(long, value_name = "ID")]
+    pub item: Option<String>,
+    /// Report what would be gathered, writing nothing.
+    #[arg(long)]
+    pub dry_run: bool,
+}
+
+/// Gather comments into a snapshot.
+///
+/// # Errors
+///
+/// [`Error::NotImplemented`] in this release.
+pub fn comments_gather(_settings: &Settings, _args: CommentsGatherArgs) -> Result<Report, Error> {
+    not_implemented("comments gather")
+}
+
+/// `onefollowup comments launches`: the answering dispatches a snapshot launches.
+#[derive(Debug, Clone, PartialEq, Eq, Args)]
+pub struct CommentsLaunchesArgs {
+    /// The snapshot.
+    #[arg(long, value_name = "S")]
+    pub snapshot: PathBuf,
+}
+
+/// Plan a snapshot's launches.
+///
+/// # Errors
+///
+/// [`Error::NotImplemented`] in this release.
+pub fn comments_launches(
+    _settings: &Settings,
+    _args: CommentsLaunchesArgs,
+) -> Result<Report, Error> {
+    not_implemented("comments launches")
+}
+
+/// `onefollowup comments check`: hold a gathering's responses to the rules.
+#[derive(Debug, Clone, PartialEq, Eq, Args)]
+pub struct CommentsCheckArgs {
+    /// The feedback file.
+    #[arg(long, value_name = "F")]
+    pub feedback: PathBuf,
+}
+
+/// Check a gathering's responses.
+///
+/// # Errors
+///
+/// [`Error::NotImplemented`] in this release.
+pub fn comments_check(_settings: &Settings, _args: CommentsCheckArgs) -> Result<Report, Error> {
+    not_implemented("comments check")
+}
+
+/// `onefollowup comments settle`: settle a snapshot's answers.
+#[derive(Debug, Clone, PartialEq, Eq, Args)]
+pub struct CommentsSettleArgs {
+    /// The snapshot.
+    #[arg(long, value_name = "S")]
+    pub snapshot: PathBuf,
+    /// A launched batch and its feedback file; repeat for each.
+    #[arg(long = "launched", value_name = "BATCH=FEEDBACK", value_parser = key_value)]
+    pub launched: Vec<String>,
+}
+
+/// Settle a snapshot's answers.
+///
+/// # Errors
+///
+/// [`Error::NotImplemented`] in this release.
+pub fn comments_settle(_settings: &Settings, _args: CommentsSettleArgs) -> Result<Report, Error> {
+    not_implemented("comments settle")
+}
+
+/// The arguments of a verb that takes none.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Args)]
+pub struct NoArgs {}
+
+/// Read the destination's statuses against the configured status roles.
+///
+/// # Errors
+///
+/// [`Error::NotImplemented`] in this release.
+pub fn statuses(_settings: &Settings, _args: NoArgs) -> Result<Report, Error> {
+    not_implemented("statuses")
+}
+
+/// `onefollowup kinds`: the effective kinds, relations, dispositions and routes.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct KindsShown {
+    /// [`SCHEMA_VERSION`].
+    pub schema_version: u32,
+    /// The declared fields.
+    pub fields: IndexMap<String, FieldDeclaration>,
+    /// Every kind, as the verifying agent reads it.
+    pub kinds: Vec<KindShown>,
+    /// The kind a record without one is read as.
+    pub default_kind: String,
+    /// The relations.
+    pub relations: Vec<Relation>,
+    /// The disposition catalogue.
+    pub dispositions: Vec<Disposition>,
+    /// The dispositions every kind allows unless it lists its own.
+    pub default_dispositions: Option<Vec<String>>,
+    /// The routes, in order.
+    pub routes: Vec<Route>,
+}
+
+/// One kind with every default applied.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct KindShown {
+    /// The kind's name.
+    pub name: String,
+    /// What it is.
+    pub description: String,
+    /// Its ticket template (`builtin:` names the shipped one).
+    pub ticket_template: String,
+    /// How its duplicates are found.
+    pub duplicates: Duplicates,
+    /// How its tickets are given a priority.
+    pub priority: PriorityModel,
+    /// The role a new ticket is copied in.
+    pub initial_status: StatusRole,
+    /// The source its tickets go to.
+    pub destination: String,
+    /// The dispositions its inputs may be given.
+    pub dispositions: Vec<String>,
+    /// Where `dispositions` came from: `kind`, `default_dispositions` or `catalogue`.
+    pub dispositions_from: &'static str,
+}
+
+/// The shipped ticket template's name.
+pub const BUILTIN_TICKET_TEMPLATE: &str = "builtin:ticket-template.md.j2";
+
+/// The effective kinds, relations, dispositions and routes, as the verifying agent reads
+/// them: each kind with its ticket template, destination and allowed dispositions resolved.
+///
+/// # Errors
+///
+/// Never in this release; the signature leaves room for a store read.
+pub fn kinds(settings: &Settings, _args: NoArgs) -> Result<KindsShown, Error> {
+    let config: &Config = settings.config();
+    let catalogue: Vec<String> = config
+        .dispositions
+        .iter()
+        .map(|one| one.name.clone())
+        .collect();
+    let kinds = config
+        .kinds
+        .iter()
+        .map(|kind| {
+            let (dispositions, from) = match (&kind.dispositions, &config.default_dispositions) {
+                (Some(own), _) => (own.clone(), "kind"),
+                (None, Some(defaults)) => (defaults.clone(), "default_dispositions"),
+                (None, None) => (catalogue.clone(), "catalogue"),
+            };
+            KindShown {
+                name: kind.name.clone(),
+                description: kind.description.clone(),
+                ticket_template: kind
+                    .ticket_template
+                    .clone()
+                    .unwrap_or_else(|| BUILTIN_TICKET_TEMPLATE.to_owned()),
+                duplicates: kind.duplicates.clone(),
+                priority: kind.priority.clone(),
+                initial_status: kind.initial_status,
+                destination: kind
+                    .destination
+                    .clone()
+                    .unwrap_or_else(|| config.destination.clone()),
+                dispositions,
+                dispositions_from: from,
+            }
+        })
+        .collect();
+    Ok(KindsShown {
+        schema_version: SCHEMA_VERSION,
+        fields: config.fields.clone(),
+        kinds,
+        default_kind: config.default_kind.clone(),
+        relations: config.relations.clone(),
+        dispositions: config.dispositions.clone(),
+        default_dispositions: config.default_dispositions.clone(),
+        routes: config.routes.clone(),
+    })
+}
+
+/// `onefollowup config show`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Args)]
+pub struct ConfigShowArgs {
+    /// Also name the layer each top-level key's effective value came from.
+    #[arg(long)]
+    pub sources: bool,
+}
+
+/// The effective configuration.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ConfigShown {
+    /// [`SCHEMA_VERSION`].
+    pub schema_version: u32,
+    /// The effective configuration.
+    pub config: Config,
+    /// With `--sources`: each top-level key and the layer its value came from.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sources: Option<IndexMap<String, Origin>>,
+}
+
+/// The effective configuration, and with `sources` where each key came from.
+///
+/// # Errors
+///
+/// Never in this release; the signature is every verb's.
+pub fn config_show(settings: &Settings, args: ConfigShowArgs) -> Result<ConfigShown, Error> {
+    Ok(ConfigShown {
+        schema_version: SCHEMA_VERSION,
+        config: settings.config().clone(),
+        sources: args
+            .sources
+            .then(|| settings.sources().iter().cloned().collect()),
+    })
+}

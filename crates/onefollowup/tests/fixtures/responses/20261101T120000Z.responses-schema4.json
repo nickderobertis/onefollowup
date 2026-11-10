@@ -1,0 +1,25 @@
+{
+  "schema": 4,
+  "run": "nightly-2026-11-01",
+  "feedback": "20261101T120000Z.md",
+  "responses": [
+    {
+      "comment": "IC_kwDOA1001",
+      "issue": "followups:item-42",
+      "action": "Named the resize in the ticket's root cause \u2014 the comment confirms it.",
+      "reply": "IC_kwDOA2001",
+      "reply_url": "https://github.com/example/widgets/issues/42#issuecomment-2001",
+      "reply_fallback": null,
+      "verdict": "confirms"
+    },
+    {
+      "comment": "IC_kwDOA1002",
+      "issue": "followups:item-43",
+      "action": "Left the ticket as it is; the comment describes another cause.",
+      "reply": "IC_kwDOA2002",
+      "reply_url": null,
+      "reply_fallback": "the cache held no version for the issue",
+      "verdict": "does-not-confirm"
+    }
+  ]
+}

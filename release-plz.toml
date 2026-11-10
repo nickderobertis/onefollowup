@@ -1,0 +1,37 @@
+# Conventional Commits determine versions; release-plz writes the version, the changelog
+# and the tag. It publishes nothing itself: the Release it cuts fires
+# .github/workflows/release.yml, which publishes the crate, the wheels and the npm packages
+# at the one [workspace.package] version (`just release`).
+[workspace]
+publish = false
+semver_check = true
+git_tag_name = "v{{ version }}"
+git_release_name = "v{{ version }}"
+# Pre-1.0, a `feat` is a minor release and a `fix` a patch.
+features_always_increment_minor = true
+# Only a merged release pull request is tagged, so the first release (0.1.0, the version
+# the manifest starts at) goes out through a release pull request carrying its changelog.
+release_always = false
+# Restrict release pull requests to release-worthy commits; without this, release-plz
+# considers its own `chore: release` commit eligible and auto-merge loops.
+release_commits = "(?s)^(feat|fix|perf)(\\([^)]+\\))?!?:|BREAKING CHANGE:"
+
+[[package]]
+name = "onefollowup"
+changelog_path = "CHANGELOG.md"
+
+# The e2e journeys are a workspace member that is never published.
+[[package]]
+name = "onefollowup-e2e"
+release = false
+
+[changelog]
+commit_parsers = [
+  { message = "^feat", group = "Added" },
+  { message = "^fix", group = "Fixed" },
+  { message = "^perf", group = "Performance" },
+  { message = "^refactor", group = "Changed" },
+  { message = "^docs", group = "Documentation" },
+  { message = "^(test|ci|chore|build|style)", skip = true },
+  { message = ".*", skip = true },
+]

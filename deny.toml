@@ -1,0 +1,69 @@
+# cargo-deny policy. Strict: advisories, licenses, bans and sources all fail the check
+# rather than warn, and any exception is explicit with a reason. `just deny-bans` (in
+# `just check`) runs the bans; `just supply-chain` (CI's required `lint` job) runs all
+# four.
+
+[graph]
+all-features = true
+
+[advisories]
+yanked = "deny"
+# `smallstr` is reached only through onetaskgraph's Linear plugin -> `yrs`, whose every
+# release depends on it; the advisory is that it is unmaintained, not a vulnerability, and
+# it names no upgrade. onetaskgraph carries the same exception. Retired by a `yrs` release
+# that drops `smallstr`.
+ignore = [
+    { id = "RUSTSEC-2026-0215", reason = "smallstr is unmaintained, reached only through onetaskgraph-linear -> yrs, whose every release depends on it; remove when a yrs release drops smallstr" },
+]
+
+[licenses]
+# Exactly what the graph uses, so the list stays a reviewed record: a dependency with a
+# new license fails the check until it is reviewed and added here.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    # Unicode's own data tables, behind icu_normalizer and icu_properties.
+    "Unicode-3.0",
+]
+confidence-threshold = 0.9
+# Per crate, never widening `allow`: each a permissive licence reviewed for the one crate
+# that carries it, so the same licence on any other crate is still refused.
+exceptions = [
+    # onetaskgraph-core -> jsonschema -> referencing -> fluent-uri -> borrow-or-share: MIT
+    # with the attribution clause removed.
+    { crate = "borrow-or-share", allow = ["MIT-0"] },
+    # onetaskgraph's GitHub Projects plugin -> sha1_smol.
+    { crate = "sha1_smol", allow = ["BSD-3-Clause"] },
+    # onefollowup -> serde-saphyr (its `deserialize` feature, every YAML read) ->
+    # encoding_rs_io -> encoding_rs, whose WHATWG-derived data is BSD-3-Clause.
+    { crate = "encoding_rs", allow = ["BSD-3-Clause"] },
+    # onefollowup -> serde_json (its `preserve_order` feature) -> foldhash.
+    { crate = "foldhash", allow = ["Zlib"] },
+]
+
+[bans]
+multiple-versions = "allow"
+wildcards = "deny"
+# The e2e crate is never published and names the library by path alone.
+allow-wildcard-paths = true
+allow = []
+# The libyaml translations and every serde front end over one, all unmaintained under
+# RUSTSEC-2024-0449. YAML here is read and written through serde-saphyr; a crate that
+# brings one of these back into the graph turns `cargo deny check bans` red.
+# scripts/check-deny-bans.sh proves this refuses a graph adding any one of them.
+deny = [
+    { crate = "serde_yaml", reason = "RUSTSEC-2024-0449: a serde front end or a translation of libyaml (`unsafe-libyaml`), unmaintained; YAML goes through serde-saphyr" },
+    { crate = "serde_yaml_ng", reason = "RUSTSEC-2024-0449: a serde front end or a translation of libyaml (`unsafe-libyaml`), unmaintained; YAML goes through serde-saphyr" },
+    { crate = "serde_norway", reason = "RUSTSEC-2024-0449: a serde front end or a translation of libyaml (`unsafe-libyaml`), unmaintained; YAML goes through serde-saphyr" },
+    { crate = "serde_yml", reason = "RUSTSEC-2024-0449: a serde front end or a translation of libyaml (`unsafe-libyaml`), unmaintained; YAML goes through serde-saphyr" },
+    { crate = "unsafe-libyaml", reason = "RUSTSEC-2024-0449: a serde front end or a translation of libyaml (`unsafe-libyaml`), unmaintained; YAML goes through serde-saphyr" },
+    { crate = "unsafe-libyaml-norway", reason = "RUSTSEC-2024-0449: a serde front end or a translation of libyaml (`unsafe-libyaml`), unmaintained; YAML goes through serde-saphyr" },
+    { crate = "libyml", reason = "RUSTSEC-2024-0449: a serde front end or a translation of libyaml (`unsafe-libyaml`), unmaintained; YAML goes through serde-saphyr" },
+]
+skip = []
+skip-tree = []
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

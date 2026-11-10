@@ -1,0 +1,25 @@
+{
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "name": "onefollowup-e2e",
+  "projectType": "application",
+  "tags": ["type:e2e", "lang:rust"],
+  "implicitDependencies": ["onefollowup"],
+  "targets": {
+    "format": {
+      "command": "cargo fmt -p onefollowup-e2e --check",
+      "cache": true
+    },
+    "lint": {
+      "command": "cargo clippy -p onefollowup-e2e --all-targets --locked -- -D warnings",
+      "cache": true
+    },
+    "e2e": {
+      "command": "cargo nextest run -p onefollowup-e2e --locked --status-level fail --final-status-level fail",
+      "dependsOn": ["onefollowup:build"],
+      "cache": true
+    },
+    "test-compile": {
+      "command": "cargo test -p onefollowup-e2e --locked --no-run --quiet"
+    }
+  }
+}

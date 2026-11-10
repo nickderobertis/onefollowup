@@ -1,0 +1,39 @@
+# What this repository publishes, and the only identifiers scripts/release-probe.sh answers
+# for. Each `id` is `<registry>:<name>`: one version, three registries.
+# npm/test/release-targets.test.mjs reconciles this declaration with the release
+# configuration — the crate, pyproject.toml, the npm launcher and its carriers, and the
+# platforms .github/workflows/release.yml builds — both ways.
+#
+# `pypi:onefollowup-cli` is the target a consumer waits on by default: the family installs
+# this CLI from PyPI (through a uv lock). The four `onefollowup-cli-<platform>` npm
+# carriers are covered by the launcher rather than declared: nothing names one in order to
+# depend on it.
+schema_version = 1
+probe = "scripts/release-probe.sh"
+
+[[target]]
+id = "crate:onefollowup"
+name = "crate"
+what = "The library and the `onefollowup` binary, as a Rust dependent takes them from crates.io."
+published_by = "The publish job of .github/workflows/release.yml, through `just release publish publish`, under crates/onefollowup/Cargo.toml's [package] name."
+manifest = "crates/onefollowup/Cargo.toml"
+
+[[target]]
+id = "pypi:onefollowup-cli"
+name = "pypi"
+what = "The per-platform wheels that put the `onefollowup` binary on PATH for `pip install` or a uv lock; the target a consumer waits on by default."
+published_by = "The build-linux, build-linux-arm64, build-macos and build-windows jobs of .github/workflows/release.yml, each through `just release <job> publish`, under pyproject.toml's [project] name."
+manifest = "pyproject.toml"
+
+[[target]]
+id = "npm:onefollowup-cli"
+name = "npm"
+what = "The launcher that resolves and runs the prebuilt `onefollowup` binary for `npm install`."
+published_by = "The build jobs of .github/workflows/release.yml for the carriers, one platform apiece, then the publish job for the launcher, each through scripts/publish-npm.sh, under npm/onefollowup-cli/package.json's name."
+manifest = "npm/onefollowup-cli/package.json"
+covers = [
+  "npm:onefollowup-cli-linux-x64",
+  "npm:onefollowup-cli-linux-arm64",
+  "npm:onefollowup-cli-darwin-arm64",
+  "npm:onefollowup-cli-win32-x64",
+]

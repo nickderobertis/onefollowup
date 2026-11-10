@@ -1,0 +1,10 @@
+{
+  "name": "report-job",
+  "tags": ["type:budgets"],
+  "targets": {
+    "budgets": {
+      "command": "bunx onebudgetspec check .github/reporting/budgets.yaml --exclude-label ci-report --save-results target/budget-results/report-job.json",
+      "outputs": ["{workspaceRoot}/target/budget-results/report-job.json"]
+    }
+  }
+}

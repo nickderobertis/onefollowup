@@ -1,0 +1,327 @@
+# Build, verify and publish everything a published GitHub Release ships. The Release that
+# fires this is the one release-plz.yml cut; creating one by hand is the supported fallback.
+#
+# One build job per platform this repository releases, each natively on that platform's
+# runner and held to 30 minutes: it builds every artifact for its targets once, installs and
+# runs those exact files, publishes its platform's artifacts, then installs them back from the
+# registries on its own OS and runs them. The build jobs need nothing from one another.
+# `publish` waits for all of them, confirms the registries serve every platform's artifacts,
+# publishes the platform-independent ones and confirms those resolve too.
+#
+# There is no test re-run here and no separate published-smoke workflow: the tree a Release
+# names is the one ci.yml's jobs proved on its pull request, and what this workflow proves is
+# the artifacts, by running each one before it publishes and again from the registry after.
+#
+# Each step is one phase of the `just release <job> <phase>` recipe (`build`, `publish`, `verify`,
+# `available`), so a release runs nothing a contributor cannot.
+#
+# Last, `publish` reports the nine `release-tail` budgets of budgets.yaml — the CI and CD
+# figures of this release, measured by scripts/actions-budget-figures.sh from onevcs's
+# read-only answers. Reporting only: an over figure turns that last step red with every
+# figure's breakdown in its log, and nothing reads its result, so it never blocks, demotes or
+# reverts a release.
+
+name: Release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # Linux x86_64.
+  build-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write # upload this platform's archive to the GitHub Release
+    env:
+      TAG: ${{ github.event.release.tag_name }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read the pinned tool versions
+        id: pins
+        run: |
+          tr -d '\r' < .github/ci-tool-versions | awk '
+            /^#/ || !NF { next }
+            /^[a-z0-9-]+=[A-Za-z0-9._+-]+$/ { print; next }
+            { print "malformed pin: " $0 > "/dev/stderr"; exit 1 }
+          ' >> "$GITHUB_OUTPUT"
+      - uses: extractions/setup-just@v2
+        with:
+          just-version: ${{ steps.pins.outputs.just }}
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ steps.pins.outputs.bun }}
+      # uv runs maturin and the wheel's install; setup-node points npm at the registry the
+      # NODE_AUTH_TOKEN publishes to.
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: ${{ steps.pins.outputs.uv }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: https://registry.npmjs.org
+      # Restores what this platform's warm leg saved on main, where it has one, and saves
+      # nothing: a tag's cache serves no later run.
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          target: x86_64-unknown-linux-gnu
+          cache-shared-key: test-linux
+          cache-save-if: false
+      - name: Build, package and test-install the Linux artifacts
+        run: just release build-linux build --tag "$TAG"
+      - name: Publish the Linux artifacts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: just release build-linux publish --tag "$TAG"
+      - name: Install and run the Linux artifacts from the registries
+        run: just release build-linux verify --tag "$TAG"
+
+  # Linux arm64, natively on GitHub's hosted ARM Linux runner: the same kinds of artifact build-linux publishes, for aarch64.
+  build-linux-arm64:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    permissions:
+      contents: write # upload this platform's archive to the GitHub Release
+    env:
+      TAG: ${{ github.event.release.tag_name }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read the pinned tool versions
+        id: pins
+        run: |
+          tr -d '\r' < .github/ci-tool-versions | awk '
+            /^#/ || !NF { next }
+            /^[a-z0-9-]+=[A-Za-z0-9._+-]+$/ { print; next }
+            { print "malformed pin: " $0 > "/dev/stderr"; exit 1 }
+          ' >> "$GITHUB_OUTPUT"
+      - uses: extractions/setup-just@v2
+        with:
+          just-version: ${{ steps.pins.outputs.just }}
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ steps.pins.outputs.bun }}
+      # uv runs maturin and the wheel's install; setup-node points npm at the registry the
+      # NODE_AUTH_TOKEN publishes to.
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: ${{ steps.pins.outputs.uv }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: https://registry.npmjs.org
+      # Restores what this platform's warm leg saved on main, where it has one, and saves
+      # nothing: a tag's cache serves no later run.
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          target: aarch64-unknown-linux-gnu
+          cache-shared-key: test-linux
+          cache-save-if: false
+      - name: Build, package and test-install the Linux arm64 artifacts
+        run: just release build-linux-arm64 build --tag "$TAG"
+      - name: Publish the Linux arm64 artifacts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: just release build-linux-arm64 publish --tag "$TAG"
+      - name: Install and run the Linux arm64 artifacts from the registries
+        run: just release build-linux-arm64 verify --tag "$TAG"
+
+  # macOS, Apple Silicon only: nothing here cross-compiles or emulates x86_64.
+  build-macos:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write # upload this platform's archive to the GitHub Release
+    env:
+      TAG: ${{ github.event.release.tag_name }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read the pinned tool versions
+        id: pins
+        run: |
+          tr -d '\r' < .github/ci-tool-versions | awk '
+            /^#/ || !NF { next }
+            /^[a-z0-9-]+=[A-Za-z0-9._+-]+$/ { print; next }
+            { print "malformed pin: " $0 > "/dev/stderr"; exit 1 }
+          ' >> "$GITHUB_OUTPUT"
+      - uses: extractions/setup-just@v2
+        with:
+          just-version: ${{ steps.pins.outputs.just }}
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ steps.pins.outputs.bun }}
+      # uv runs maturin and the wheel's install; setup-node points npm at the registry the
+      # NODE_AUTH_TOKEN publishes to.
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: ${{ steps.pins.outputs.uv }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: https://registry.npmjs.org
+      # Restores what this platform's warm leg saved on main, where it has one, and saves
+      # nothing: a tag's cache serves no later run.
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          target: aarch64-apple-darwin
+          cache-shared-key: test-macos
+          cache-save-if: false
+      - name: Build, package and test-install the macOS artifacts
+        run: just release build-macos build --tag "$TAG"
+      - name: Publish the macOS artifacts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: just release build-macos publish --tag "$TAG"
+      - name: Install and run the macOS artifacts from the registries
+        run: just release build-macos verify --tag "$TAG"
+
+  # Windows x86_64.
+  build-windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write # upload this platform's archive to the GitHub Release
+    env:
+      TAG: ${{ github.event.release.tag_name }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read the pinned tool versions
+        id: pins
+        run: |
+          tr -d '\r' < .github/ci-tool-versions | awk '
+            /^#/ || !NF { next }
+            /^[a-z0-9-]+=[A-Za-z0-9._+-]+$/ { print; next }
+            { print "malformed pin: " $0 > "/dev/stderr"; exit 1 }
+          ' >> "$GITHUB_OUTPUT"
+      - uses: extractions/setup-just@v2
+        with:
+          just-version: ${{ steps.pins.outputs.just }}
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ steps.pins.outputs.bun }}
+      # uv runs maturin and the wheel's install; setup-node points npm at the registry the
+      # NODE_AUTH_TOKEN publishes to.
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: ${{ steps.pins.outputs.uv }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: https://registry.npmjs.org
+      # Restores what this platform's warm leg saved on main, where it has one, and saves
+      # nothing: a tag's cache serves no later run.
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          target: x86_64-pc-windows-msvc
+          cache-shared-key: test-windows
+          cache-save-if: false
+      - name: Build, package and test-install the Windows artifacts
+        run: just release build-windows build --tag "$TAG"
+      - name: Publish the Windows artifacts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: just release build-windows publish --tag "$TAG"
+      - name: Install and run the Windows artifacts from the registries
+        run: just release build-windows verify --tag "$TAG"
+
+  publish:
+    needs: [build-linux, build-linux-arm64, build-macos, build-windows]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Read-only for the release tail's GitHub reads (the release, its pull requests and the
+    # runs and jobs that carried them); the registry tokens below are what publishes.
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+    env:
+      TAG: ${{ github.event.release.tag_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Read the pinned tool versions
+        id: pins
+        shell: bash
+        run: |
+          tr -d '\r' < .github/ci-tool-versions | awk '
+            /^#/ || !NF { next }
+            /^[a-z0-9-]+=[A-Za-z0-9._+-]+$/ { print; next }
+            { print "malformed pin: " $0 > "/dev/stderr"; exit 1 }
+          ' >> "$GITHUB_OUTPUT"
+      - uses: extractions/setup-just@v2
+        with:
+          just-version: ${{ steps.pins.outputs.just }}
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ steps.pins.outputs.bun }}
+      # uv runs maturin and the wheel's install; setup-node points npm at the registry the
+      # NODE_AUTH_TOKEN publishes to.
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: ${{ steps.pins.outputs.uv }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: https://registry.npmjs.org
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache-shared-key: test-linux
+          cache-save-if: false
+      # Nothing platform-independent is published until every platform's artifacts are served.
+      - name: Confirm the registries serve every platform's artifacts
+        run: just release publish available --tag "$TAG"
+      - name: Build the platform-independent artifacts
+        run: just release publish build --tag "$TAG"
+      - name: Publish the platform-independent artifacts
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: just release publish publish --tag "$TAG"
+      - name: Confirm the registries resolve the platform-independent artifacts
+        run: just release publish verify --tag "$TAG"
+      # The release tail: onevcs and onebudgetspec at the versions .github/ci-tool-versions pins.
+      - name: Install onevcs and onebudgetspec for the release tail
+        shell: bash
+        env:
+          ONEVCS_CLI_VERSION: ${{ steps.pins.outputs.onevcs-cli }}
+          ONEBUDGETSPEC_VERSION: ${{ steps.pins.outputs.onebudgetspec-cli }}
+        run: |
+          npm install --no-save --no-package-lock --no-audit --no-fund --prefix "$RUNNER_TEMP/release-tail" "onevcs-cli@$ONEVCS_CLI_VERSION" "@onebudgetspec/cli@$ONEBUDGETSPEC_VERSION"
+          echo "$RUNNER_TEMP/release-tail/node_modules/.bin" >> "$GITHUB_PATH"
+      - name: Report the release-tail budgets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: onebudgetspec check budgets.yaml --label release-tail

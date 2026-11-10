@@ -1,0 +1,432 @@
+# Prove each pull request from a clean checkout. references/ci.md states the job topology,
+# the time budgets and the merge tradeoff.
+#
+# A push to main runs only `budgets`, which records that commit's results as the history pull
+# requests compare with.
+#
+# Every job runs the same `just` recipes a contributor runs locally, over the projects its
+# diff can reach (Nx affected), from a base derived explicitly rather than guessed. The line
+# is held by cutting work — affected-only selection, caches keyed on their inputs, no check
+# run twice, no needless `needs` — never by sharding a job.
+
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Cancel superseded runs of a pull request: only its newest push matters. A push to main is
+# never cancelled, since each is a commit of the base history.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# Least privilege: the token is read-only by default and widened per job only where a job
+# genuinely needs more.
+permissions:
+  contents: read
+
+env:
+  NX_BASE: ${{ github.event.pull_request.base.sha }}
+  NX_HEAD: ${{ github.event.pull_request.head.sha }}
+
+jobs:
+  # Everything platform-independent, once: the pull-request title, the suppressions comment,
+  # format/lint/type checks over the affected projects, the supply chain, the judged lint
+  # (llmlint) and the visual docs.
+  lint:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      pull-requests: write # the suppressions and visual docs comments; read the PR title
+    steps:
+      # The merge base, llmlint's diff and notignored's scan all need the full history.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      # Under squash-merge the title becomes the commit that lands and that the release tool
+      # reads, so a malformed one must not merge.
+      - name: Check the pull request title
+        uses: amannn/action-semantic-pull-request@v6
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # A fork's pull request is granted a read-only token, so the comment upsert would fail
+      # on something the contributor has no way to fix.
+      - name: Comment the suppressions this change adds
+        if: github.event.pull_request.head.repo.full_name == github.repository
+        uses: nickderobertis/notignored@v0
+      - name: Read the pinned tool versions
+        id: pins
+        shell: bash
+        run: |
+          tr -d '\r' < .github/ci-tool-versions | awk '
+            /^#/ || !NF { next }
+            /^[a-z0-9-]+=[A-Za-z0-9._+-]+$/ { print; next }
+            { print "malformed pin: " $0 > "/dev/stderr"; exit 1 }
+          ' >> "$GITHUB_OUTPUT"
+      - uses: extractions/setup-just@v2
+        with:
+          just-version: ${{ steps.pins.outputs.just }}
+      # A fork's run writes nothing to any cache: this action saves its own binary otherwise.
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ steps.pins.outputs.bun }}
+          no-cache: ${{ github.event.pull_request.head.repo.full_name != github.repository }}
+      # rust-toolchain.toml names the toolchain. Restores what .github/workflows/rust-cache-warm.yml
+      # saved on main and saves nothing: main is the one writer of Rust build caches, and this
+      # job's checks share Linux's dependencies.
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache-shared-key: test-linux
+          cache-save-if: false
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny@${{ steps.pins.outputs.cargo-deny }},cargo-hack@${{ steps.pins.outputs.cargo-hack }}
+      - name: Decide cache trust and configure the sidecar
+        id: nx-cache-trust
+        shell: bash
+        run: |
+          node scripts/nx-remote-cache.mjs trust
+          token="$(node -e 'process.stdout.write(require("node:crypto").randomBytes(32).toString("hex"))')"
+          echo "::add-mask::$token"
+          echo "token=$token" >> "$GITHUB_OUTPUT"
+      - uses: op-nx/github-cache/start-cache-server@91839c24885842cac86567c30e23b37fb85f7e33
+        id: nx-cache
+        background: true
+        with:
+          port: '3000'
+        env:
+          NX_SELF_HOSTED_REMOTE_CACHE_SERVER: http://127.0.0.1:3000
+          NX_SELF_HOSTED_REMOTE_CACHE_ACCESS_TOKEN: ${{ steps.nx-cache-trust.outputs.token }}
+          CACHE_READ_ONLY: ${{ steps.nx-cache-trust.outputs.read_only == 'true' && '1' || '' }}
+          GITHUB_TOKEN: ${{ github.token }}
+      - name: Wait for the cache recording proxy
+        shell: bash
+        env:
+          NX_SELF_HOSTED_REMOTE_CACHE_SERVER: http://127.0.0.1:3000
+          NX_SELF_HOSTED_REMOTE_CACHE_ACCESS_TOKEN: ${{ steps.nx-cache-trust.outputs.token }}
+        run: node scripts/nx-remote-cache.mjs ready
+      - name: Bootstrap
+        run: just bootstrap
+      - name: Format, lint and type-check the affected projects
+        run: just lint
+      - name: Check the supply chain and the MSRV
+        run: just supply-chain
+      - name: Install oneharness and llmlint
+        env:
+          LLMLINT_CLI_VERSION: ${{ steps.pins.outputs.llmlint-cli }}
+        run: |
+          ./scripts/setup-llmlint.sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      # setup-llmlint.sh installs no harness, so without this the lint would skip every file.
+      - name: Install the coding harness (claude-code)
+        env:
+          CLAUDE_CODE_VERSION: ${{ steps.pins.outputs.claude-code }}
+        run: npm i -g "@anthropic-ai/claude-code@$CLAUDE_CODE_VERSION"
+      - name: Validate the llmlint config (no model)
+        run: just lint-llm-validate --diff-base origin/main
+      - name: Lint the changed files with llmlint
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # oneharness.toml's first harness is codex, which reads this; claude-code is the fallback.
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          if [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
+            echo "::error::llmlint needs a harness credential. Add the" \
+                 "CLAUDE_CODE_OAUTH_TOKEN repository secret. Fork pull requests are gated" \
+                 "by the require-approval-for-fork-workflows setting; see references/ci.md." >&2
+            exit 1
+          fi
+          just lint-llm-diff origin/main
+
+      - name: Report cache entries and task executions
+        if: always()
+        shell: bash
+        run: node scripts/nx-remote-cache.mjs report --job "$GITHUB_JOB" --out "$RUNNER_TEMP/nx-cache-report"
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.nx-cache-trust.outputs.promotable == 'true'
+        with:
+          name: nx-cache-entries-${{ github.job }}
+          path: ${{ runner.temp }}/nx-cache-report
+          retention-days: 7
+      - cancel: nx-cache
+
+  # The tests, coverage, budgets and e2e journeys of the affected projects on Linux.
+  test-linux:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Read the pinned tool versions
+        id: pins
+        shell: bash
+        run: |
+          tr -d '\r' < .github/ci-tool-versions | awk '
+            /^#/ || !NF { next }
+            /^[a-z0-9-]+=[A-Za-z0-9._+-]+$/ { print; next }
+            { print "malformed pin: " $0 > "/dev/stderr"; exit 1 }
+          ' >> "$GITHUB_OUTPUT"
+      - uses: extractions/setup-just@v2
+        with:
+          just-version: ${{ steps.pins.outputs.just }}
+      # A fork's run writes nothing to any cache: this action saves its own binary otherwise.
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ steps.pins.outputs.bun }}
+      # The packaging project's e2e builds the wheel with maturin and installs it through uv.
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: ${{ steps.pins.outputs.uv }}
+          no-cache: ${{ github.event.pull_request.head.repo.full_name != github.repository }}
+      # rust-toolchain.toml names the toolchain. Restores what this platform's leg of
+      # .github/workflows/rust-cache-warm.yml saved on main and saves nothing.
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache-shared-key: test-linux
+          cache-save-if: false
+      - name: Decide cache trust and configure the sidecar
+        id: nx-cache-trust
+        shell: bash
+        run: |
+          node scripts/nx-remote-cache.mjs trust
+          token="$(node -e 'process.stdout.write(require("node:crypto").randomBytes(32).toString("hex"))')"
+          echo "::add-mask::$token"
+          echo "token=$token" >> "$GITHUB_OUTPUT"
+      - uses: op-nx/github-cache/start-cache-server@91839c24885842cac86567c30e23b37fb85f7e33
+        id: nx-cache
+        background: true
+        with:
+          port: '3000'
+        env:
+          NX_SELF_HOSTED_REMOTE_CACHE_SERVER: http://127.0.0.1:3000
+          NX_SELF_HOSTED_REMOTE_CACHE_ACCESS_TOKEN: ${{ steps.nx-cache-trust.outputs.token }}
+          CACHE_READ_ONLY: ${{ steps.nx-cache-trust.outputs.read_only == 'true' && '1' || '' }}
+          GITHUB_TOKEN: ${{ github.token }}
+      - name: Wait for the cache recording proxy
+        shell: bash
+        env:
+          NX_SELF_HOSTED_REMOTE_CACHE_SERVER: http://127.0.0.1:3000
+          NX_SELF_HOSTED_REMOTE_CACHE_ACCESS_TOKEN: ${{ steps.nx-cache-trust.outputs.token }}
+        run: node scripts/nx-remote-cache.mjs ready
+      - name: Bootstrap
+        shell: bash
+        run: just bootstrap
+      - name: Test the affected projects
+        shell: bash
+        run: just ci-test
+      # What each `budgets` target saved, which the `budgets` job's rows read. Uploaded even
+      # after a failure, so the rest of the report keeps its figures, and absent when this
+      # change reached no budget.
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: budget-check-results-test-linux
+          path: target/budget-results/
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Report cache entries and task executions
+        if: always()
+        shell: bash
+        run: node scripts/nx-remote-cache.mjs report --job "$GITHUB_JOB" --out "$RUNNER_TEMP/nx-cache-report"
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.nx-cache-trust.outputs.promotable == 'true'
+        with:
+          name: nx-cache-entries-${{ github.job }}
+          path: ${{ runner.temp }}/nx-cache-report
+          retention-days: 7
+      - cancel: nx-cache
+
+  # The tests, coverage, budgets and e2e journeys of the affected projects on Windows.
+  test-windows:
+    if: github.event_name == 'pull_request'
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Read the pinned tool versions
+        id: pins
+        shell: bash
+        run: |
+          tr -d '\r' < .github/ci-tool-versions | awk '
+            /^#/ || !NF { next }
+            /^[a-z0-9-]+=[A-Za-z0-9._+-]+$/ { print; next }
+            { print "malformed pin: " $0 > "/dev/stderr"; exit 1 }
+          ' >> "$GITHUB_OUTPUT"
+      - uses: extractions/setup-just@v2
+        with:
+          just-version: ${{ steps.pins.outputs.just }}
+      # A fork's run writes nothing to any cache: this action saves its own binary otherwise.
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ steps.pins.outputs.bun }}
+      # The packaging project's e2e builds the wheel with maturin and installs it through uv.
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: ${{ steps.pins.outputs.uv }}
+          no-cache: ${{ github.event.pull_request.head.repo.full_name != github.repository }}
+      # rust-toolchain.toml names the toolchain. Restores what this platform's leg of
+      # .github/workflows/rust-cache-warm.yml saved on main and saves nothing.
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache-shared-key: test-windows
+          cache-save-if: false
+      - name: Decide cache trust and configure the sidecar
+        id: nx-cache-trust
+        shell: bash
+        run: |
+          node scripts/nx-remote-cache.mjs trust
+          token="$(node -e 'process.stdout.write(require("node:crypto").randomBytes(32).toString("hex"))')"
+          echo "::add-mask::$token"
+          echo "token=$token" >> "$GITHUB_OUTPUT"
+      - uses: op-nx/github-cache/start-cache-server@91839c24885842cac86567c30e23b37fb85f7e33
+        id: nx-cache
+        background: true
+        with:
+          port: '3000'
+        env:
+          NX_SELF_HOSTED_REMOTE_CACHE_SERVER: http://127.0.0.1:3000
+          NX_SELF_HOSTED_REMOTE_CACHE_ACCESS_TOKEN: ${{ steps.nx-cache-trust.outputs.token }}
+          CACHE_READ_ONLY: ${{ steps.nx-cache-trust.outputs.read_only == 'true' && '1' || '' }}
+          GITHUB_TOKEN: ${{ github.token }}
+      - name: Wait for the cache recording proxy
+        shell: bash
+        env:
+          NX_SELF_HOSTED_REMOTE_CACHE_SERVER: http://127.0.0.1:3000
+          NX_SELF_HOSTED_REMOTE_CACHE_ACCESS_TOKEN: ${{ steps.nx-cache-trust.outputs.token }}
+        run: node scripts/nx-remote-cache.mjs ready
+      - name: Bootstrap
+        shell: bash
+        run: just bootstrap
+      - name: Test the affected projects
+        shell: bash
+        run: just ci-test
+
+      - name: Report cache entries and task executions
+        if: always()
+        shell: bash
+        run: node scripts/nx-remote-cache.mjs report --job "$GITHUB_JOB" --out "$RUNNER_TEMP/nx-cache-report"
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.nx-cache-trust.outputs.promotable == 'true'
+        with:
+          name: nx-cache-entries-${{ github.job }}
+          path: ${{ runner.temp }}/nx-cache-report
+          retention-days: 7
+      - cancel: nx-cache
+
+  # The tests, coverage, budgets and e2e journeys of the affected projects on macOS.
+  test-macos:
+    if: github.event_name == 'pull_request'
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Read the pinned tool versions
+        id: pins
+        shell: bash
+        run: |
+          tr -d '\r' < .github/ci-tool-versions | awk '
+            /^#/ || !NF { next }
+            /^[a-z0-9-]+=[A-Za-z0-9._+-]+$/ { print; next }
+            { print "malformed pin: " $0 > "/dev/stderr"; exit 1 }
+          ' >> "$GITHUB_OUTPUT"
+      - uses: extractions/setup-just@v2
+        with:
+          just-version: ${{ steps.pins.outputs.just }}
+      # A fork's run writes nothing to any cache: this action saves its own binary otherwise.
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ steps.pins.outputs.bun }}
+      # The packaging project's e2e builds the wheel with maturin and installs it through uv.
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: ${{ steps.pins.outputs.uv }}
+          no-cache: ${{ github.event.pull_request.head.repo.full_name != github.repository }}
+      # rust-toolchain.toml names the toolchain. Restores what this platform's leg of
+      # .github/workflows/rust-cache-warm.yml saved on main and saves nothing.
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache-shared-key: test-macos
+          cache-save-if: false
+      - name: Decide cache trust and configure the sidecar
+        id: nx-cache-trust
+        shell: bash
+        run: |
+          node scripts/nx-remote-cache.mjs trust
+          token="$(node -e 'process.stdout.write(require("node:crypto").randomBytes(32).toString("hex"))')"
+          echo "::add-mask::$token"
+          echo "token=$token" >> "$GITHUB_OUTPUT"
+      - uses: op-nx/github-cache/start-cache-server@91839c24885842cac86567c30e23b37fb85f7e33
+        id: nx-cache
+        background: true
+        with:
+          port: '3000'
+        env:
+          NX_SELF_HOSTED_REMOTE_CACHE_SERVER: http://127.0.0.1:3000
+          NX_SELF_HOSTED_REMOTE_CACHE_ACCESS_TOKEN: ${{ steps.nx-cache-trust.outputs.token }}
+          CACHE_READ_ONLY: ${{ steps.nx-cache-trust.outputs.read_only == 'true' && '1' || '' }}
+          GITHUB_TOKEN: ${{ github.token }}
+      - name: Wait for the cache recording proxy
+        shell: bash
+        env:
+          NX_SELF_HOSTED_REMOTE_CACHE_SERVER: http://127.0.0.1:3000
+          NX_SELF_HOSTED_REMOTE_CACHE_ACCESS_TOKEN: ${{ steps.nx-cache-trust.outputs.token }}
+        run: node scripts/nx-remote-cache.mjs ready
+      - name: Bootstrap
+        shell: bash
+        run: just bootstrap
+      - name: Test the affected projects
+        shell: bash
+        run: just ci-test
+
+      - name: Report cache entries and task executions
+        if: always()
+        shell: bash
+        run: node scripts/nx-remote-cache.mjs report --job "$GITHUB_JOB" --out "$RUNNER_TEMP/nx-cache-report"
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.nx-cache-trust.outputs.promotable == 'true'
+        with:
+          name: nx-cache-entries-${{ github.job }}
+          path: ${{ runner.temp }}/nx-cache-report
+          retention-days: 7
+      - cancel: nx-cache
+
+  # The full history lets local git prove each saved base commit's ancestry, and the group
+  # serializes comment writers.
+  budgets:
+    needs: [lint, test-linux, test-windows, test-macos]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: write
+    concurrency:
+      group: budget-report-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: nickderobertis/onebudgetspec-github-action@v0.2.0
+        with:
+          token: ${{ github.token }}
+          enforcement-exclude-labels: release-tail,host-variable
+          saved-results-artifacts: budget-check-results-*
+          omit-labels: not-measured-on-pr

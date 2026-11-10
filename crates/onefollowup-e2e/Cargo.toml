@@ -16,7 +16,6 @@ assert_cmd.workspace = true
 gethostname.workspace = true
 # The configuration's key list, which the precedence cases are parameterized over.
 onefollowup = { path = "../onefollowup" }
-predicates.workspace = true
 serde.workspace = true
 serde-saphyr.workspace = true
 serde_json.workspace = true

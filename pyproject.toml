@@ -1,0 +1,41 @@
+# PyPI packaging for the onefollowup CLI: maturin's `bin` bindings wrap the prebuilt Rust
+# binary in a per-platform wheel, so `pip install onefollowup-cli` (or a uv lock) puts the
+# `onefollowup` command on PATH without compiling anything. The wheel carries the CLI
+# executable alone — there is no Python API.
+#
+# The version is not set here (`dynamic`): maturin reads it from the Cargo workspace, so
+# release-plz stays the one version driver. Wheels are built and published by
+# .github/workflows/release.yml through scripts/release.sh.
+
+[build-system]
+requires = ["maturin>=1.7,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "onefollowup-cli"
+description = "The follow-up loop for any orchestrator repository: draft, verify, file one ticket per root cause, and answer comments, over onetaskgraph."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "Nick DeRobertis" }]
+keywords = ["follow-up", "tickets", "triage", "onetaskgraph", "cli"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Rust",
+    "Topic :: Software Development :: Build Tools",
+]
+dynamic = ["version"]
+
+[project.urls]
+Homepage = "https://github.com/nickderobertis/onefollowup"
+Repository = "https://github.com/nickderobertis/onefollowup"
+
+[tool.maturin]
+# The compiled `onefollowup` binary as the wheel's entry point, not a Python extension.
+bindings = "bin"
+manifest-path = "crates/onefollowup/Cargo.toml"
+strip = true

@@ -1,0 +1,28 @@
+{
+  "schema": 2,
+  "batch": "nightly-2026-11-01",
+  "writes": [
+    {
+      "op": "copy",
+      "ticket": "drafts:nightly-2026-11-01/tickets/layout-save-reads-size-twice",
+      "destination": "followups"
+    },
+    {
+      "op": "comment",
+      "item": "followups:item-13",
+      "root_cause": "export-dialog-drops-unicode",
+      "body": "Additional evidence from follow-up run `nightly-2026-11-01`.\n\nSeen again \u2014 the title caf\u00e9 lost its accent.\n\n<!-- orchestrator:follow-up-comment run=\"nightly-2026-11-01\" root_cause=\"export-dialog-drops-unicode\" -->\n"
+    },
+    {
+      "op": "re-estimate",
+      "item": "followups:item-13",
+      "priority_estimate": "high"
+    },
+    {
+      "op": "relate",
+      "relation": "of-error",
+      "from": "drafts:nightly-2026-11-01/tickets/client-acme-e1042",
+      "to": "followups:item-7"
+    }
+  ]
+}

@@ -1,0 +1,232 @@
+{
+  "namedInputs": {
+    "default": [
+      "{projectRoot}/**/*"
+    ],
+    "production": [
+      "default"
+    ],
+    "cargoTestInputs": [
+      "{projectRoot}/**/*",
+      "!{projectRoot}/**/CHANGELOG.md",
+      "!{projectRoot}/**/Cargo.toml",
+      "!{projectRoot}/**/Cargo.lock",
+      "!{projectRoot}/**/package.json",
+      "!{projectRoot}/**/bun.lock",
+      "!{projectRoot}/**/package-lock.json",
+      "!{projectRoot}/**/pnpm-lock.yaml",
+      "!{projectRoot}/**/pyproject.toml",
+      "!{projectRoot}/**/uv.lock",
+      "!{workspaceRoot}/**/CHANGELOG.md",
+      "!{workspaceRoot}/**/Cargo.toml",
+      "!{workspaceRoot}/**/Cargo.lock",
+      "!{workspaceRoot}/**/package.json",
+      "!{workspaceRoot}/**/bun.lock",
+      "!{workspaceRoot}/**/package-lock.json",
+      "!{workspaceRoot}/**/pnpm-lock.yaml",
+      "!{workspaceRoot}/**/pyproject.toml",
+      "!{workspaceRoot}/**/uv.lock",
+      "{workspaceRoot}/.tool-versions",
+      "{workspaceRoot}/rust-toolchain.toml",
+      "{workspaceRoot}/.github/ci-tool-versions",
+      "{workspaceRoot}/scripts/nx-version-free-inputs.mjs",
+      {
+        "runtime": "node -p process.platform"
+      },
+      {
+        "externalDependencies": []
+      },
+      {
+        "runtime": "node scripts/nx-version-free-inputs.mjs --ecosystem cargo"
+      }
+    ],
+    "npmTestInputs": [
+      "{projectRoot}/**/*",
+      "!{projectRoot}/**/CHANGELOG.md",
+      "!{projectRoot}/**/Cargo.toml",
+      "!{projectRoot}/**/Cargo.lock",
+      "!{projectRoot}/**/package.json",
+      "!{projectRoot}/**/bun.lock",
+      "!{projectRoot}/**/package-lock.json",
+      "!{projectRoot}/**/pnpm-lock.yaml",
+      "!{projectRoot}/**/pyproject.toml",
+      "!{projectRoot}/**/uv.lock",
+      "!{workspaceRoot}/**/CHANGELOG.md",
+      "!{workspaceRoot}/**/Cargo.toml",
+      "!{workspaceRoot}/**/Cargo.lock",
+      "!{workspaceRoot}/**/package.json",
+      "!{workspaceRoot}/**/bun.lock",
+      "!{workspaceRoot}/**/package-lock.json",
+      "!{workspaceRoot}/**/pnpm-lock.yaml",
+      "!{workspaceRoot}/**/pyproject.toml",
+      "!{workspaceRoot}/**/uv.lock",
+      "{workspaceRoot}/.tool-versions",
+      "{workspaceRoot}/rust-toolchain.toml",
+      "{workspaceRoot}/.github/ci-tool-versions",
+      "{workspaceRoot}/scripts/nx-version-free-inputs.mjs",
+      {
+        "runtime": "node -p process.platform"
+      },
+      {
+        "externalDependencies": []
+      },
+      {
+        "runtime": "node scripts/nx-version-free-inputs.mjs --ecosystem npm"
+      }
+    ],
+    "pythonTestInputs": [
+      "{projectRoot}/**/*",
+      "!{projectRoot}/**/CHANGELOG.md",
+      "!{projectRoot}/**/Cargo.toml",
+      "!{projectRoot}/**/Cargo.lock",
+      "!{projectRoot}/**/package.json",
+      "!{projectRoot}/**/bun.lock",
+      "!{projectRoot}/**/package-lock.json",
+      "!{projectRoot}/**/pnpm-lock.yaml",
+      "!{projectRoot}/**/pyproject.toml",
+      "!{projectRoot}/**/uv.lock",
+      "!{workspaceRoot}/**/CHANGELOG.md",
+      "!{workspaceRoot}/**/Cargo.toml",
+      "!{workspaceRoot}/**/Cargo.lock",
+      "!{workspaceRoot}/**/package.json",
+      "!{workspaceRoot}/**/bun.lock",
+      "!{workspaceRoot}/**/package-lock.json",
+      "!{workspaceRoot}/**/pnpm-lock.yaml",
+      "!{workspaceRoot}/**/pyproject.toml",
+      "!{workspaceRoot}/**/uv.lock",
+      "{workspaceRoot}/.tool-versions",
+      "{workspaceRoot}/rust-toolchain.toml",
+      "{workspaceRoot}/.github/ci-tool-versions",
+      "{workspaceRoot}/scripts/nx-version-free-inputs.mjs",
+      {
+        "runtime": "node -p process.platform"
+      },
+      {
+        "externalDependencies": []
+      },
+      {
+        "runtime": "node scripts/nx-version-free-inputs.mjs --ecosystem python"
+      }
+    ],
+    "testInputs": [
+      "{projectRoot}/**/*",
+      "!{projectRoot}/**/CHANGELOG.md",
+      "!{projectRoot}/**/Cargo.toml",
+      "!{projectRoot}/**/Cargo.lock",
+      "!{projectRoot}/**/package.json",
+      "!{projectRoot}/**/bun.lock",
+      "!{projectRoot}/**/package-lock.json",
+      "!{projectRoot}/**/pnpm-lock.yaml",
+      "!{projectRoot}/**/pyproject.toml",
+      "!{projectRoot}/**/uv.lock",
+      "!{workspaceRoot}/**/CHANGELOG.md",
+      "!{workspaceRoot}/**/Cargo.toml",
+      "!{workspaceRoot}/**/Cargo.lock",
+      "!{workspaceRoot}/**/package.json",
+      "!{workspaceRoot}/**/bun.lock",
+      "!{workspaceRoot}/**/package-lock.json",
+      "!{workspaceRoot}/**/pnpm-lock.yaml",
+      "!{workspaceRoot}/**/pyproject.toml",
+      "!{workspaceRoot}/**/uv.lock",
+      "{workspaceRoot}/.tool-versions",
+      "{workspaceRoot}/rust-toolchain.toml",
+      "{workspaceRoot}/.github/ci-tool-versions",
+      "{workspaceRoot}/scripts/nx-version-free-inputs.mjs",
+      {
+        "runtime": "node -p process.platform"
+      },
+      {
+        "externalDependencies": []
+      },
+      {
+        "runtime": "node scripts/nx-version-free-inputs.mjs --ecosystem cargo"
+      }
+    ]
+  },
+  "targetDefaults": {
+    "budgets": {
+      "cache": true,
+      "inputs": [
+        "{projectRoot}/**/*",
+        "^production",
+        {
+          "dependentTasksOutputFiles": "**/telemetry/*.json"
+        },
+        {
+          "externalDependencies": [
+            "@onebudgetspec/cli"
+          ]
+        },
+        {
+          "runtime": "node -p process.platform"
+        },
+        "{workspaceRoot}/.github/ci-tool-versions",
+        "{workspaceRoot}/rust-toolchain.toml"
+      ]
+    },
+    "budgets-host": {
+      "cache": false,
+      "inputs": [
+        "default",
+        "^production",
+        {
+          "runtime": "node -p process.platform"
+        },
+        "{workspaceRoot}/.github/ci-tool-versions",
+        "{workspaceRoot}/rust-toolchain.toml"
+      ]
+    },
+    "test": {
+      "cache": true,
+      "inputs": [
+        "testInputs",
+        "^testInputs"
+      ],
+      "outputs": []
+    },
+    "build": {
+      "inputs": [
+        "default",
+        "^production",
+        {
+          "runtime": "node -p process.platform"
+        },
+        "{workspaceRoot}/.github/ci-tool-versions",
+        "{workspaceRoot}/rust-toolchain.toml"
+      ]
+    },
+    "e2e": {
+      "inputs": [
+        "default",
+        "^production",
+        {
+          "runtime": "node -p process.platform"
+        },
+        "{workspaceRoot}/.github/ci-tool-versions",
+        "{workspaceRoot}/rust-toolchain.toml"
+      ]
+    },
+    "test-compile": {
+      "cache": false
+    },
+    "lint": {
+      "inputs": [
+        "default",
+        "^production",
+        "{workspaceRoot}/.github/ci-tool-versions",
+        "{workspaceRoot}/rust-toolchain.toml"
+      ]
+    },
+    "typecheck": {
+      "inputs": [
+        "default",
+        "^production",
+        "{workspaceRoot}/.github/ci-tool-versions",
+        "{workspaceRoot}/rust-toolchain.toml"
+      ]
+    }
+  },
+  "plugins": [
+    "./scripts/nx-remote-cache.mjs"
+  ]
+}

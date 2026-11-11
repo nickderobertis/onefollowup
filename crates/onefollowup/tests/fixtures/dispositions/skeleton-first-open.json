@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "run": "nightly-2026-11-01",
+  "drafts": [
+    "drafts:nightly-2026-11-01/drafts/20261101T101500Z-layout-save-loses-the-window-size-r-sum-of-the-r",
+    "drafts:nightly-2026-11-01/drafts/20261101T102000Z-export-dialog-drops-unicode-titles",
+    "drafts:nightly-2026-11-01/drafts/20261101T102500Z-flaky-resize-test"
+  ],
+  "dispositions": []
+}

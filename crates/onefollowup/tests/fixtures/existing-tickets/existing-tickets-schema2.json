@@ -1,0 +1,8 @@
+{
+  "schema": 2,
+  "tickets": [
+    "drafts:nightly-2026-10-25/tickets/resize-during-save",
+    "drafts:nightly-2026-11-01/tickets/export-dialog-drops-unicode",
+    "drafts:nightly-2026-11-01/tickets/layout-save-reads-size-twice"
+  ]
+}

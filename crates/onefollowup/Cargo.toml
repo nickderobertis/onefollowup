@@ -1,0 +1,44 @@
+[package]
+name = "onefollowup"
+description = "The follow-up loop for any orchestrator repository: draft, verify, file one ticket per root cause, and answer comments, over onetaskgraph."
+readme = "../../README.md"
+keywords = ["follow-up", "tickets", "triage", "onetaskgraph", "cli"]
+categories = ["command-line-utilities", "development-tools"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+# The shipped defaults are embedded into the binary; README.md is the crate's readme.
+include = ["src/**/*", "defaults/**/*", "Cargo.toml", "README.md"]
+
+[lib]
+name = "onefollowup"
+path = "src/lib.rs"
+
+[[bin]]
+name = "onefollowup"
+path = "src/main.rs"
+
+[dependencies]
+clap.workspace = true
+gethostname.workspace = true
+indexmap.workspace = true
+onetaskgraph-core.workspace = true
+onetaskgraph-plugin-api.workspace = true
+regex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde-saphyr.workspace = true
+serde_path_to_error.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+regex.workspace = true
+onetaskgraph-plugin-api.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde-saphyr.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true

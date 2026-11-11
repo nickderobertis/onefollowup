@@ -1,0 +1,234 @@
+# Every configuration rule a document can break, each with the key the refusal names and a
+# phrase its message carries. Read by crates/onefollowup/tests/config.rs (through the library)
+# and crates/onefollowup-e2e/tests/config_show.rs (through the binary); each document is a
+# whole onefollowup.yaml, and an `over_base` one is appended to `base`.
+
+base: |
+  fields:
+    error_code: {description: The error's code.}
+    client: {description: The client's id.}
+  kinds:
+    - {name: root-cause, description: One root cause.}
+    - {name: error, description: One error code., duplicates: {same: [error_code]}}
+    - {name: client-error, description: One client's error., duplicates: {same: [error_code, client]}}
+    - {name: incident, description: An incident., priority: {fixed: urgent}}
+
+cases:
+  - document: |
+      default_kind: nothing
+    key: 'default_kind'
+    message: 'names no configured kind'
+  - document: |
+      kinds: []
+      default_kind: x
+    key: 'kinds'
+    message: 'names no kind'
+  - document: |
+      routes: [{name: r, match: {kind: [nothing]}}]
+    key: 'routes[0].match.kind'
+    message: 'names no configured kind'
+  - document: |
+      routes: [{name: r, set: {status_role: nothing}}]
+    key: 'routes[0].set.status_role'
+    message: 'unknown variant'
+  - document: |
+      routes: [{name: r, match: {relations: {nothing: {min: 1}}}}]
+    key: 'routes[0].match.relations'
+    message: 'names no configured relation'
+  - document: |
+      routes: [{name: r, match: {severity: [dire]}}]
+    key: 'routes[0].match.severity'
+    message: 'names no rubric level'
+  - document: |
+      routes: [{name: r, set: {assignees: [alice]}}]
+    key: 'routes[0].set.assignees'
+    message: 'one assignee'
+  - document: |
+      routes: [{name: r, command: []}]
+    key: 'routes[0].command'
+    message: 'empty argv'
+  - document: |
+      routes: [{name: r, set: {assignee: ' '}}]
+    key: 'routes[0].set.assignee'
+    message: 'names nobody'
+  - document: |
+      routes: [{name: r}, {name: r}]
+    key: 'routes'
+    message: 'twice'
+  - document: |
+      dispositions: [{name: d, description: D, requires: [ticket, nothing]}]
+      default_kind: root-cause
+    key: 'dispositions[0].requires[1]'
+    message: 'unknown variant'
+  - document: |
+      dispositions: [{name: d, description: D, requires: [ticket], files_ticket: true}]
+    key: 'dispositions[0].files_ticket'
+    message: 'requires: [ticket]'
+  - document: |
+      dispositions: []
+    key: 'dispositions'
+    message: 'catalogues no disposition'
+  - document: |
+      kinds: [{name: k, description: K, identity: x}]
+      default_kind: k
+    key: 'kinds[0].identity'
+    message: 'not a kind key'
+  - document: |
+      kinds: [{name: k, description: K, dedupe: x}]
+      default_kind: k
+    key: 'kinds[0].dedupe'
+    message: 'not a kind key'
+  - document: |
+      kinds: [{name: k, description: K, classification: x}]
+      default_kind: k
+    key: 'kinds[0].classification'
+    message: 'not a kind key'
+  - document: |
+      kinds: [{name: k, description: K, purpose: x}]
+      default_kind: k
+    key: 'kinds[0].purpose'
+    message: 'not a kind key'
+  - document: |
+      kinds: [{name: k, description: K, duplicates: judge}]
+      default_kind: k
+    key: 'kinds[0].duplicates'
+    message: '`duplicates` is `agent`'
+  - document: |
+      kinds: [{name: k, description: K, duplicates: {same: x}}]
+      default_kind: k
+    key: 'kinds[0].duplicates'
+    message: 'list of names'
+  - document: |
+      kinds: [{name: k, description: K, duplicates: {same: []}}]
+      default_kind: k
+    key: 'kinds[0].duplicates.same'
+    message: 'is empty'
+  - document: |
+      kinds: [{name: k, description: K, duplicates: {same: [undeclared]}}]
+      default_kind: k
+    key: 'kinds[0].duplicates.same'
+    message: 'does not declare'
+  - document: |
+      kinds: [{name: k, description: K, priority: {model: guess}}]
+      default_kind: k
+    key: 'kinds[0].priority'
+    message: '`priority` is'
+  - document: |
+      kinds: [{name: k, description: K, priority: {fixed: soon}}]
+      default_kind: k
+    key: 'kinds[0].priority'
+    message: '`priority` is'
+  - document: |
+      kinds: [{name: k, description: K}, {name: k, description: K}]
+      default_kind: k
+    key: 'kinds'
+    message: 'twice'
+  - document: |
+      kinds: [{name: k, description: K, dispositions: []}]
+      default_kind: k
+    key: 'kinds[0].dispositions'
+    message: 'is empty'
+  - document: |
+      kinds: [{name: k, description: K, dispositions: [nothing]}]
+      default_kind: k
+    key: 'kinds[0].dispositions'
+    message: 'does not catalogue'
+  - document: |
+      fields: {code: {}}
+    key: 'fields.code'
+    message: 'missing field `description`'
+  - document: |
+      fields: {code: {description: ' '}}
+    key: 'fields.code.description'
+    message: 'is empty'
+  - document: |
+      review_sink_command: [x]
+    key: 'review_sink_command'
+    message: '`hooks.batch_settled` hook replaced it'
+  - document: |
+      inputs_command: [x]
+    key: 'inputs_command'
+    message: '`hooks.batch_preparing` hook replaced it'
+  - document: |
+      hooks: {batch_started: [x]}
+    key: 'hooks.batch_started'
+    message: 'unknown field'
+  - document: |
+      hooks: {batch_settled: []}
+    key: 'hooks.batch_settled'
+    message: 'empty argv'
+  - document: |
+      default_dispositions: []
+    key: 'default_dispositions'
+    message: 'is empty'
+  - document: |
+      default_dispositions: [nothing]
+    key: 'default_dispositions'
+    message: 'does not catalogue'
+  - document: |
+      relations: [{name: r, from: nothing, to: root-cause, cardinality: many-to-one, decided_by: agent, store: link}]
+    key: 'relations[0].from'
+    message: 'names no configured kind'
+  - document: |
+      relations: [{name: r, from: root-cause, to: nothing, cardinality: many-to-one, decided_by: agent, store: link}]
+    key: 'relations[0].to'
+    message: 'names no configured kind'
+  - document: |
+      relations: [{name: r, from: root-cause, to: root-cause, cardinality: many-to-one, decided_by: guess, store: link}]
+    key: 'relations[0].decided_by'
+    message: '`decided_by` is'
+  - document: |
+      relations: [{name: r, from: root-cause, to: root-cause, cardinality: many-to-one, decided_by: agent, store: link}, {name: r, from: root-cause, to: root-cause, cardinality: many-to-one, decided_by: agent, store: link}]
+    key: 'relations'
+    message: 'twice'
+  - document: |
+      statuses: {done: {category: finished, description: D, protected: true, selected: false}}
+    key: 'statuses.done.category'
+    message: 'not a store status category'
+  - document: |
+      rubric: {levels: []}
+    key: 'rubric.levels'
+    message: 'names no severity level'
+  - document: |
+      snapshot: {launchable_for: soon}
+    key: 'snapshot.launchable_for'
+    message: 'not a duration'
+  - document: |
+      batch_id_pattern: '('
+    key: 'batch_id_pattern'
+    message: 'not a regular expression'
+  - over_base: true
+    document: |
+      relations: [{name: r, from: error, to: root-cause, cardinality: many-to-many, decided_by: agent, store: parent}]
+    key: 'relations[0].store'
+    message: 'many-to-one'
+  - over_base: true
+    document: |
+      relations: [{name: r, from: client-error, to: error, cardinality: many-to-many, decided_by: {match: [error_code]}, store: link}]
+    key: 'relations[0].decided_by'
+    message: 'many-to-one'
+  - over_base: true
+    document: |
+      relations: [{name: r, from: root-cause, to: error, cardinality: many-to-one, decided_by: {match: [error_code]}, store: link}]
+    key: 'relations[0].decided_by'
+    message: 'both find duplicates by `same`'
+  - over_base: true
+    document: |
+      relations: [{name: r, from: client-error, to: root-cause, cardinality: many-to-one, decided_by: {match: [error_code]}, store: link}]
+    key: 'relations[0].decided_by'
+    message: 'both find duplicates by `same`'
+  - over_base: true
+    document: |
+      relations: [{name: r, from: client-error, to: error, cardinality: many-to-one, decided_by: {match: [client]}, store: link}]
+    key: 'relations[0].decided_by.match'
+    message: 'exactly the `to` kind''s `same` fields'
+  - over_base: true
+    document: |
+      relations: [{name: r, from: error, to: client-error, cardinality: many-to-one, decided_by: {match: [error_code, client]}, store: link}]
+    key: 'relations[0].decided_by.match'
+    message: 'all among the `from` kind''s'
+  - over_base: true
+    document: |
+      relations: [{name: r, from: error, to: incident, cardinality: many-to-one, decided_by: agent, store: link, rollup: max}]
+    key: 'relations[0].rollup'
+    message: 'priority is fixed'

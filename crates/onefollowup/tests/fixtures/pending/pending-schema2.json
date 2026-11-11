@@ -1,0 +1,84 @@
+{
+  "schema": 2,
+  "entries": [
+    {
+      "snapshot": "/home/builder/drafts/feedback/.snapshots/20261101T120000Z",
+      "run": "nightly-2026-11-01",
+      "item": "followups:item-42",
+      "write": "priority",
+      "state": "partial",
+      "snapshot_version": "2026-11-01T11:59:58Z",
+      "seen_version": "2026-11-01T12:04:00Z",
+      "intended": {
+        "priority": "high",
+        "content": "## Root cause\n\nWidgets loses a saved layout when the window is resized during a save \u2014 the save reads the size twice.\n\n## Impact\n\nA person's layout is silently replaced by the default one, and they must rebuild it by hand.\n\n- Severity: medium\n- Workaround: avoid resizing while the save indicator shows\n- Severity with the workaround: low\n- Priority estimate: high (severity with the workaround low; fires intermittently; 1 occurrence; not raised)\n\n## Examples\n\nResizing the window while saving a layout named `caf\u00e9` restores the default layout.\n\n## Suggested fix\n\nRead the window size once per save.\n\n**Contributing locations.**\n\n- github.com/example/widgets `src/layout.rs`: reads the size twice\n\n## Owning runs\n\n- nightly-2026-11-01\n\n## Evidence\n\nThe run's log shows two size reads 40 ms apart during one save.",
+        "record": {
+          "schema": 14,
+          "root_cause": "layout-save-reads-size-twice",
+          "repository": "github.com/example/widgets",
+          "created_by_run": "nightly-2026-11-01",
+          "owning_runs": [
+            "nightly-2026-11-01"
+          ],
+          "drafts": [
+            "drafts:nightly-2026-11-01/drafts/20261101T101500Z-layout-save-loses-resize"
+          ],
+          "basis": {
+            "github.com/example/widgets": "0123456789abcdef0123456789abcdef01234567"
+          },
+          "verified_at": "2026-11-01T11:30:00Z",
+          "host": "build-host-1",
+          "priority_estimate": "high"
+        }
+      },
+      "parts": [
+        {
+          "part": "fields",
+          "outcome": "applied",
+          "error": null
+        },
+        {
+          "part": "issue",
+          "outcome": "failed",
+          "error": "the issue changed since \u2014 expected 2026-11-01T12:04:00Z"
+        }
+      ],
+      "error": "one part of the write failed",
+      "recorded_at": "2026-11-01T12:05:00Z"
+    },
+    {
+      "snapshot": "/home/builder/drafts/feedback/.snapshots/20261101T120000Z",
+      "run": "nightly-2026-11-01",
+      "item": "followups:item-43",
+      "write": "withdrawal",
+      "state": "withheld",
+      "snapshot_version": null,
+      "seen_version": null,
+      "intended": {
+        "status": "cancelled"
+      },
+      "parts": [],
+      "error": null,
+      "recorded_at": "2026-11-01T12:05:01Z"
+    },
+    {
+      "snapshot": "/home/builder/drafts/feedback/.snapshots/20261101T120000Z",
+      "run": "nightly-2026-11-01",
+      "item": "followups:item-44",
+      "write": "ticket-copy",
+      "state": "unknown",
+      "snapshot_version": "2026-11-01T11:59:00Z",
+      "seen_version": null,
+      "intended": {
+        "title": "gadgets: export keeps unicode titles \u2014 \u00e9",
+        "repositories": [
+          "github.com/example/widgets",
+          "github.com/example/gadgets"
+        ]
+      },
+      "parts": [],
+      "error": "the store's answer was lost",
+      "recorded_at": "2026-11-01T12:05:02Z"
+    }
+  ]
+}

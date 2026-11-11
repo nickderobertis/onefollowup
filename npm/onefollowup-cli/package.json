@@ -1,0 +1,27 @@
+{
+  "name": "onefollowup-cli",
+  "version": "0.0.0-managed",
+  "description": "The follow-up loop for any orchestrator repository: draft, verify, file one ticket per root cause, and answer comments, over onetaskgraph.",
+  "keywords": ["follow-up", "tickets", "triage", "onetaskgraph", "cli"],
+  "homepage": "https://github.com/nickderobertis/onefollowup",
+  "bugs": "https://github.com/nickderobertis/onefollowup/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nickderobertis/onefollowup.git"
+  },
+  "license": "MIT",
+  "author": "Nick DeRobertis",
+  "bin": {
+    "onefollowup": "bin/onefollowup.js"
+  },
+  "files": ["bin/onefollowup.js"],
+  "engines": {
+    "node": ">=18"
+  },
+  "optionalDependencies": {
+    "onefollowup-cli-linux-x64": "0.0.0-managed",
+    "onefollowup-cli-linux-arm64": "0.0.0-managed",
+    "onefollowup-cli-darwin-arm64": "0.0.0-managed",
+    "onefollowup-cli-win32-x64": "0.0.0-managed"
+  }
+}

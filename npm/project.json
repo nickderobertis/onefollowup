@@ -1,0 +1,41 @@
+{
+  "$schema": "../node_modules/nx/schemas/project-schema.json",
+  "name": "packaging",
+  "projectType": "application",
+  "tags": ["type:e2e", "lang:js"],
+  "implicitDependencies": ["onefollowup"],
+  "targets": {
+    "test": {
+      "command": "node --test npm/test/*.test.mjs",
+      "options": { "cwd": "{workspaceRoot}" },
+      "inputs": [
+        "{projectRoot}/**/*",
+        "{workspaceRoot}/release-targets.toml",
+        "{workspaceRoot}/pyproject.toml",
+        "{workspaceRoot}/gh-secrets.json",
+        "{workspaceRoot}/rust-toolchain.toml",
+        "{workspaceRoot}/crates/onefollowup/Cargo.toml",
+        "{workspaceRoot}/scripts/npm-build.mjs",
+        "{workspaceRoot}/scripts/release.sh",
+        "{workspaceRoot}/scripts/release-probe.sh",
+        "{workspaceRoot}/.github/workflows/*.yml"
+      ],
+      "cache": true
+    },
+    "e2e": {
+      "command": "bash scripts/package-smoke.sh",
+      "options": { "cwd": "{workspaceRoot}" },
+      "dependsOn": ["onefollowup:build"],
+      "inputs": [
+        "{projectRoot}/**/*",
+        "{workspaceRoot}/pyproject.toml",
+        "{workspaceRoot}/scripts/npm-build.mjs",
+        "{workspaceRoot}/scripts/package-smoke.sh",
+        "{workspaceRoot}/scripts/smoke.sh",
+        "{workspaceRoot}/.github/ci-tool-versions",
+        "^production"
+      ],
+      "cache": true
+    }
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "name": "onefollowup",
+  "projectType": "library",
+  "tags": ["type:library", "lang:rust"],
+  "targets": {
+    "format": {
+      "command": "cargo fmt -p onefollowup --check",
+      "cache": true
+    },
+    "lint": {
+      "command": "cargo clippy -p onefollowup --all-targets --locked -- -D warnings && RUSTDOCFLAGS='-D warnings' cargo doc -p onefollowup --no-deps --locked",
+      "cache": true
+    },
+    "test": {
+      "command": "bash scripts/crate-test.sh",
+      "options": { "cwd": "{workspaceRoot}" },
+      "inputs": ["testInputs", "{workspaceRoot}/scripts/crate-test.sh", "{workspaceRoot}/README.md"],
+      "cache": true
+    },
+    "test-compile": {
+      "command": "cargo test -p onefollowup --locked --no-run --quiet"
+    },
+    "build": {
+      "command": "cargo build -p onefollowup --locked",
+      "cache": true
+    }
+  }
+}

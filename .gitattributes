@@ -1,0 +1,5 @@
+# Check every text file out with LF on every platform: the drift gates read the tree's own
+# files line by line, and Windows' default autocrlf would otherwise hand them CRLF.
+* text=auto eol=lf
+# Record fixtures are byte-for-byte contracts: never convert them.
+crates/onefollowup/tests/fixtures/** -text

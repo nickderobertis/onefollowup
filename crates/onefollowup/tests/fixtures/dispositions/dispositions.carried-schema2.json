@@ -1,0 +1,26 @@
+{
+  "schema": 2,
+  "run": "nightly-2026-11-01",
+  "dispositions": [
+    {
+      "draft": "drafts:nightly-2026-11-01/drafts/20261101T101500Z-layout-save-loses-the-window-size-r-sum-of-the-r",
+      "disposition": "filed",
+      "root_causes": [
+        "layout-save-reads-size-twice"
+      ],
+      "detail": "Verified \u2014 the save reads the size twice."
+    },
+    {
+      "draft": "drafts:nightly-2026-11-01/drafts/20261101T102000Z-export-dialog-drops-unicode-titles",
+      "disposition": "not-reproducible",
+      "root_causes": [],
+      "detail": "The export dialog kept the title caf\u00e9 intact on three tries."
+    },
+    {
+      "draft": "drafts:nightly-2026-11-01/drafts/20261101T102500Z-flaky-resize-test",
+      "disposition": "too-low-impact",
+      "root_causes": [],
+      "detail": "A flaky test that retries green; no person is affected."
+    }
+  ]
+}

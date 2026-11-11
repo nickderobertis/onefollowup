@@ -1,0 +1,15 @@
+{
+  "$schema": "node_modules/nx/schemas/project-schema.json",
+  "name": "workspace",
+  "tags": ["type:workspace"],
+  "targets": {
+    "lint": {
+      "command": "node scripts/check-project-boundaries.mjs",
+      "inputs": [
+        "{workspaceRoot}/**/project.json",
+        "{workspaceRoot}/scripts/check-project-boundaries.mjs"
+      ],
+      "cache": true
+    }
+  }
+}

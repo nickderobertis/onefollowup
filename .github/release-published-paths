@@ -1,0 +1,12 @@
+# Files the published artifacts are built from; git pathspecs.
+Cargo.lock
+Cargo.toml
+crates/onefollowup/Cargo.toml
+crates/onefollowup/README.md
+crates/onefollowup/build.rs
+crates/onefollowup/defaults/**/*
+crates/onefollowup/src/**
+crates/onefollowup/src/**/*
+crates/onefollowup/src/lib.rs
+crates/onefollowup/src/main.rs
+rust-toolchain.toml

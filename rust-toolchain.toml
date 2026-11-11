@@ -1,0 +1,12 @@
+# Pinned toolchain for reproducible local and CI builds: an exact stable release, bumped
+# deliberately alongside a `just upgrade`. The targets are the release platforms.
+[toolchain]
+channel = "1.99.0"
+components = ["rustfmt", "clippy", "llvm-tools"]
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "aarch64-apple-darwin",
+    "x86_64-pc-windows-msvc",
+]
+profile = "minimal"

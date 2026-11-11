@@ -1,0 +1,8 @@
+.gate-time.json
+target/budget-results/
+/target
+node_modules/
+.nx/
+.gh-secrets-state.json
+/dist/
+__pycache__/

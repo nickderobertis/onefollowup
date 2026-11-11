@@ -105,6 +105,12 @@ pub fn run(settings: &Settings, args: BatchArgs) -> Result<Published, Error> {
     let mut state = batch.state()?;
     let outbox = batch.outbox()?;
     let receipts_path = batch.work.receipts(&batch.batch);
+    if state.checked.is_none() {
+        return Err(Error::Refused(format!(
+            "no `check` of batch `{}` has passed since it was last prepared or published, so nothing was written: run `onefollowup check --batch {}` until it passes",
+            batch.batch, batch.batch
+        )));
+    }
     if outbox.writes.is_empty() {
         return Ok(Published {
             schema_version: SCHEMA_VERSION,

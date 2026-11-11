@@ -415,7 +415,7 @@ fn copy_refuses_an_unsound_ticket_and_check_refuses_an_unsound_batch_writing_not
         assert!(problems.iter().any(|problem| problem.starts_with(&expected)), "{expected}\n{problems:#?}");
     }
     let refused = world.fails(2, &["publish", "--batch", BATCH], "");
-    assert!(refused.contains("staged or changed since"), "{refused}");
+    assert!(refused.contains("nothing was written"), "{refused}");
     assert_eq!(
         world.items("followups"),
         before,

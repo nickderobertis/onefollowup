@@ -258,6 +258,18 @@ impl World {
 
     /// Record a draft and answer its id.
     pub fn draft(&mut self, batch: &str, title: &str, paths: &[&str], body: &str) -> String {
+        self.draft_in(batch, REPOSITORY, title, paths, body)
+    }
+
+    /// Record a draft about `repository` and answer its id.
+    pub fn draft_in(
+        &mut self,
+        batch: &str,
+        repository: &str,
+        title: &str,
+        paths: &[&str],
+        body: &str,
+    ) -> String {
         let mut args = vec![
             "draft",
             "--batch",
@@ -265,7 +277,7 @@ impl World {
             "--title",
             title,
             "--repository",
-            REPOSITORY,
+            repository,
             "--author",
             "node:worker-1",
             "--stamp",
@@ -307,6 +319,8 @@ pub struct Ticket {
     pub evidence: String,
     /// Sections it leaves out.
     pub without: Vec<String>,
+    /// The repository it is filed in.
+    pub repository: String,
 }
 
 impl Ticket {
@@ -329,6 +343,7 @@ impl Ticket {
             extra: Vec::new(),
             evidence: format!("Host {HOST}: the run's log shows {title}."),
             without: Vec::new(),
+            repository: REPOSITORY.to_owned(),
         }
     }
 
@@ -348,11 +363,11 @@ impl Ticket {
         let mut record = json!({
             "schema": 14,
             "root_cause": self.slug,
-            "repository": REPOSITORY,
+            "repository": self.repository,
             "created_by_run": batch,
             "owning_runs": [batch],
             "drafts": self.drafts,
-            "basis": {REPOSITORY: COMMIT},
+            "basis": {self.repository.clone(): COMMIT},
             "verified_at": "2026-11-01T11:30:00Z",
             "host": HOST,
         });
@@ -411,7 +426,8 @@ impl Ticket {
             .map(|(name, text)| format!("## {name}\n\n{text}\n\n"))
             .collect();
         format!(
-            "---\ntitle: \"widgets: {}\"\n{status}metadata:\n  orchestrator.follow-up: {}\n---\n{}",
+            "---\ntitle: \"{}: {}\"\n{status}metadata:\n  orchestrator.follow-up: {}\n---\n{}",
+            self.repository.rsplit('/').next().unwrap_or_default(),
             self.title,
             record,
             body.trim_end()

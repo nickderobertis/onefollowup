@@ -313,7 +313,10 @@ pub fn run(settings: &Settings, args: BatchArgs) -> Result<Published, Error> {
         let record = ticket::record_value(&decision.record);
         let digest = ticket::digest(&file.title, &decision.body, &record);
         digests.insert(index.to_string(), digest.clone());
+        // A withdrawal changes the item's status, which the digest does not hold, so it is
+        // never an unchanged re-copy.
         if decision.card.is_some()
+            && !decision.withdrawal
             && let Some(item) = &decision.item
             && let Some((line, Some(landed))) = journal::last_landed(&journal, item)
             && landed == digest

@@ -1214,3 +1214,186 @@ fn evidence_and_re_estimates_on_items_gone_or_changed_since_prepare_are_each_rec
         "{pending}"
     );
 }
+
+#[test]
+#[allow(clippy::too_many_lines, reason = "one journey, end to end")]
+fn a_withdrawal_a_restaged_comment_and_a_kind_removed_before_publish_are_each_handled() {
+    let mut world = World::new(&["followups"], SAME);
+    world.item(
+        "followups",
+        "signed-elsewhere",
+        &filed_item(
+            "widgets: a token leaks to the log",
+            "nightly-2026-10-05",
+            "token-leaks",
+            &json!({"kind": "security", "fields": {"error_signature": "TokenLeak: bearer"}}),
+            "low",
+        ),
+        &filed_body("A token leaks."),
+    );
+    let first = world.draft(BATCH, "a flaky resize test", &["tests/r.rs"], "Flaky.\n");
+    world.ok("prepare", &["prepare", "--batch", BATCH], "");
+    let mut flaky = Ticket::new("flaky-resize", "a flaky resize test", &[&first]);
+    flaky.extra = vec![("fields".to_owned(), json!({}))];
+    world.ticket(BATCH, &flaky);
+    world.ok(
+        "agent",
+        &["ticket", "copy", "--batch", BATCH, "flaky-resize"],
+        "",
+    );
+    world.answer(
+        BATCH,
+        &[answer(
+            &first,
+            "root-cause",
+            "filed",
+            &["flaky-resize"],
+            "Verified.",
+        )],
+    );
+    world.ok("check", &["check", "--batch", BATCH], "");
+    world.ok("publish", &["publish", "--batch", BATCH], "");
+    world.ok("settle", &["settle", "--batch", BATCH], "");
+    let (card, text) = world
+        .filed("followups")
+        .into_iter()
+        .find(|(id, _)| id != "signed-elsewhere")
+        .expect("the flaky ticket's card");
+    assert!(
+        record(&text).get("fields").is_none(),
+        "an empty `fields` is not recorded: {text}"
+    );
+
+    // The next pass withdraws it, and stages evidence twice on another batch's item.
+    let second = world.draft(
+        BATCH,
+        "a token leaks to the log",
+        &["src/auth.rs"],
+        "Leak.\n",
+    );
+    world.ok("prepare", &["prepare", "--batch", BATCH], "");
+    flaky.status = Some("cancelled".to_owned());
+    world.ticket(BATCH, &flaky);
+    world.ok(
+        "agent",
+        &["ticket", "copy", "--batch", BATCH, "flaky-resize"],
+        "",
+    );
+    let mut bare = Ticket::new("token-leaks-bare", "a token leaks to the log", &[&second]);
+    bare.kind = Some("security".to_owned());
+    bare.fields = vec![("error_signature".to_owned(), "tokenleak: bearer".to_owned())];
+    bare.without = vec!["Evidence".to_owned()];
+    world.ticket(BATCH, &bare);
+    let stderr = world.fails(
+        2,
+        &["ticket", "copy", "--batch", BATCH, "token-leaks-bare"],
+        "",
+    );
+    assert!(
+        stderr.contains("is not sound, so nothing was staged")
+            && stderr.contains("missing the `## Evidence` section"),
+        "a ticket with no evidence to stage on the matched item is refused: {stderr}"
+    );
+    let comment = |world: &mut World, evidence: &str| {
+        world.ok(
+            "agent",
+            &[
+                "ticket",
+                "comment",
+                "--batch",
+                BATCH,
+                "--item",
+                "followups:signed-elsewhere",
+                "--root-cause",
+                "token-leaks",
+            ],
+            evidence,
+        )
+    };
+    let staged = comment(&mut world, "Host build-host-1: one leak.\n");
+    let again = comment(&mut world, "Host build-host-1: two leaks.\n");
+    assert_eq!(
+        staged["index"], again["index"],
+        "restaged in place: {again}"
+    );
+    world.ok(
+        "agent",
+        &[
+            "ticket",
+            "re-estimate",
+            "--batch",
+            BATCH,
+            "followups:signed-elsewhere",
+        ],
+        "",
+    );
+    world.answer(
+        BATCH,
+        &[answer(
+            &second,
+            "security",
+            "filed",
+            &["token-leaks"],
+            "Evidence.",
+        )],
+    );
+    let checked = world.ok("check", &["check", "--batch", BATCH], "");
+    assert_eq!(checked["sound"], true, "{checked}");
+
+    // The host drops the security kind before publishing: the re-estimate of an item recording
+    // it is refused, receipted, and the batch's other writes land.
+    let published = world.ok(
+        "publish",
+        &[
+            "--set",
+            "kinds=[{name: root-cause, description: One root cause.}]",
+            "publish",
+            "--batch",
+            BATCH,
+        ],
+        "",
+    );
+    let outcomes: Vec<(&str, &str)> = published["outcomes"]
+        .as_array()
+        .expect("outcomes")
+        .iter()
+        .map(|one| {
+            (
+                one["op"].as_str().unwrap_or_default(),
+                one["outcome"].as_str().unwrap_or_default(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        outcomes,
+        [
+            ("copy", "updated"),
+            ("comment", "written"),
+            ("re-estimate", "invalid")
+        ],
+        "{published}"
+    );
+    assert!(
+        published["outcomes"][2]["error"].as_str().is_some_and(
+            |error| error.contains("records the kind `security`, which is not configured")
+        ),
+        "{published}"
+    );
+    assert_eq!(
+        front(&world.read_item("followups", &card))["status"],
+        "cancelled",
+        "the withdrawal wrote its status"
+    );
+    let stderr = world.fails(
+        1,
+        &[
+            "--set",
+            "hooks.batch_settled=[no-such-hook-anywhere]",
+            "settle",
+            "--batch",
+            BATCH,
+        ],
+        "",
+    );
+    assert!(stderr.contains("could not run"), "{stderr}");
+}

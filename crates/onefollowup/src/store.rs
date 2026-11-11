@@ -179,30 +179,6 @@ impl StoreItem {
             },
         }
     }
-
-    /// The qualified id the item was copied from, as the store records it.
-    #[must_use]
-    pub fn origin(&self) -> Option<String> {
-        self.metadata
-            .get("onetaskgraph.origin")
-            .and_then(Value::as_str)
-            .map(str::to_owned)
-    }
-
-    /// The item this one was copied to at `destination`, as the store records it.
-    #[must_use]
-    pub fn copy_at(&self, destination: &str) -> Option<String> {
-        let copies = self.metadata.get("onetaskgraph.copies")?.as_object()?;
-        copies.get(destination).and_then(|value| match value {
-            Value::String(item) => Some(item.clone()),
-            Value::Object(entry) => entry
-                .get("id")
-                .or_else(|| entry.get("item"))
-                .and_then(Value::as_str)
-                .map(str::to_owned),
-            _ => None,
-        })
-    }
 }
 
 /// One comment as a source reported it.
@@ -522,12 +498,6 @@ impl Store {
     pub fn with_local(mut self, source: &str) -> Self {
         self.local = Some(source.to_owned());
         self
-    }
-
-    /// The directory holding the store's configuration.
-    #[must_use]
-    pub fn directory(&self) -> &Path {
-        &self.directory
     }
 
     /// Every source the store's configuration declares, in name order.

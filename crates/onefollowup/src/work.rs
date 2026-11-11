@@ -52,12 +52,6 @@ impl Work {
         }
     }
 
-    /// The root.
-    #[must_use]
-    pub fn root(&self) -> &Path {
-        &self.root
-    }
-
     /// `state/<batch>.json`.
     #[must_use]
     pub fn state(&self, batch: &str) -> PathBuf {

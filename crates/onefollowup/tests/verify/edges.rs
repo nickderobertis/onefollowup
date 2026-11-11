@@ -907,3 +907,310 @@ fn settle_reads_back_a_new_ticket_a_comment_and_a_re_estimate_whose_answers_were
         "one read of the items named, one search by origin for the new ticket: {operations:?}"
     );
 }
+
+#[test]
+fn a_task_template_that_cannot_be_found_read_or_rendered_is_named() {
+    let mut world = World::new(&["followups"], "host_label: build-host-1\n");
+    world.draft(BATCH, "a draft", &["src/a.rs"], "Body.\n");
+    std::fs::create_dir_all(world.root.join("templates/partial.md.j2")).expect("a directory");
+    std::fs::write(
+        world.root.join("templates/broken.md.j2"),
+        "{% if %}never closed\n",
+    )
+    .expect("written");
+    std::fs::write(
+        world.root.join("templates/includes.md.j2"),
+        "{% include \"partial.md.j2\" %}\n",
+    )
+    .expect("written");
+    std::fs::write(
+        world.root.join("templates/includes-nothing.md.j2"),
+        "{% include \"absent.md.j2\" %}\n",
+    )
+    .expect("written");
+    for (template, named) in [
+        ("builtin:absent.md.j2", "builtin:task-template.md.j2"),
+        ("templates/absent.md.j2", "could not be read"),
+        ("templates/broken.md.j2", "broken.md.j2"),
+        (
+            "templates/includes.md.j2",
+            "partial.md.j2 could not be read",
+        ),
+        ("templates/includes-nothing.md.j2", "absent.md.j2"),
+    ] {
+        let set = format!("task_template={template}");
+        let ran = world.run(&["--set", &set, "prepare", "--batch", BATCH], "");
+        assert_ne!(ran.code, 0, "{template}: {}", ran.stdout);
+        assert!(ran.stderr.contains(named), "{template}: {}", ran.stderr);
+    }
+    world.ok("prepare", &["prepare", "--batch", BATCH], "");
+}
+
+/// A host whose `security` kind finds duplicates by `error_signature`.
+const SAME: &str = "host_label: build-host-1
+fields:
+  error_signature:
+    description: The error's signature, as the log prints it.
+kinds:
+  - name: root-cause
+    description: One root cause.
+  - name: security
+    description: A security finding.
+    duplicates: {same: [error_signature]}
+";
+
+#[test]
+fn a_re_prepare_asks_for_each_written_tickets_values_and_check_names_stray_answers_and_files() {
+    let mut world = World::new(&["followups"], SAME);
+    world.seed("followups", 5);
+    world.item(
+        "followups",
+        "signed-elsewhere",
+        &filed_item(
+            "widgets: an unrelated title",
+            "nightly-2026-10-05",
+            "unrelated-title",
+            &json!({"kind": "security", "fields": {"error_signature": "TokenLeak: bearer"}}),
+            "low",
+        ),
+        &filed_body("Nothing in common but the signature."),
+    );
+    let first = world.draft(
+        BATCH,
+        "a token leaks to the log",
+        &["src/auth.rs"],
+        "Leak.\n",
+    );
+    let second = world.draft(BATCH, "a token leaks again", &["src/auth.rs"], "Leak.\n");
+    world.ok("prepare", &["prepare", "--batch", BATCH], "");
+    for (slug, draft, signature) in [
+        ("token-leaks", &first, "TokenLeak: bearer"),
+        ("token-leaks-again", &second, " tokenleak: BEARER "),
+        ("token-unsigned", &second, " "),
+    ] {
+        let mut ticket = Ticket::new(slug, slug, &[draft]);
+        ticket.kind = Some("security".to_owned());
+        ticket.fields = vec![("error_signature".to_owned(), signature.to_owned())];
+        world.ticket(BATCH, &ticket);
+    }
+    let mut stray = Ticket::new("stray-field", "stray field", &[&first]);
+    stray.fields = vec![("colour".to_owned(), "blue".to_owned())];
+    world.ticket(BATCH, &stray);
+
+    // A re-prepare searches each written ticket's value, once however it is spelled.
+    world.reset_phases();
+    world.ok("prepare", &["prepare", "--batch", BATCH], "");
+    let finds = world.destination_operations();
+    assert_eq!(
+        finds
+            .iter()
+            .map(|(_, op, _, items)| (op.as_str(), *items))
+            .collect::<Vec<_>>(),
+        [("find", 1), ("read", 1)],
+        "the value search found the item its title search could not: {finds:?}"
+    );
+
+    // The open item carrying the signature takes the ticket's evidence.
+    let matched = world.ok(
+        "agent",
+        &["ticket", "copy", "--batch", BATCH, "token-leaks"],
+        "",
+    );
+    assert_eq!(
+        matched["matched"], "followups:signed-elsewhere",
+        "{matched}"
+    );
+    assert_eq!(matched["write"]["op"], "comment", "{matched}");
+    world.ticket(
+        BATCH,
+        &Ticket::new("plain-ticket", "a plain ticket", &[&first]),
+    );
+    world.ok(
+        "agent",
+        &["ticket", "copy", "--batch", BATCH, "plain-ticket"],
+        "",
+    );
+    std::fs::remove_file(
+        world
+            .work()
+            .join(format!("tasks/{BATCH}/tickets/plain-ticket.md")),
+    )
+    .expect("removed");
+    world.answer(
+        BATCH,
+        &[
+            answer(&first, "root-cause", "filed", &["token-leaks"], "Verified."),
+            answer(&second, "root-cause", "not-reproducible", &[], "Not seen."),
+            answer(
+                "drafts:no-such-input",
+                "root-cause",
+                "not-reproducible",
+                &[],
+                "?",
+            ),
+        ],
+    );
+    let checked = world.ok("check", &["check", "--batch", BATCH], "");
+    assert_eq!(checked["sound"], false, "{checked}");
+    let said: Vec<String> = checked["problems"]
+        .as_array()
+        .expect("problems")
+        .iter()
+        .map(|one| format!("{}: {}", one["subject"], one["message"]))
+        .collect();
+    assert_finds(
+        &said,
+        &[
+            "the answer names no input of this batch",
+            "the ticket `plain-ticket` it copies is not under the batch's tickets",
+            "the ticket records the field `colour`",
+        ],
+        "check",
+    );
+    let stderr = world.fails(2, &["publish", "--batch", BATCH], "");
+    assert!(stderr.contains("no `check` of batch"), "{stderr}");
+}
+
+#[test]
+fn evidence_and_re_estimates_on_items_gone_or_changed_since_prepare_are_each_receipted() {
+    let mut world = World::new(&["followups"], "host_label: build-host-1\n");
+    for (id, cause) in [("gone-item", "gone-cause"), ("moved-item", "moved-cause")] {
+        world.item(
+            "followups",
+            id,
+            &filed_item(
+                &format!("widgets: the {} fails", cause.replace('-', " ")),
+                "nightly-2026-10-01",
+                cause,
+                &json!({}),
+                "medium",
+            ),
+            &filed_body(cause),
+        );
+    }
+    let draft = world.draft(BATCH, "the gone cause fails", &["src/a.rs"], "Seen.\n");
+    let other = world.draft(BATCH, "the moved cause fails", &["src/b.rs"], "Seen.\n");
+    world.ok("prepare", &["prepare", "--batch", BATCH], "");
+    for (item, cause) in [
+        ("followups:gone-item", "gone-cause"),
+        ("followups:moved-item", "moved-cause"),
+    ] {
+        world.ok(
+            "agent",
+            &[
+                "ticket",
+                "comment",
+                "--batch",
+                BATCH,
+                "--item",
+                item,
+                "--root-cause",
+                cause,
+            ],
+            &format!("Host {HOST}: seen again.\n"),
+        );
+        world.ok(
+            "agent",
+            &["ticket", "re-estimate", "--batch", BATCH, item],
+            "",
+        );
+    }
+    world.answer(
+        BATCH,
+        &[
+            answer(&draft, "root-cause", "filed", &["gone-cause"], "Evidence."),
+            answer(&other, "root-cause", "filed", &["moved-cause"], "Evidence."),
+        ],
+    );
+    world.ok("check", &["check", "--batch", BATCH], "");
+    std::fs::remove_file(world.root.join("followups-root/tasks/gone-item.md")).expect("removed");
+    world.edit_item(
+        "followups",
+        "moved-item",
+        "priority: medium",
+        "priority: high",
+    );
+    let published = world.ok("publish", &["publish", "--batch", BATCH], "");
+    let outcomes: Vec<(&str, &str, &str)> = published["outcomes"]
+        .as_array()
+        .expect("outcomes")
+        .iter()
+        .map(|one| {
+            (
+                one["op"].as_str().unwrap_or_default(),
+                one["item"].as_str().unwrap_or_default(),
+                one["outcome"].as_str().unwrap_or_default(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        outcomes,
+        [
+            ("comment", "followups:gone-item", "error"),
+            ("re-estimate", "followups:gone-item", "error"),
+            ("comment", "followups:moved-item", "written"),
+            ("re-estimate", "followups:moved-item", "version-moved"),
+        ],
+        "{published}"
+    );
+    let journal = world.receipts(BATCH);
+    assert_eq!(
+        journal.len(),
+        4,
+        "each outcome is its own entry: {journal:?}"
+    );
+    for (receipt, (command, item, kind)) in journal.iter().zip([
+        ("comment", "followups:gone-item", Some("error")),
+        ("re-estimate", "followups:gone-item", Some("error")),
+        ("comment", "followups:moved-item", None),
+        ("re-estimate", "followups:moved-item", Some("version-moved")),
+    ]) {
+        assert_eq!(receipt["command"], command, "{receipt}");
+        assert_eq!(receipt["card"], item, "{receipt}");
+        match kind {
+            Some(kind) => {
+                assert_eq!(receipt["outcome"]["error"]["kind"], kind, "{receipt}");
+                assert!(receipt["outcome"].get("id").is_none(), "{receipt}");
+            }
+            None => assert!(receipt["outcome"].get("error").is_none(), "{receipt}"),
+        }
+    }
+    assert!(
+        world
+            .read_item("followups", "moved-item")
+            .contains("priority: high"),
+        "the person's priority stands"
+    );
+
+    let settled = world.ok("settle", &["settle", "--batch", BATCH], "");
+    assert_eq!(
+        settled["read_back"], 0,
+        "every outcome was answered: {settled}"
+    );
+    assert_eq!(settled["pending"], 3, "{settled}");
+    assert_eq!(settled["needs_attention"], true, "{settled}");
+    let pending: Value = serde_json::from_str(
+        &std::fs::read_to_string(world.work().join("feedback/pending.json")).expect("pending.json"),
+    )
+    .expect("JSON");
+    let writes: Vec<(&str, &str)> = pending["entries"]
+        .as_array()
+        .expect("entries")
+        .iter()
+        .map(|entry| {
+            (
+                entry["item"].as_str().unwrap_or_default(),
+                entry["write"].as_str().unwrap_or_default(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        writes,
+        [
+            ("followups:gone-item", "comment"),
+            ("followups:gone-item", "priority"),
+            ("followups:moved-item", "priority"),
+        ],
+        "{pending}"
+    );
+}

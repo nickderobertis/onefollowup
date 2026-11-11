@@ -107,3 +107,53 @@ fn a_refused_configuration_and_a_bad_key_value_are_refused() {
         .expect_err("not a record");
     assert_eq!(Error::from(format).exit_code(), 1);
 }
+
+#[test]
+fn every_verify_verb_reaches_its_function_and_refuses_a_batch_id_that_is_none() {
+    let verbs: &[&[&str]] = &[
+        &[
+            "draft",
+            "--batch",
+            "not a batch",
+            "--title",
+            "t",
+            "--repository",
+            "github.com/a/b",
+        ],
+        &["prepare", "--batch", "not a batch"],
+        &["ticket", "validate", "--batch", "not a batch", "t"],
+        &["ticket", "board-status", "--batch", "not a batch", "s:i"],
+        &[
+            "ticket",
+            "search",
+            "--batch",
+            "not a batch",
+            "--ticket",
+            "t",
+            "words",
+        ],
+        &["ticket", "copy", "--batch", "not a batch", "t"],
+        &[
+            "ticket",
+            "comment",
+            "--batch",
+            "not a batch",
+            "--item",
+            "s:i",
+            "--root-cause",
+            "r",
+        ],
+        &["ticket", "re-estimate", "--batch", "not a batch", "s:i"],
+        &["check", "--batch", "not a batch"],
+        &["publish", "--batch", "not a batch"],
+        &["settle", "--batch", "not a batch"],
+    ];
+    for arguments in verbs {
+        let error = dispatched(arguments).expect_err("refused");
+        assert!(
+            matches!(&error, Error::Refused(message) if message.contains("`not a batch` is not a batch id")),
+            "{arguments:?}: {error}"
+        );
+        assert_eq!(error.exit_code(), 2);
+    }
+}

@@ -2,6 +2,12 @@
 # boundary by the journey in tests/e2e/budget.rs while this project's `e2e` target runs. The
 # budget's command is tests/e2e/budget_runner.rs, which reports what that run recorded; its last
 # argument names the saved telemetry it reads, a libtest filter no test matches.
+#
+# Basis, by arithmetic over the batched design: prepare's one task find and one comments read,
+# and publish's create-only copy of the new tickets, held copy of the bound ones, one comment
+# add-many and one update-many make 6 operations, settle reading nothing back since every
+# write's answer names its version; the headroom above that is one further `ticket search` and
+# a settle read-back of writes whose answers were lost.
 schema_version: 1
 budgets:
   - id: follow-up-batch-store-operations
@@ -15,11 +21,6 @@ budgets:
       or wrote. It protects a destination's shared allowance — a GitHub or Linear key every
       manager of a host shares — by holding a whole batch's destination work to a handful of
       batched store calls; each call's own cost there is held by onetaskgraph's budgets.
-      Arithmetic over the batched design: prepare's one task find and one comments read, and
-      publish's create-only copy of the new tickets, held copy of the bound ones, one comment
-      add-many and one update-many — 6 operations, with settle reading nothing back since every
-      write's answer names its version. The threshold of 8 allows one further `ticket search`
-      and a settle read-back of writes whose answers were lost.
     measure: reported
     command: ["cargo", "test", "--quiet", "-p", "onefollowup-e2e", "--locked", "--test", "e2e", "--", "budget_runner::report", "--exact", "--nocapture", "../../target/debug/telemetry/onefollowup-e2e"]
     unit: operations

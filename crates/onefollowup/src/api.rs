@@ -414,7 +414,8 @@ pub struct DraftArgs {
 ///
 /// # Errors
 ///
-/// [`Error::NotImplemented`] in this release.
+/// A refused batch id, title, repository, author or stamp, an empty body, or the store's
+/// refusal.
 pub fn draft(settings: &Settings, args: DraftArgs) -> Result<Drafted, Error> {
     verify::draft::run(settings, args)
 }
@@ -458,7 +459,8 @@ pub struct Prepared {
 ///
 /// # Errors
 ///
-/// [`Error::NotImplemented`] in this release.
+/// A refused batch id or alias, a failing `hooks.batch_preparing` command (nothing
+/// snapshotted and nothing read), a template that cannot be rendered, or the store's refusal.
 pub fn prepare(settings: &Settings, args: PrepareArgs) -> Result<Prepared, Error> {
     verify::prepare::run(settings, args)
 }
@@ -478,7 +480,7 @@ pub struct TicketValidateArgs {
 ///
 /// # Errors
 ///
-/// [`Error::NotImplemented`] in this release.
+/// A batch id that is none, or no such ticket file.
 pub fn ticket_validate(
     settings: &Settings,
     args: TicketValidateArgs,
@@ -501,7 +503,7 @@ pub struct TicketBoardStatusArgs {
 ///
 /// # Errors
 ///
-/// [`Error::NotImplemented`] in this release.
+/// A batch not prepared, or an item it did not read.
 pub fn ticket_board_status(
     settings: &Settings,
     args: TicketBoardStatusArgs,
@@ -530,7 +532,7 @@ pub struct TicketSearchArgs {
 ///
 /// # Errors
 ///
-/// [`Error::NotImplemented`] in this release.
+/// A batch not prepared, a question narrowed by nothing, or the store's refusal.
 pub fn ticket_search(settings: &Settings, args: TicketSearchArgs) -> Result<SearchResults, Error> {
     verify::tools::search(settings, args)
 }
@@ -550,7 +552,7 @@ pub struct TicketCopyArgs {
 ///
 /// # Errors
 ///
-/// [`Error::NotImplemented`] in this release.
+/// A batch not prepared, or a ticket `ticket validate` refuses: nothing is staged.
 pub fn ticket_copy(settings: &Settings, args: TicketCopyArgs) -> Result<Staged, Error> {
     verify::tools::copy(settings, args)
 }
@@ -577,7 +579,8 @@ pub struct TicketCommentArgs {
 ///
 /// # Errors
 ///
-/// [`Error::NotImplemented`] in this release.
+/// A batch not prepared, a root cause that is not a slug, an item the batch did not
+/// read or that is its own, or empty evidence: nothing is staged.
 pub fn ticket_comment(settings: &Settings, args: TicketCommentArgs) -> Result<Staged, Error> {
     verify::tools::comment(settings, args)
 }
@@ -597,7 +600,7 @@ pub struct TicketReEstimateArgs {
 ///
 /// # Errors
 ///
-/// [`Error::NotImplemented`] in this release.
+/// A batch not prepared, or an item whose occurrences it did not read: nothing is staged.
 pub fn ticket_re_estimate(
     settings: &Settings,
     args: TicketReEstimateArgs,
@@ -643,7 +646,7 @@ pub struct BatchArgs {
 ///
 /// # Errors
 ///
-/// [`Error::NotImplemented`] in this release.
+/// A batch not prepared, or a working file that cannot be read or written.
 pub fn check(settings: &Settings, args: BatchArgs) -> Result<Checked, Error> {
     verify::check::run(settings, args)
 }
@@ -652,7 +655,8 @@ pub fn check(settings: &Settings, args: BatchArgs) -> Result<Checked, Error> {
 ///
 /// # Errors
 ///
-/// [`Error::NotImplemented`] in this release.
+/// A batch not prepared; an outbox the latest passing `check` did not hold exactly as it
+/// stands, refused with nothing written; or a journal that could not record every answer.
 pub fn publish(settings: &Settings, args: BatchArgs) -> Result<Published, Error> {
     verify::publish::run(settings, args)
 }
@@ -661,7 +665,8 @@ pub fn publish(settings: &Settings, args: BatchArgs) -> Result<Published, Error>
 ///
 /// # Errors
 ///
-/// [`Error::NotImplemented`] in this release.
+/// A batch not prepared, the store's refusal of the read-back, or a `hooks.batch_settled`
+/// command that could not run.
 pub fn settle(settings: &Settings, args: BatchArgs) -> Result<Settled, Error> {
     verify::settle::run(settings, args)
 }

@@ -40,6 +40,8 @@ fn staged(write: StagedWrite, index: usize) -> Value {
         batch: BATCH.to_owned(),
         index,
         write,
+        matched: None,
+        store_operations: Vec::new(),
     })
     .expect("JSON")
 }
@@ -71,6 +73,7 @@ fn examples() -> BTreeMap<&'static str, Value> {
                 inputs: 1,
                 answers: PathBuf::from(format!("dispositions/{BATCH}.json")),
                 task_template: PathBuf::from(format!("tasks/{BATCH}/task.md")),
+                store_operations: Vec::new(),
             })),
         ),
         (
@@ -106,6 +109,9 @@ fn examples() -> BTreeMap<&'static str, Value> {
                     last_changed: "2026-11-01T11:00:00Z".to_owned(),
                     body: "Seen again after a resize.".to_owned(),
                 }],
+                status_role: None,
+                priority_estimate: None,
+                estimate_line: None,
             })),
         ),
         (
@@ -121,6 +127,7 @@ fn examples() -> BTreeMap<&'static str, Value> {
                     status: status(),
                     url: Some("https://github.com/example/widgets/issues/42".to_owned()),
                 }],
+                store_operations: Vec::new(),
             })),
         ),
         (
@@ -190,7 +197,9 @@ fn examples() -> BTreeMap<&'static str, Value> {
                     op: StagedOp::Copy,
                     item: Some("followups:item-42".to_owned()),
                     outcome: "created".to_owned(),
+                    error: None,
                 }],
+                store_operations: Vec::new(),
             })),
         ),
         (
@@ -205,6 +214,9 @@ fn examples() -> BTreeMap<&'static str, Value> {
                     exit: 0,
                 }),
                 retired: vec![PathBuf::from(format!("outbox/{BATCH}.json"))],
+                pending: 0,
+                needs_attention: false,
+                store_operations: Vec::new(),
             })),
         ),
         (

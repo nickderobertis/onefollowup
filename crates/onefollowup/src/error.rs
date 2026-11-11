@@ -3,6 +3,8 @@
 use crate::config::ConfigError;
 use crate::formats::FormatError;
 use crate::store::StoreError;
+use crate::verify::template::TemplateError;
+use crate::work::WorkError;
 
 /// Exit code: the verb succeeded.
 pub const EXIT_OK: u8 = 0;
@@ -30,6 +32,18 @@ pub enum Error {
     /// The store could not be used.
     #[error(transparent)]
     Store(#[from] StoreError),
+    /// A working file could not be read or written.
+    #[error(transparent)]
+    Work(#[from] WorkError),
+    /// A template could not be rendered.
+    #[error(transparent)]
+    Template(#[from] TemplateError),
+    /// The verb refused: what it was asked breaks a rule, and nothing was written.
+    #[error("{0}")]
+    Refused(String),
+    /// The verb failed while running.
+    #[error("{0}")]
+    Failed(String),
 }
 
 impl Error {
@@ -37,8 +51,12 @@ impl Error {
     #[must_use]
     pub fn exit_code(&self) -> u8 {
         match self {
-            Self::NotImplemented { .. } | Self::Config(_) => EXIT_REFUSED,
-            Self::Format(_) | Self::Store(_) => EXIT_FAILED,
+            Self::NotImplemented { .. } | Self::Config(_) | Self::Refused(_) => EXIT_REFUSED,
+            Self::Format(_)
+            | Self::Store(_)
+            | Self::Work(_)
+            | Self::Template(_)
+            | Self::Failed(_) => EXIT_FAILED,
         }
     }
 }

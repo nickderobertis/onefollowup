@@ -117,6 +117,8 @@ impl Inputs {
 pub struct Settings {
     config: Config,
     sources: Vec<(String, Origin)>,
+    working_directory: PathBuf,
+    environment: Vec<(String, String)>,
 }
 
 impl Settings {
@@ -135,7 +137,62 @@ impl Settings {
             origin: Origin::Default,
             message,
         })?;
-        Ok(Self { config, sources })
+        let process = Inputs::from_process()?;
+        Ok(Self {
+            config,
+            sources,
+            working_directory: process.working_directory,
+            environment: process.environment,
+        })
+    }
+
+    /// The same settings, run from `working_directory` with `environment`: where the store is
+    /// discovered from, a relative path is resolved against, and a hook or route command runs.
+    #[must_use]
+    pub fn in_environment(
+        mut self,
+        working_directory: PathBuf,
+        environment: Vec<(String, String)>,
+    ) -> Self {
+        self.working_directory = working_directory;
+        self.environment = environment;
+        self
+    }
+
+    /// The directory the verb runs in.
+    #[must_use]
+    pub fn working_directory(&self) -> &Path {
+        &self.working_directory
+    }
+
+    /// The environment the verb runs with, as name and value pairs.
+    #[must_use]
+    pub fn environment(&self) -> &[(String, String)] {
+        &self.environment
+    }
+
+    /// `path`, a value of the top-level key `key`, made absolute: a relative path is read
+    /// against the directory of the configuration file that stated the key, and otherwise
+    /// against the working directory.
+    #[must_use]
+    pub fn path(&self, key: &str, path: &str) -> PathBuf {
+        let path = Path::new(path);
+        if path.is_absolute() {
+            return path.to_path_buf();
+        }
+        let base = self
+            .sources
+            .iter()
+            .find(|(name, _)| name == key)
+            .and_then(|(_, origin)| match origin {
+                Origin::File(file) => file.parent().map(Path::to_path_buf),
+                _ => None,
+            })
+            .map_or_else(
+                || self.working_directory.clone(),
+                |directory| self.working_directory.join(directory),
+            );
+        base.join(path)
     }
 
     /// The effective configuration.
@@ -274,7 +331,12 @@ pub fn resolve(inputs: &Inputs) -> Result<Settings, ConfigError> {
         .iter()
         .map(|key| ((*key).to_owned(), highest(&merged, key)))
         .collect();
-    Ok(Settings { config, sources })
+    Ok(Settings {
+        config,
+        sources,
+        working_directory: inputs.working_directory.clone(),
+        environment: inputs.environment.clone(),
+    })
 }
 
 /// The configuration file to read, if any: `--config`, then `ONEFOLLOWUP_CONFIG`, then the

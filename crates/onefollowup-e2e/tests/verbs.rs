@@ -1,12 +1,29 @@
 //! Every verb of the v1 surface but `config show` and `kinds`, driven through the built
-//! binary: each parses its arguments — a malformed invocation is a usage error — and then
-//! refuses with exit 2 and `not implemented in this release`.
+//! binary: each parses its arguments — a malformed invocation is a usage error. A verb the
+//! verify loop implements then needs its store, and fails naming the onetaskgraph
+//! configuration it did not find; every other verb refuses with exit 2 and `not implemented in
+//! this release`.
 
 mod support;
 
 use support::onefollowup;
 
-/// Each stubbed verb: a well-formed invocation, and a malformed one.
+/// The verbs the verify loop implements.
+const IMPLEMENTED: &[&str] = &[
+    "draft",
+    "prepare",
+    "ticket validate",
+    "ticket board-status",
+    "ticket search",
+    "ticket copy",
+    "ticket comment",
+    "ticket re-estimate",
+    "check",
+    "publish",
+    "settle",
+];
+
+/// Each verb: a well-formed invocation, and a malformed one.
 const VERBS: &[(&[&str], &[&str])] = &[
     (
         &[
@@ -172,7 +189,7 @@ const VERBS: &[(&[&str], &[&str])] = &[
 ];
 
 #[test]
-fn every_stubbed_verb_parses_its_arguments_then_refuses_as_not_implemented() {
+fn every_verb_parses_its_arguments_then_needs_its_store_or_refuses_as_not_implemented() {
     let directory = support::tempdir();
     let mut verbs = std::collections::BTreeSet::new();
     for (well_formed, malformed) in VERBS {
@@ -189,12 +206,20 @@ fn every_stubbed_verb_parses_its_arguments_then_refuses_as_not_implemented() {
             .output()
             .expect("it runs");
         let stderr = String::from_utf8_lossy(&output.stderr);
-        assert_eq!(output.status.code(), Some(2), "{well_formed:?}: {stderr}");
-        assert_eq!(
-            stderr,
-            format!("onefollowup {verb}: not implemented in this release\n"),
-            "{well_formed:?}"
-        );
+        if IMPLEMENTED.contains(&verb.as_str()) {
+            assert_eq!(output.status.code(), Some(1), "{well_formed:?}: {stderr}");
+            assert!(
+                stderr.contains("no onetaskgraph.yaml was found"),
+                "{well_formed:?}: {stderr}"
+            );
+        } else {
+            assert_eq!(output.status.code(), Some(2), "{well_formed:?}: {stderr}");
+            assert_eq!(
+                stderr,
+                format!("onefollowup {verb}: not implemented in this release\n"),
+                "{well_formed:?}"
+            );
+        }
         assert!(output.stdout.is_empty(), "{well_formed:?}");
 
         let output = onefollowup(directory.path())

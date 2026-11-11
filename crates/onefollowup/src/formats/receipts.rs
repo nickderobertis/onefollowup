@@ -145,14 +145,33 @@ pub struct ReceiptError {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CommentOutcome {
-    /// The comment's id.
-    pub id: String,
+    /// The comment's id; omitted when the comment was refused.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
     /// The item it was written on.
     pub item: Option<String>,
     /// The root cause it is for.
     pub root_cause: Option<String>,
-    /// Its URL.
-    pub url: Option<String>,
+    /// Its URL: `Some(None)` is a written comment with none, and the member is omitted when
+    /// the comment was refused.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present"
+    )]
+    pub url: Option<Option<String>>,
+    /// Why it was not written; omitted when it was.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<ReceiptError>,
+}
+
+/// A member that is present, `null` included: what tells `"url": null` from no `url` at all.
+fn present<'de, D, T>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(deserializer).map(Some)
 }
 
 /// A re-estimate's outcome.
@@ -178,6 +197,9 @@ pub struct ReEstimateOutcome {
     pub title: Option<String>,
     /// Each write made.
     pub writes: Vec<ReEstimateWrite>,
+    /// Why nothing was written; omitted when the re-estimate landed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<ReceiptError>,
 }
 
 /// One write a re-estimate made.

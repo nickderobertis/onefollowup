@@ -174,7 +174,7 @@ pub fn board_status(
         &batch,
         &state,
         &journal::bound(&journal),
-        &journal::latest(&journal),
+        &journal::latest(&journal, state.read_at_receipt),
         &ticket,
     )
     .map_err(Error::Refused)?;

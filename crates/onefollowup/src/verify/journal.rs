@@ -49,11 +49,12 @@ pub fn bound(journal: &ReceiptJournal) -> Bound {
     bound
 }
 
-/// The latest version any receipt recorded for each card.
+/// The latest version a receipt newer than prepare's read — past its first `after` — recorded
+/// for each card.
 #[must_use]
-pub fn latest(journal: &ReceiptJournal) -> BTreeMap<String, String> {
+pub fn latest(journal: &ReceiptJournal, after: usize) -> BTreeMap<String, String> {
     let mut latest = BTreeMap::new();
-    for receipt in &journal.receipts {
+    for receipt in journal.receipts.iter().skip(after) {
         let Some(card) = &receipt.card else {
             continue;
         };

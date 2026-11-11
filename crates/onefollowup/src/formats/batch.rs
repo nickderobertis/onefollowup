@@ -28,6 +28,9 @@ pub struct BatchState {
     pub inputs: Vec<Input>,
     /// What `prepare` read of the destination, and what `ticket search` added.
     pub reads: Vec<Read>,
+    /// How many receipts the journal held when `prepare` read: a receipt past these is newer
+    /// than the read.
+    pub read_at_receipt: usize,
     /// Each field value `prepare`'s search asked about, as `<field>=<value>`.
     pub searched_values: Vec<String>,
     /// Each ticket's root cause, and the drafts-source item it is stored as.

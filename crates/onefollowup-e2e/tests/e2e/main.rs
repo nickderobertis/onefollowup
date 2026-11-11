@@ -3,6 +3,8 @@
 //! run the agent's tools; and the budget runner every `budgets.yaml` entry names.
 
 mod budget_runner;
+mod duplicates;
 mod journey;
+mod safeguards;
 mod telemetry;
 mod world;

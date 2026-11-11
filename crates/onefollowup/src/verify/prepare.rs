@@ -220,6 +220,7 @@ pub fn run(settings: &Settings, args: PrepareArgs) -> Result<Prepared, Error> {
                     project: project.unwrap_or_else(|| batch.batch.clone()),
                     inputs,
                     reads: Vec::new(),
+                    read_at_receipt: 0,
                     searched_values: Vec::new(),
                     tickets: IndexMap::new(),
                     merged: Vec::new(),
@@ -374,6 +375,7 @@ pub fn run(settings: &Settings, args: PrepareArgs) -> Result<Prepared, Error> {
         },
     )?;
     state.reads = reads;
+    state.read_at_receipt = crate::verify::journal::read(&batch)?.receipts.len();
     state.searched_values = searched_values;
     state.checked = None;
     batch.save_state(&state)?;

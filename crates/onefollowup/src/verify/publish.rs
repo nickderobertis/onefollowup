@@ -134,7 +134,7 @@ pub fn run(settings: &Settings, args: BatchArgs) -> Result<Published, Error> {
     }
     let journal = journal::read(&batch)?;
     let bound = journal::bound(&journal);
-    let latest = journal::latest(&journal);
+    let latest = journal::latest(&journal, state.read_at_receipt);
     let store = batch.store()?;
     let mut receipts: Vec<(usize, Receipt)> = Vec::new();
     let mut outcomes: Vec<PublishOutcome> = Vec::new();

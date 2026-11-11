@@ -57,9 +57,9 @@ fn a_store_that_is_not_an_onetaskgraph_configuration_is_refused() {
     let other = directory.path().join("other.yaml");
     std::fs::write(&other, "sources: {}\n").expect("written");
     for named in [other.as_path(), directory.path()] {
-        let error = Store::open(Some(named), directory.path(), &environment)
-            .err()
-            .expect("refused");
+        let Err(error) = Store::open(Some(named), directory.path(), &environment) else {
+            panic!("a store that is not an onetaskgraph configuration is refused")
+        };
         assert!(matches!(error, StoreError::NotAConfiguration(_)), "{error}");
         assert!(error.to_string().contains("onetaskgraph.yaml"));
     }
@@ -68,9 +68,9 @@ fn a_store_that_is_not_an_onetaskgraph_configuration_is_refused() {
         "sources: [not, a, map]\n",
     )
     .expect("written");
-    let error = Store::open(Some(directory.path()), directory.path(), &environment)
-        .err()
-        .expect("refused");
+    let Err(error) = Store::open(Some(directory.path()), directory.path(), &environment) else {
+        panic!("a configuration whose sources are not a map is refused")
+    };
     assert!(matches!(error, StoreError::Refused(_)), "{error}");
 }
 

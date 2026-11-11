@@ -95,7 +95,10 @@ fn a_refused_configuration_and_a_bad_key_value_are_refused() {
         std::path::Path::new("."),
         &[],
     );
-    let error = Error::from(store.err().expect("refused"));
+    let Err(refusal) = store else {
+        panic!("a store at a missing path is refused")
+    };
+    let error = Error::from(refusal);
     assert_eq!(error.exit_code(), 1);
     let format =
         <onefollowup::formats::ticket::TicketRecord as onefollowup::formats::Versioned>::parse(

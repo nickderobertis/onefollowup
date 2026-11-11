@@ -1397,3 +1397,145 @@ fn a_withdrawal_a_restaged_comment_and_a_kind_removed_before_publish_are_each_ha
     );
     assert!(stderr.contains("could not run"), "{stderr}");
 }
+
+#[cfg(unix)]
+#[test]
+fn a_destination_refusing_every_write_leaves_each_receipted_and_pending() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let mut world = World::new(&["followups"], "host_label: build-host-1\n");
+    world.item(
+        "followups",
+        "export-older",
+        &filed_item(
+            "widgets: the export dialog drops unicode titles",
+            "nightly-2026-10-01",
+            "export-dialog-drops-unicode",
+            &json!({}),
+            "medium",
+        ),
+        &filed_body("The export dialog drops unicode titles."),
+    );
+    let first = world.draft(
+        BATCH,
+        "a layout save reads one window size",
+        &["src/layout.rs"],
+        "Lost.\n",
+    );
+    let second = world.draft(
+        BATCH,
+        "the export dialog drops unicode titles",
+        &["src/export.rs"],
+        "café.\n",
+    );
+    world.ok("prepare", &["prepare", "--batch", BATCH], "");
+    world.ticket(
+        BATCH,
+        &Ticket::new(
+            "layout-save",
+            "a layout save reads one window size",
+            &[&first],
+        ),
+    );
+    world.ok(
+        "agent",
+        &["ticket", "copy", "--batch", BATCH, "layout-save"],
+        "",
+    );
+    world.ok(
+        "agent",
+        &[
+            "ticket",
+            "comment",
+            "--batch",
+            BATCH,
+            "--item",
+            "followups:export-older",
+            "--root-cause",
+            "export-dialog-drops-unicode",
+        ],
+        &format!("Host {HOST}: again.\n"),
+    );
+    world.ok(
+        "agent",
+        &[
+            "ticket",
+            "re-estimate",
+            "--batch",
+            BATCH,
+            "followups:export-older",
+        ],
+        "",
+    );
+    world.answer(
+        BATCH,
+        &[
+            answer(&first, "root-cause", "filed", &["layout-save"], "Verified."),
+            answer(
+                &second,
+                "root-cause",
+                "filed",
+                &["export-dialog-drops-unicode"],
+                "Evidence.",
+            ),
+        ],
+    );
+    world.ok("check", &["check", "--batch", BATCH], "");
+    let before = world.items("followups");
+
+    // The destination's directory refuses every write.
+    let tasks = world.root.join("followups-root/tasks");
+    std::fs::set_permissions(&tasks, std::fs::Permissions::from_mode(0o555)).expect("read-only");
+    let published = world.ok("publish", &["publish", "--batch", BATCH], "");
+    std::fs::set_permissions(&tasks, std::fs::Permissions::from_mode(0o755)).expect("writable");
+    let outcomes: Vec<(&str, &str)> = published["outcomes"]
+        .as_array()
+        .expect("outcomes")
+        .iter()
+        .map(|one| {
+            (
+                one["op"].as_str().unwrap_or_default(),
+                one["outcome"].as_str().unwrap_or_default(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        outcomes,
+        [
+            ("copy", "store-refused"),
+            ("comment", "error"),
+            ("re-estimate", "error"),
+        ],
+        "{published}"
+    );
+    assert_eq!(world.items("followups"), before, "nothing was written");
+    let journal = world.receipts(BATCH);
+    let kinds: Vec<(&str, &str)> = journal
+        .iter()
+        .map(|receipt| {
+            (
+                receipt["command"].as_str().unwrap_or_default(),
+                receipt["outcome"]["error"]["kind"]
+                    .as_str()
+                    .unwrap_or_default(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        kinds,
+        [
+            ("copy", "store-refused"),
+            ("comment", "error"),
+            ("re-estimate", "error"),
+        ],
+        "{journal:?}"
+    );
+
+    let settled = world.ok("settle", &["settle", "--batch", BATCH], "");
+    assert_eq!(
+        settled["read_back"], 0,
+        "every refusal was answered: {settled}"
+    );
+    assert_eq!(settled["pending"], 3, "{settled}");
+    assert_eq!(settled["needs_attention"], true, "{settled}");
+}

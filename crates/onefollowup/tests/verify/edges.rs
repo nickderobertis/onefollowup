@@ -449,6 +449,41 @@ fn validate_names_every_rule_a_ticket_file_breaks() {
         assert_finds(&problems(&mut world, slug), &[wanted], slug);
     }
 
+    raw(
+        &world,
+        "empty-title",
+        &sound
+            .render(BATCH)
+            .replace("title: \"widgets: a sound ticket\"", "title: \"  \""),
+    );
+    assert_finds(
+        &problems(&mut world, "empty-title"),
+        &["the title is empty"],
+        "an empty title",
+    );
+    // A heading inside a fence is the fence's text, not a section.
+    let mut fenced = Ticket::new("fenced-evidence", "fenced evidence", &[&draft]);
+    fenced.evidence =
+        "The log:\n\n```text\n## Root cause\n````\nstill fenced\n```\n\nSeen once.".to_owned();
+    world.ticket(BATCH, &fenced);
+    assert_eq!(
+        problems(&mut world, "fenced-evidence"),
+        Vec::<String>::new()
+    );
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        let tickets = world.work().join(format!("tasks/{BATCH}/tickets"));
+        std::fs::set_permissions(&tickets, std::fs::Permissions::from_mode(0o000))
+            .expect("unreadable");
+        let ran = world.run(&["check", "--batch", BATCH], "");
+        std::fs::set_permissions(&tickets, std::fs::Permissions::from_mode(0o755))
+            .expect("readable");
+        assert_eq!(ran.code, 1, "{}", ran.stdout);
+        assert!(ran.stderr.contains("could not be read"), "{}", ran.stderr);
+    }
+
     // A ticket named by its file validates as by its root cause.
     world.ticket(BATCH, &sound);
     let path = world
@@ -689,10 +724,9 @@ fn a_route_commands_override_is_applied_and_a_malformed_one_withholds_its_ticket
     assert!(stderr.contains("no `check` of batch"), "{stderr}");
     world.answer(BATCH, &[]);
 
-    world.ticket(
-        BATCH,
-        &Ticket::new("save-crashes", "saving crashes the app", &[&urgent]),
-    );
+    let mut unjudged = Ticket::new("save-crashes", "saving crashes the app", &[&urgent]);
+    unjudged.frequency = None;
+    world.ticket(BATCH, &unjudged);
     world.ticket(
         BATCH,
         &Ticket::new("export-drops-row", "exports drop a row", &[&garbled]).severities(
@@ -787,7 +821,7 @@ fn a_route_commands_override_is_applied_and_a_malformed_one_withholds_its_ticket
 
 #[cfg(unix)]
 #[test]
-fn settle_reads_back_a_new_ticket_a_comment_and_a_re_estimate_whose_answers_were_all_lost() {
+fn settle_reads_back_every_write_whose_answer_was_lost_and_pends_one_that_never_landed() {
     use std::os::unix::fs::PermissionsExt as _;
 
     let mut world = World::new(&["followups"], "host_label: build-host-1\n");
@@ -803,6 +837,18 @@ fn settle_reads_back_a_new_ticket_a_comment_and_a_re_estimate_whose_answers_were
         ),
         &filed_body("The export dialog drops unicode titles."),
     );
+    world.item(
+        "followups",
+        "gone-later",
+        &filed_item(
+            "widgets: the importer skips blank rows",
+            "nightly-2026-10-02",
+            "importer-skips-blank-rows",
+            &json!({}),
+            "low",
+        ),
+        &filed_body("The importer skips blank rows."),
+    );
     let first = world.draft(
         BATCH,
         "a layout save reads one window size",
@@ -814,6 +860,12 @@ fn settle_reads_back_a_new_ticket_a_comment_and_a_re_estimate_whose_answers_were
         "the export dialog drops unicode titles",
         &["src/export.rs"],
         "café.\n",
+    );
+    let third = world.draft(
+        BATCH,
+        "the importer skips blank rows",
+        &["src/import.rs"],
+        "Rows.\n",
     );
     world.ok("prepare", &["prepare", "--batch", BATCH], "");
     world.ticket(
@@ -860,9 +912,30 @@ fn settle_reads_back_a_new_ticket_a_comment_and_a_re_estimate_whose_answers_were
         ],
         "",
     );
+    world.ok(
+        "agent",
+        &[
+            "ticket",
+            "comment",
+            "--batch",
+            BATCH,
+            "--item",
+            "followups:gone-later",
+            "--root-cause",
+            "importer-skips-blank-rows",
+        ],
+        &format!("Host {HOST}: a blank row skipped.\n"),
+    );
     world.answer(
         BATCH,
         &[
+            answer(
+                &third,
+                "root-cause",
+                "filed",
+                &["importer-skips-blank-rows"],
+                "Evidence on the item.",
+            ),
             answer(
                 &first,
                 "root-cause",
@@ -881,7 +954,9 @@ fn settle_reads_back_a_new_ticket_a_comment_and_a_re_estimate_whose_answers_were
     );
     world.ok("check", &["check", "--batch", BATCH], "");
 
-    // No receipt can be written: every write lands and no answer is recorded.
+    // A person deletes one item, and no receipt can be written: every other write lands and
+    // no answer is recorded.
+    std::fs::remove_file(world.root.join("followups-root/tasks/gone-later.md")).expect("removed");
     let receipts = world.work().join("receipts");
     std::fs::create_dir_all(&receipts).expect("the receipts directory");
     std::fs::set_permissions(&receipts, std::fs::Permissions::from_mode(0o555)).expect("read-only");
@@ -893,12 +968,23 @@ fn settle_reads_back_a_new_ticket_a_comment_and_a_re_estimate_whose_answers_were
 
     world.reset_phases();
     let settled = world.ok("settle", &["settle", "--batch", BATCH], "");
-    assert_eq!(settled["read_back"], 3, "{settled}");
+    assert_eq!(settled["read_back"], 4, "{settled}");
     assert_eq!(
         settled["confirmed"], 3,
-        "each write was found landed: {settled}"
+        "each write that landed was found: {settled}"
     );
-    assert!(settled.get("needs_attention").is_none(), "{settled}");
+    assert_eq!(settled["pending"], 1, "{settled}");
+    assert_eq!(settled["needs_attention"], true, "{settled}");
+    let pending: Value = serde_json::from_str(
+        &std::fs::read_to_string(world.work().join("feedback/pending.json")).expect("pending.json"),
+    )
+    .expect("JSON");
+    assert_eq!(
+        pending["entries"][0]["item"], "followups:gone-later",
+        "{pending}"
+    );
+    assert_eq!(pending["entries"][0]["write"], "comment", "{pending}");
+    assert_eq!(pending["entries"][0]["state"], "unknown", "{pending}");
     let operations = world.destination_operations();
     let ops: Vec<&str> = operations.iter().map(|(_, op, _, _)| op.as_str()).collect();
     assert_eq!(
@@ -1189,6 +1275,28 @@ fn evidence_and_re_estimates_on_items_gone_or_changed_since_prepare_are_each_rec
     );
     assert_eq!(settled["pending"], 3, "{settled}");
     assert_eq!(settled["needs_attention"], true, "{settled}");
+
+    // The next pass reads the comment that landed.
+    world.ok("prepare", &["prepare", "--batch", BATCH], "");
+    let status = world.ok(
+        "agent",
+        &[
+            "ticket",
+            "board-status",
+            "--batch",
+            BATCH,
+            "followups:moved-item",
+        ],
+        "",
+    );
+    assert!(
+        status["comments"]
+            .as_array()
+            .is_some_and(|comments| comments.iter().any(|comment| comment["body"]
+                .as_str()
+                .is_some_and(|body| body.contains("seen again")))),
+        "{status}"
+    );
     let pending: Value = serde_json::from_str(
         &std::fs::read_to_string(world.work().join("feedback/pending.json")).expect("pending.json"),
     )

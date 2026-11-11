@@ -146,19 +146,6 @@ impl Settings {
         })
     }
 
-    /// The same settings, run from `working_directory` with `environment`: where the store is
-    /// discovered from, a relative path is resolved against, and a hook or route command runs.
-    #[must_use]
-    pub fn in_environment(
-        mut self,
-        working_directory: PathBuf,
-        environment: Vec<(String, String)>,
-    ) -> Self {
-        self.working_directory = working_directory;
-        self.environment = environment;
-        self
-    }
-
     /// The directory the verb runs in.
     #[must_use]
     pub fn working_directory(&self) -> &Path {

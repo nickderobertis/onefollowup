@@ -375,18 +375,8 @@ pub struct HeldUpdate {
 pub struct Store {
     engine: Engine,
     runtime: tokio::runtime::Runtime,
-    directory: PathBuf,
     local: Option<String>,
     log: RefCell<Vec<StoreOperation>>,
-}
-
-impl std::fmt::Debug for Store {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_struct("Store")
-            .field("directory", &self.directory)
-            .finish_non_exhaustive()
-    }
 }
 
 /// The directory holding the onetaskgraph configuration `store` names, or the nearest one at
@@ -487,7 +477,6 @@ impl Store {
         Ok(Self {
             engine: Engine::build(&loaded.config, &loaded.secrets),
             runtime,
-            directory,
             local: None,
             log: RefCell::new(Vec::new()),
         })

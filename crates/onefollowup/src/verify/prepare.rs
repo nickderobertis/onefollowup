@@ -185,18 +185,17 @@ pub fn run(settings: &Settings, args: PrepareArgs) -> Result<Prepared, Error> {
     let mut state = match existing {
         Some(state) if continuing => state,
         earlier => {
-            let aliases = earlier.as_ref().map_or_else(
-                || args.aliases.clone(),
-                |state| {
-                    let mut aliases = state.aliases.clone();
-                    for alias in &args.aliases {
-                        if !aliases.contains(alias) {
-                            aliases.push(alias.clone());
-                        }
-                    }
-                    aliases
-                },
-            );
+            // Each alias once, and never the batch itself: the drafts search asks one
+            // question per id, which the store refuses to see twice.
+            let mut aliases = earlier
+                .as_ref()
+                .map(|state| state.aliases.clone())
+                .unwrap_or_default();
+            for alias in &args.aliases {
+                if !aliases.contains(alias) && *alias != batch.batch {
+                    aliases.push(alias.clone());
+                }
+            }
             let (drafted, project) = drafts(&batch, &store, &aliases)?;
             let mut inputs: Vec<Input> = earlier
                 .as_ref()

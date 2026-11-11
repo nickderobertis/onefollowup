@@ -6,6 +6,7 @@
 mod adoption;
 mod configuration;
 mod duplicates;
+mod edges;
 mod journey;
 mod refusals;
 mod safeguards;

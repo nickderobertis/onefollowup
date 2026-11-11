@@ -253,7 +253,9 @@ pub fn resolve(inputs: &Inputs) -> Result<Settings, ConfigError> {
 
     if let Some(path) = config_file(inputs)? {
         let origin = Origin::File(path.clone());
-        let document = read_file(&path, &origin)?;
+        // A relative path names a file of the working directory the caller gave, which is
+        // not this process's own when a library caller handed another.
+        let document = read_file(&inputs.working_directory.join(&path), &origin)?;
         stated(&[], &document, &origin)?;
         flatten(&mut Vec::new(), &document, &origin, &mut settings);
     }

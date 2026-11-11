@@ -16,6 +16,23 @@
     "e2e": {
       "command": "cargo nextest run -p onefollowup-e2e --locked --status-level fail --final-status-level fail",
       "dependsOn": ["onefollowup:build"],
+      "cache": true,
+      "//": "Its output is the telemetry the budget journeys record, which `budgets` reads, so a cache hit restores it.",
+      "outputs": ["{workspaceRoot}/target/debug/telemetry/onefollowup-e2e/*.json"]
+    },
+    "budgets": {
+      "command": "bunx onebudgetspec check crates/onefollowup-e2e/budgets.yaml --save-results target/budget-results/onefollowup-e2e-budget-results.json",
+      "dependsOn": ["e2e"],
+      "inputs": [
+        "{projectRoot}/**/*",
+        "^production",
+        { "dependentTasksOutputFiles": "**/telemetry/onefollowup-e2e/*.json" },
+        { "externalDependencies": ["@onebudgetspec/cli"] },
+        { "runtime": "node -p process.platform" },
+        "{workspaceRoot}/.github/ci-tool-versions",
+        "{workspaceRoot}/rust-toolchain.toml"
+      ],
+      "outputs": ["{workspaceRoot}/target/budget-results/onefollowup-e2e-budget-results.json"],
       "cache": true
     },
     "test-compile": {

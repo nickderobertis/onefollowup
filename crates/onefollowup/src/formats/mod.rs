@@ -8,6 +8,7 @@
 //! migration. The batch id stands where today's records say `run`, with no change to the
 //! bytes: the Rust fields are named `batch` and serialize as `run`.
 
+pub mod batch;
 pub mod dispositions;
 pub mod draft;
 pub mod existing_tickets;

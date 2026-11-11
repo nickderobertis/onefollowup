@@ -14,6 +14,8 @@ publish = false
 [dev-dependencies]
 assert_cmd.workspace = true
 gethostname.workspace = true
+onebudgetspec-core.workspace = true
+regex.workspace = true
 # The configuration's key list, which the precedence cases are parameterized over.
 onefollowup = { path = "../onefollowup" }
 serde.workspace = true

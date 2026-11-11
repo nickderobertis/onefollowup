@@ -3,8 +3,9 @@
 //! result the command prints. The CLI is a thin layer over these (`tests/parity.rs` holds
 //! that), so anything the command line does, a Rust caller does by calling the function.
 //!
-//! In this release only [`config_show`] and [`kinds`] are implemented; every other verb
-//! refuses with [`Error::NotImplemented`], after its arguments are parsed.
+//! The verify loop — [`draft`], [`prepare`], the agent's `ticket_*` tools, [`check`],
+//! [`publish`] and [`settle`] — and [`config_show`] and [`kinds`] are implemented; every
+//! other verb refuses with [`Error::NotImplemented`], after its arguments are parsed.
 
 use std::path::PathBuf;
 
@@ -17,8 +18,22 @@ use crate::config::{
     Settings, StatusRole,
 };
 use crate::error::Error;
-use crate::formats::HeldPriority;
 use crate::formats::outbox::StagedWrite;
+use crate::formats::{HeldPriority, Level};
+use crate::store::StoreOperation;
+use crate::verify;
+
+fn no_operations(operations: &[StoreOperation]) -> bool {
+    operations.is_empty()
+}
+
+fn is_zero(count: &usize) -> bool {
+    *count == 0
+}
+
+fn is_false(flag: &bool) -> bool {
+    !*flag
+}
 
 /// The version of every JSON document a verb prints.
 pub const SCHEMA_VERSION: u32 = 1;
@@ -108,6 +123,15 @@ pub struct BoardStatus {
     pub url: Option<String>,
     /// Its comments.
     pub comments: Vec<BoardComment>,
+    /// The status role it is at, or a ticket would be copied at.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status_role: Option<StatusRole>,
+    /// The priority its facts estimate.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub priority_estimate: Option<Level>,
+    /// For a ticket of an estimated kind: the `## Impact` estimate line its copy carries.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub estimate_line: Option<String>,
 }
 
 /// One item a search found.
@@ -136,6 +160,9 @@ pub struct SearchResults {
     pub query: String,
     /// What it found.
     pub hits: Vec<SearchHit>,
+    /// Each store operation it made.
+    #[serde(default, skip_serializing_if = "no_operations")]
+    pub store_operations: Vec<StoreOperation>,
 }
 
 /// What `ticket copy|comment|re-estimate|relate` staged.
@@ -149,6 +176,13 @@ pub struct Staged {
     pub index: usize,
     /// The outbox entry staged.
     pub write: StagedWrite,
+    /// For a copy of a ticket of a `same` kind: the item or staged ticket it was treated as,
+    /// the write above being its evidence there (or that ticket's own copy).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub matched: Option<String>,
+    /// Each store operation it made.
+    #[serde(default, skip_serializing_if = "no_operations")]
+    pub store_operations: Vec<StoreOperation>,
 }
 
 /// One rule a batch breaks.
@@ -198,6 +232,9 @@ pub struct PublishOutcome {
     pub item: Option<String>,
     /// The receipt's action, or the error's kind.
     pub outcome: String,
+    /// Why it did not land, when it did not.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 /// What `publish` sent.
@@ -211,6 +248,9 @@ pub struct Published {
     pub receipts: PathBuf,
     /// Each staged write's outcome.
     pub outcomes: Vec<PublishOutcome>,
+    /// Each store operation it made.
+    #[serde(default, skip_serializing_if = "no_operations")]
+    pub store_operations: Vec<StoreOperation>,
 }
 
 /// A hook that ran.
@@ -237,6 +277,15 @@ pub struct Settled {
     pub hook: Option<HookRun>,
     /// The working files retired.
     pub retired: Vec<PathBuf>,
+    /// How many writes did not certainly land, now in `pending.json`.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub pending: usize,
+    /// Whether any did not: a person should look at `pending.json`.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub needs_attention: bool,
+    /// Each store operation it made.
+    #[serde(default, skip_serializing_if = "no_operations")]
+    pub store_operations: Vec<StoreOperation>,
 }
 
 /// What `comments gather` gathered.
@@ -365,9 +414,10 @@ pub struct DraftArgs {
 ///
 /// # Errors
 ///
-/// [`Error::NotImplemented`] in this release.
-pub fn draft(_settings: &Settings, _args: DraftArgs) -> Result<Drafted, Error> {
-    not_implemented("draft")
+/// A refused batch id, title, repository, author or stamp, an empty body, or the store's
+/// refusal.
+pub fn draft(settings: &Settings, args: DraftArgs) -> Result<Drafted, Error> {
+    verify::draft::run(settings, args)
 }
 
 /// `onefollowup prepare`: snapshot a batch's inputs and write the verifying agent's task.
@@ -399,6 +449,9 @@ pub struct Prepared {
     pub answers: PathBuf,
     /// The verifying agent's rendered task.
     pub task_template: PathBuf,
+    /// Each store operation it made.
+    #[serde(default, skip_serializing_if = "no_operations")]
+    pub store_operations: Vec<StoreOperation>,
 }
 
 /// Snapshot a batch's input set, make its destination reads, and write the verifying
@@ -406,9 +459,10 @@ pub struct Prepared {
 ///
 /// # Errors
 ///
-/// [`Error::NotImplemented`] in this release.
-pub fn prepare(_settings: &Settings, _args: PrepareArgs) -> Result<Prepared, Error> {
-    not_implemented("prepare")
+/// A refused batch id or alias, a failing `hooks.batch_preparing` command (nothing
+/// snapshotted and nothing read), a template that cannot be rendered, or the store's refusal.
+pub fn prepare(settings: &Settings, args: PrepareArgs) -> Result<Prepared, Error> {
+    verify::prepare::run(settings, args)
 }
 
 /// `onefollowup ticket validate`: hold one ticket to the rules.
@@ -426,12 +480,12 @@ pub struct TicketValidateArgs {
 ///
 /// # Errors
 ///
-/// [`Error::NotImplemented`] in this release.
+/// A batch id that is none, or no such ticket file.
 pub fn ticket_validate(
-    _settings: &Settings,
-    _args: TicketValidateArgs,
+    settings: &Settings,
+    args: TicketValidateArgs,
 ) -> Result<TicketValidated, Error> {
-    not_implemented("ticket validate")
+    verify::tools::validate(settings, args)
 }
 
 /// `onefollowup ticket board-status`: read one destination item's state and comments.
@@ -449,12 +503,12 @@ pub struct TicketBoardStatusArgs {
 ///
 /// # Errors
 ///
-/// [`Error::NotImplemented`] in this release.
+/// A batch not prepared, or an item it did not read.
 pub fn ticket_board_status(
-    _settings: &Settings,
-    _args: TicketBoardStatusArgs,
+    settings: &Settings,
+    args: TicketBoardStatusArgs,
 ) -> Result<BoardStatus, Error> {
-    not_implemented("ticket board-status")
+    verify::tools::board_status(settings, args)
 }
 
 /// `onefollowup ticket search`: search the destination for a ticket's duplicates.
@@ -469,18 +523,18 @@ pub struct TicketSearchArgs {
     /// What to search for.
     #[arg(value_name = "QUERY")]
     pub query: String,
+    /// A further question, asked in the same search; repeat for each.
+    #[arg(long = "query", value_name = "QUERY")]
+    pub queries: Vec<String>,
 }
 
 /// Search the destination, from the batch's prepared reads.
 ///
 /// # Errors
 ///
-/// [`Error::NotImplemented`] in this release.
-pub fn ticket_search(
-    _settings: &Settings,
-    _args: TicketSearchArgs,
-) -> Result<SearchResults, Error> {
-    not_implemented("ticket search")
+/// A batch not prepared, a question narrowed by nothing, or the store's refusal.
+pub fn ticket_search(settings: &Settings, args: TicketSearchArgs) -> Result<SearchResults, Error> {
+    verify::tools::search(settings, args)
 }
 
 /// `onefollowup ticket copy`: stage a ticket's copy to its destination.
@@ -498,9 +552,9 @@ pub struct TicketCopyArgs {
 ///
 /// # Errors
 ///
-/// [`Error::NotImplemented`] in this release.
-pub fn ticket_copy(_settings: &Settings, _args: TicketCopyArgs) -> Result<Staged, Error> {
-    not_implemented("ticket copy")
+/// A batch not prepared, or a ticket `ticket validate` refuses: nothing is staged.
+pub fn ticket_copy(settings: &Settings, args: TicketCopyArgs) -> Result<Staged, Error> {
+    verify::tools::copy(settings, args)
 }
 
 /// `onefollowup ticket comment`: stage the batch's evidence comment on an item. The
@@ -525,9 +579,10 @@ pub struct TicketCommentArgs {
 ///
 /// # Errors
 ///
-/// [`Error::NotImplemented`] in this release.
-pub fn ticket_comment(_settings: &Settings, _args: TicketCommentArgs) -> Result<Staged, Error> {
-    not_implemented("ticket comment")
+/// A batch not prepared, a root cause that is not a slug, an item the batch did not
+/// read or that is its own, or empty evidence: nothing is staged.
+pub fn ticket_comment(settings: &Settings, args: TicketCommentArgs) -> Result<Staged, Error> {
+    verify::tools::comment(settings, args)
 }
 
 /// `onefollowup ticket re-estimate`: stage an item's re-estimate.
@@ -545,12 +600,12 @@ pub struct TicketReEstimateArgs {
 ///
 /// # Errors
 ///
-/// [`Error::NotImplemented`] in this release.
+/// A batch not prepared, or an item whose occurrences it did not read: nothing is staged.
 pub fn ticket_re_estimate(
-    _settings: &Settings,
-    _args: TicketReEstimateArgs,
+    settings: &Settings,
+    args: TicketReEstimateArgs,
 ) -> Result<Staged, Error> {
-    not_implemented("ticket re-estimate")
+    verify::tools::re_estimate(settings, args)
 }
 
 /// `onefollowup ticket relate`: stage an edge of a configured relation.
@@ -591,27 +646,29 @@ pub struct BatchArgs {
 ///
 /// # Errors
 ///
-/// [`Error::NotImplemented`] in this release.
-pub fn check(_settings: &Settings, _args: BatchArgs) -> Result<Checked, Error> {
-    not_implemented("check")
+/// A batch not prepared, or a working file that cannot be read or written.
+pub fn check(settings: &Settings, args: BatchArgs) -> Result<Checked, Error> {
+    verify::check::run(settings, args)
 }
 
 /// Send the batch's staged writes and receipt every outcome.
 ///
 /// # Errors
 ///
-/// [`Error::NotImplemented`] in this release.
-pub fn publish(_settings: &Settings, _args: BatchArgs) -> Result<Published, Error> {
-    not_implemented("publish")
+/// A batch not prepared; an outbox the latest passing `check` did not hold exactly as it
+/// stands, refused with nothing written; or a journal that could not record every answer.
+pub fn publish(settings: &Settings, args: BatchArgs) -> Result<Published, Error> {
+    verify::publish::run(settings, args)
 }
 
 /// Close out a published batch.
 ///
 /// # Errors
 ///
-/// [`Error::NotImplemented`] in this release.
-pub fn settle(_settings: &Settings, _args: BatchArgs) -> Result<Settled, Error> {
-    not_implemented("settle")
+/// A batch not prepared, the store's refusal of the read-back, or a `hooks.batch_settled`
+/// command that could not run.
+pub fn settle(settings: &Settings, args: BatchArgs) -> Result<Settled, Error> {
+    verify::settle::run(settings, args)
 }
 
 /// `onefollowup comments gather`: gather people's comments to answer.

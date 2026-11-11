@@ -55,6 +55,8 @@ pub enum PendingWrite {
     Priority,
     /// A withdrawal.
     Withdrawal,
+    /// An evidence comment.
+    Comment,
 }
 
 /// Where a pending write stands.

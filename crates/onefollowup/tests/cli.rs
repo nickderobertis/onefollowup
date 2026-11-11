@@ -23,33 +23,6 @@ fn dispatched(arguments: &[&str]) -> Result<String, Error> {
 fn every_stubbed_verb_reaches_its_function_and_refuses() {
     let verbs: &[&[&str]] = &[
         &[
-            "draft",
-            "--batch",
-            "b",
-            "--title",
-            "t",
-            "--repository",
-            "r",
-            "--stamp",
-            "k=v",
-        ],
-        &["prepare", "--batch", "b"],
-        &["ticket", "validate", "--batch", "b", "t"],
-        &["ticket", "board-status", "--batch", "b", "i"],
-        &["ticket", "search", "--batch", "b", "--ticket", "t", "q"],
-        &["ticket", "copy", "--batch", "b", "t"],
-        &[
-            "ticket",
-            "comment",
-            "--batch",
-            "b",
-            "--item",
-            "i",
-            "--root-cause",
-            "r",
-        ],
-        &["ticket", "re-estimate", "--batch", "b", "i"],
-        &[
             "ticket",
             "relate",
             "--batch",
@@ -61,9 +34,6 @@ fn every_stubbed_verb_reaches_its_function_and_refuses() {
             "--to",
             "b",
         ],
-        &["check", "--batch", "b"],
-        &["publish", "--batch", "b"],
-        &["settle", "--batch", "b"],
         &["comments", "gather", "--dry-run"],
         &["comments", "launches", "--snapshot", "s"],
         &["comments", "check", "--feedback", "f"],
@@ -125,7 +95,10 @@ fn a_refused_configuration_and_a_bad_key_value_are_refused() {
         std::path::Path::new("."),
         &[],
     );
-    let error = Error::from(store.err().expect("refused"));
+    let Err(refusal) = store else {
+        panic!("a store at a missing path is refused")
+    };
+    let error = Error::from(refusal);
     assert_eq!(error.exit_code(), 1);
     let format =
         <onefollowup::formats::ticket::TicketRecord as onefollowup::formats::Versioned>::parse(
@@ -133,4 +106,54 @@ fn a_refused_configuration_and_a_bad_key_value_are_refused() {
         )
         .expect_err("not a record");
     assert_eq!(Error::from(format).exit_code(), 1);
+}
+
+#[test]
+fn every_verify_verb_reaches_its_function_and_refuses_a_batch_id_that_is_none() {
+    let verbs: &[&[&str]] = &[
+        &[
+            "draft",
+            "--batch",
+            "not a batch",
+            "--title",
+            "t",
+            "--repository",
+            "github.com/a/b",
+        ],
+        &["prepare", "--batch", "not a batch"],
+        &["ticket", "validate", "--batch", "not a batch", "t"],
+        &["ticket", "board-status", "--batch", "not a batch", "s:i"],
+        &[
+            "ticket",
+            "search",
+            "--batch",
+            "not a batch",
+            "--ticket",
+            "t",
+            "words",
+        ],
+        &["ticket", "copy", "--batch", "not a batch", "t"],
+        &[
+            "ticket",
+            "comment",
+            "--batch",
+            "not a batch",
+            "--item",
+            "s:i",
+            "--root-cause",
+            "r",
+        ],
+        &["ticket", "re-estimate", "--batch", "not a batch", "s:i"],
+        &["check", "--batch", "not a batch"],
+        &["publish", "--batch", "not a batch"],
+        &["settle", "--batch", "not a batch"],
+    ];
+    for arguments in verbs {
+        let error = dispatched(arguments).expect_err("refused");
+        assert!(
+            matches!(&error, Error::Refused(message) if message.contains("`not a batch` is not a batch id")),
+            "{arguments:?}: {error}"
+        );
+        assert_eq!(error.exit_code(), 2);
+    }
 }

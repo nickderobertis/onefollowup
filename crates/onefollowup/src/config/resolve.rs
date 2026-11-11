@@ -117,6 +117,8 @@ impl Inputs {
 pub struct Settings {
     config: Config,
     sources: Vec<(String, Origin)>,
+    working_directory: PathBuf,
+    environment: Vec<(String, String)>,
 }
 
 impl Settings {
@@ -135,7 +137,49 @@ impl Settings {
             origin: Origin::Default,
             message,
         })?;
-        Ok(Self { config, sources })
+        let process = Inputs::from_process()?;
+        Ok(Self {
+            config,
+            sources,
+            working_directory: process.working_directory,
+            environment: process.environment,
+        })
+    }
+
+    /// The directory the verb runs in.
+    #[must_use]
+    pub fn working_directory(&self) -> &Path {
+        &self.working_directory
+    }
+
+    /// The environment the verb runs with, as name and value pairs.
+    #[must_use]
+    pub fn environment(&self) -> &[(String, String)] {
+        &self.environment
+    }
+
+    /// `path`, a value of the top-level key `key`, made absolute: a relative path is read
+    /// against the directory of the configuration file that stated the key, and otherwise
+    /// against the working directory.
+    #[must_use]
+    pub fn path(&self, key: &str, path: &str) -> PathBuf {
+        let path = Path::new(path);
+        if path.is_absolute() {
+            return path.to_path_buf();
+        }
+        let base = self
+            .sources
+            .iter()
+            .find(|(name, _)| name == key)
+            .and_then(|(_, origin)| match origin {
+                Origin::File(file) => file.parent().map(Path::to_path_buf),
+                _ => None,
+            })
+            .map_or_else(
+                || self.working_directory.clone(),
+                |directory| self.working_directory.join(directory),
+            );
+        base.join(path)
     }
 
     /// The effective configuration.
@@ -196,7 +240,9 @@ pub fn resolve(inputs: &Inputs) -> Result<Settings, ConfigError> {
 
     if let Some(path) = config_file(inputs)? {
         let origin = Origin::File(path.clone());
-        let document = read_file(&path, &origin)?;
+        // A relative path names a file of the working directory the caller gave, which is
+        // not this process's own when a library caller handed another.
+        let document = read_file(&inputs.working_directory.join(&path), &origin)?;
         stated(&[], &document, &origin)?;
         flatten(&mut Vec::new(), &document, &origin, &mut settings);
     }
@@ -274,7 +320,12 @@ pub fn resolve(inputs: &Inputs) -> Result<Settings, ConfigError> {
         .iter()
         .map(|key| ((*key).to_owned(), highest(&merged, key)))
         .collect();
-    Ok(Settings { config, sources })
+    Ok(Settings {
+        config,
+        sources,
+        working_directory: inputs.working_directory.clone(),
+        environment: inputs.environment.clone(),
+    })
 }
 
 /// The configuration file to read, if any: `--config`, then `ONEFOLLOWUP_CONFIG`, then the

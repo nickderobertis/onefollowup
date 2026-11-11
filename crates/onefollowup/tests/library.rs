@@ -4,7 +4,7 @@
 use std::path::Path;
 use std::process::{Command, Output};
 
-use onefollowup::api::{self, ConfigShowArgs, PrepareArgs};
+use onefollowup::api::{self, ConfigShowArgs};
 use onefollowup::config::{self, Inputs};
 use onefollowup::{Error, cli};
 
@@ -85,15 +85,10 @@ fn config_show_through_the_library_is_what_the_cli_prints() {
 #[test]
 fn a_stubbed_verb_refuses_through_the_library_as_the_cli_does() {
     let directory = tempdir();
-    let arguments = PrepareArgs {
-        batch: "nightly-1".to_owned(),
-        aliases: vec![],
-        unanswered: false,
-    };
-    let error =
-        api::prepare(&settings(directory.path(), &[]), arguments).expect_err("not implemented");
-    assert!(matches!(error, Error::NotImplemented { verb: "prepare" }));
-    let output = run(directory.path(), &["prepare", "--batch", "nightly-1"]);
+    let error = api::statuses(&settings(directory.path(), &[]), api::NoArgs {})
+        .expect_err("not implemented");
+    assert!(matches!(error, Error::NotImplemented { verb: "statuses" }));
+    let output = run(directory.path(), &["statuses"]);
     assert_eq!(output.status.code(), Some(i32::from(error.exit_code())));
     assert_eq!(
         String::from_utf8_lossy(&output.stderr),

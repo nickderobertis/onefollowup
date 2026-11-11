@@ -173,7 +173,7 @@ const VERBS: &[(&[&str], &[&str])] = &[
 
 #[test]
 fn every_stubbed_verb_parses_its_arguments_then_refuses_as_not_implemented() {
-    let directory = tempfile::tempdir().expect("a temporary directory");
+    let directory = support::tempdir();
     let mut verbs = std::collections::BTreeSet::new();
     for (well_formed, malformed) in VERBS {
         let verb = well_formed
@@ -221,7 +221,7 @@ fn every_stubbed_verb_parses_its_arguments_then_refuses_as_not_implemented() {
 
 #[test]
 fn an_unknown_verb_and_a_bare_invocation_are_usage_errors_and_help_lists_the_surface() {
-    let directory = tempfile::tempdir().expect("a temporary directory");
+    let directory = support::tempdir();
     for arguments in [
         &["re-key"][..],
         &[],
@@ -264,7 +264,7 @@ fn an_unknown_verb_and_a_bare_invocation_are_usage_errors_and_help_lists_the_sur
 
 #[test]
 fn a_refused_configuration_stops_a_verb_before_it_runs() {
-    let directory = tempfile::tempdir().expect("a temporary directory");
+    let directory = support::tempdir();
     std::fs::write(
         directory.path().join("onefollowup.yaml"),
         "destinaton: typo\n",

@@ -42,7 +42,7 @@ routes:
 
 #[test]
 fn kinds_prints_exactly_what_the_configuration_states() {
-    let directory = tempfile::tempdir().expect("a temporary directory");
+    let directory = support::tempdir();
     std::fs::write(directory.path().join("onefollowup.yaml"), TRIAGE).expect("written");
     let shown = json(
         &onefollowup(directory.path())
@@ -116,7 +116,7 @@ fn kinds_prints_exactly_what_the_configuration_states() {
 
 #[test]
 fn without_default_dispositions_a_kind_allows_every_catalogued_one() {
-    let directory = tempfile::tempdir().expect("a temporary directory");
+    let directory = support::tempdir();
     let without = TRIAGE.replace("default_dispositions: [filed, fixed-in-change]\n", "");
     std::fs::write(directory.path().join("onefollowup.yaml"), without).expect("written");
     let shown = json(
@@ -137,9 +137,11 @@ fn without_default_dispositions_a_kind_allows_every_catalogued_one() {
         "a kind's own list stands"
     );
 
+    let empty = directory.path().join("empty.yaml");
+    std::fs::write(&empty, "").expect("written");
     let defaults = json(
         &onefollowup(directory.path())
-            .args(["--config", "/dev/null", "kinds"])
+            .args(["--config", empty.to_str().expect("UTF-8"), "kinds"])
             .output()
             .expect("it runs"),
     );
@@ -156,7 +158,7 @@ fn without_default_dispositions_a_kind_allows_every_catalogued_one() {
 
 #[test]
 fn a_refused_configuration_is_refused_by_kinds_too() {
-    let directory = tempfile::tempdir().expect("a temporary directory");
+    let directory = support::tempdir();
     std::fs::write(
         directory.path().join("onefollowup.yaml"),
         TRIAGE.replace("default_kind: root-cause", "default_kind: nothing"),

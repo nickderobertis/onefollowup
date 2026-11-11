@@ -26,9 +26,19 @@ fn settings(directory: &Path, set: &[&str]) -> onefollowup::Settings {
     config::resolve(&inputs).expect("the configuration resolves")
 }
 
+/// A temporary directory named by its real path, as the binary names its working
+/// directory: on macOS the temporary root under `/var` is a link to `/private/var`. Windows
+/// keeps the root as given, since its real path carries a `\\?\` prefix nothing prints.
+fn tempdir() -> tempfile::TempDir {
+    let root = std::env::temp_dir();
+    #[cfg(not(windows))]
+    let root = root.canonicalize().expect("the temporary root resolves");
+    tempfile::tempdir_in(root).expect("a temporary directory")
+}
+
 #[test]
 fn config_show_through_the_library_is_what_the_cli_prints() {
-    let directory = tempfile::tempdir().expect("a temporary directory");
+    let directory = tempdir();
     std::fs::write(
         directory.path().join("onefollowup.yaml"),
         "destination: bugs\nnamespace: acme\n",
@@ -74,7 +84,7 @@ fn config_show_through_the_library_is_what_the_cli_prints() {
 
 #[test]
 fn a_stubbed_verb_refuses_through_the_library_as_the_cli_does() {
-    let directory = tempfile::tempdir().expect("a temporary directory");
+    let directory = tempdir();
     let arguments = PrepareArgs {
         batch: "nightly-1".to_owned(),
         aliases: vec![],

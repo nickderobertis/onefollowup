@@ -76,6 +76,11 @@ jobs:
         with:
           bun-version: ${{ steps.pins.outputs.bun }}
           no-cache: ${{ github.event.pull_request.head.repo.full_name != github.repository }}
+      # scripts/setup-llmlint.sh installs llmlint through uv.
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: ${{ steps.pins.outputs.uv }}
+          no-cache: ${{ github.event.pull_request.head.repo.full_name != github.repository }}
       # rust-toolchain.toml names the toolchain. Restores what .github/workflows/rust-cache-warm.yml
       # saved on main and saves nothing: main is the one writer of Rust build caches, and this
       # job's checks share Linux's dependencies.

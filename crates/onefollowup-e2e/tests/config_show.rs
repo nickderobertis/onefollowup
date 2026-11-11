@@ -40,7 +40,7 @@ fn at<'a>(value: &'a Value, pointer: &str) -> &'a Value {
 
 #[test]
 fn with_nothing_configured_it_prints_every_default() {
-    let directory = tempfile::tempdir().expect("a temporary directory");
+    let directory = support::tempdir();
     let shown = show(directory.path(), &[], &[]);
     assert_eq!(shown["schema_version"], 1);
     let config = &shown["config"];
@@ -152,7 +152,7 @@ fn with_nothing_configured_it_prints_every_default() {
 
 #[test]
 fn a_file_overrides_its_keys_and_is_found_by_flag_then_variable_then_working_directory() {
-    let directory = tempfile::tempdir().expect("a temporary directory");
+    let directory = support::tempdir();
     let write = |name: &str, text: &str| -> PathBuf {
         let path = directory.path().join(name);
         std::fs::write(&path, text).expect("written");
@@ -405,7 +405,7 @@ fn every_key_resolves_flag_then_variable_then_file_then_default() {
     );
     for key in KEYS {
         let case = case(key).expect("checked above");
-        let directory = tempfile::tempdir().expect("a temporary directory");
+        let directory = support::tempdir();
         let file = directory.path().join("onefollowup.yaml");
         std::fs::write(&file, format!("{}{}\n", case.base, case.file)).expect("written");
         let pointer = format!("/config{}", case.pointer);
@@ -452,7 +452,7 @@ fn every_key_resolves_flag_then_variable_then_file_then_default() {
 
 #[test]
 fn the_dedicated_flags_beat_set_for_their_keys() {
-    let directory = tempfile::tempdir().expect("a temporary directory");
+    let directory = support::tempdir();
     for (key, flag) in [
         ("destination", "--destination"),
         ("drafts_source", "--drafts-source"),
@@ -474,7 +474,7 @@ fn the_dedicated_flags_beat_set_for_their_keys() {
 
 #[test]
 fn an_unknown_key_or_a_wrongly_typed_value_is_refused_naming_the_key_and_the_layer() {
-    let directory = tempfile::tempdir().expect("a temporary directory");
+    let directory = support::tempdir();
     let file = directory.path().join("onefollowup.yaml");
     let file_layer = format!("from the file {}", file.display());
     for (text, key) in [
@@ -542,7 +542,7 @@ fn every_rule_refuses_naming_its_key_and_the_file() {
         .join("../onefollowup/tests/fixtures/config/refusals.yaml");
     let refusals: Refusals =
         serde_saphyr::from_str(&std::fs::read_to_string(path).expect("the cases")).expect("YAML");
-    let directory = tempfile::tempdir().expect("a temporary directory");
+    let directory = support::tempdir();
     let file = directory.path().join("onefollowup.yaml");
     for case in &refusals.cases {
         let document = if case.over_base {

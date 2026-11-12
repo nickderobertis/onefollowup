@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
 
-use crate::world::{REPOSITORY, Ticket, World, answer, filed_body};
+use crate::world::{Ticket, World, answer, filed_body};
 
 /// Every example directory, by name.
 fn examples() -> Vec<String> {
@@ -742,9 +742,437 @@ fn symptoms_and_root_causes() {
     );
 }
 
-fn typed_destinations() {}
+/// The front matter's list `key` of an item, as strings: a label by its name.
+fn list(text: &str, key: &str) -> Vec<String> {
+    front(text)[key]
+        .as_array()
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|one| one.as_str().or_else(|| one["name"].as_str()))
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default()
+}
 
-fn inline_fixes() {}
+fn typed_destinations() {
+    typed_batch(false);
+    typed_batch(true);
+}
 
-#[allow(dead_code, reason = "kept beside the cases that read it")]
-const _REPOSITORY: &str = REPOSITORY;
+/// The typed-destinations batch; with `paging_fails`, the on-call pager refuses.
+#[allow(clippy::too_many_lines, reason = "one walk-through, and a later batch")]
+fn typed_batch(paging_fails: bool) {
+    const BATCH: &str = "nightly-2026-11-10";
+    const ON_CALL: &str = "Priya Natarajan";
+    let mut world = world_of("typed-destinations");
+    let root = world.root.display().to_string();
+    // The paging CLI the notify script calls: it logs what it was handed and what the bug
+    // tracker held at that moment, and names this week's on-call.
+    world.script(
+        "oncall",
+        &format!(
+            "case \"$1\" in\n  page) {{ echo \"--- page $*\"; ls {root}/bug-tracker-root/tasks; echo '--- stdin'; cat; echo; }} >> {root}/oncall.log\n    [ -f {root}/oncall.fail ] && {{ echo 'the pager is down' >&2; exit 3; }}\n    exit 0 ;;\n  who) echo '{ON_CALL}' ;;\nesac"
+        ),
+    );
+    if paging_fails {
+        std::fs::write(world.root.join("oncall.fail"), "").expect("written");
+    }
+    // As a filed ticket carries it: its declared fields in its content too.
+    let security_body = filed_body("The image library decodes untrusted input unchecked.").replace(
+        "## Evidence",
+        "## Fields\n\n- error_signature: CVE-2026-1234\n\n## Evidence",
+    );
+    world.item(
+        "security-tracker",
+        "cve-older",
+        &crate::world::filed_item(
+            "widgets: the image library decodes untrusted input",
+            "nightly-2026-10-01",
+            "image-library-cve",
+            &json!({"kind": "security", "fields": {"error_signature": "CVE-2026-1234"}}),
+            "medium",
+        ),
+        &security_body,
+    );
+    let d1 = world.draft(
+        BATCH,
+        "the checkout crashes on submit",
+        &["src/checkout.rs"],
+        "Every submit crashes.\n",
+    );
+    let d2 = world.draft(
+        BATCH,
+        "the search box drops the last character",
+        &["src/search.rs"],
+        "Typing fast loses a letter.\n",
+    );
+    let d3 = world.draft(
+        BATCH,
+        "a bulk export of reports",
+        &["src/export.rs"],
+        "Users ask to export many reports at once.\n",
+    );
+    let d4 = world.draft(
+        BATCH,
+        "cve-2026-1234 in the image library",
+        &["Cargo.lock"],
+        "The scanner reports CVE-2026-1234.\n",
+    );
+    world.ok("prepare", &["prepare", "--batch", BATCH], "");
+    let mut critical = Ticket::new(
+        "checkout-crashes-on-submit",
+        "the checkout crashes on submit",
+        &[&d1],
+    )
+    .severities("critical", "critical", "none");
+    critical.kind = Some("bug".to_owned());
+    let mut high = Ticket::new(
+        "search-drops-last-character",
+        "the search box drops the last character",
+        &[&d2],
+    )
+    .severities("high", "high", "none");
+    high.kind = Some("bug".to_owned());
+    let mut improvement = Ticket::new("bulk-report-export", "a bulk export of reports", &[&d3]);
+    improvement.kind = Some("improvement".to_owned());
+    let mut security = Ticket::new(
+        "image-library-cve",
+        "the image library decodes untrusted input",
+        &[&d4],
+    );
+    security.kind = Some("security".to_owned());
+    security.fields = vec![("error_signature".to_owned(), "cve-2026-1234 ".to_owned())];
+    for ticket in [&critical, &high, &improvement, &security] {
+        world.ticket(BATCH, ticket);
+        world.ok(
+            "agent",
+            &["ticket", "copy", "--batch", BATCH, &ticket.slug],
+            "",
+        );
+    }
+    let mut answers = vec![
+        answer(
+            &d1,
+            "bug",
+            "filed",
+            &["checkout-crashes-on-submit"],
+            "Reproduced.",
+        ),
+        answer(
+            &d2,
+            "bug",
+            "filed",
+            &["search-drops-last-character"],
+            "Reproduced.",
+        ),
+        answer(
+            &d3,
+            "improvement",
+            "filed",
+            &["bulk-report-export"],
+            "Requested twice.",
+        ),
+        answer(
+            &d4,
+            "security",
+            "too-low-impact",
+            &[],
+            "Only an internal tool decodes images.",
+        ),
+    ];
+    world.answer(BATCH, &answers);
+    let checked = world.ok("check", &["check", "--batch", BATCH], "");
+    assert_eq!(checked["sound"], false, "{checked}");
+    assert!(
+        checked["problems"]
+            .to_string()
+            .contains("the kind `security` does not allow the disposition `too-low-impact`"),
+        "{checked}"
+    );
+    answers[3] = answer(
+        &d4,
+        "security",
+        "filed",
+        &["image-library-cve"],
+        "Merged with the open finding.",
+    );
+    world.answer(BATCH, &answers);
+    let checked = world.ok("check", &["check", "--batch", BATCH], "");
+    assert_eq!(checked["sound"], true, "{checked}");
+    let published = world.ok("publish", &["publish", "--batch", BATCH], "");
+    world.ok("settle", &["settle", "--batch", BATCH], "");
+
+    // The pager received the critical bug's ticket before that ticket's write.
+    let paged = std::fs::read_to_string(world.root.join("oncall.log")).expect("the pager ran");
+    let (listed, handed) = paged.split_once("--- stdin\n").expect("the log's parts");
+    assert!(
+        listed.starts_with("--- page page --schedule bugs"),
+        "{paged}"
+    );
+    assert_eq!(
+        listed.lines().count(),
+        1,
+        "bug-tracker held nothing when it was paged: {paged}"
+    );
+    let handed: Value = serde_json::from_str(handed.trim()).expect("the route command's document");
+    assert_eq!(handed["route"], "page-on-critical");
+    assert_eq!(handed["ticket"]["root_cause"], "checkout-crashes-on-submit");
+    assert_eq!(handed["severity"], "critical");
+
+    let (_, high_text) = filed(&world, "bug-tracker", "search-drops-last-character");
+    assert_eq!(list(&high_text, "labels"), ["bug"], "{high_text}");
+    assert_eq!(list(&high_text, "assignees"), ["jane.doe"], "{high_text}");
+    assert_eq!(front(&high_text)["priority"], "high", "at its estimate");
+    assert_eq!(record(&high_text)["board_assignee"], "jane.doe");
+    let (_, improvement_text) = filed(&world, "product-triage", "bulk-report-export");
+    assert_eq!(
+        front(&improvement_text)["priority"],
+        "low",
+        "{improvement_text}"
+    );
+    assert!(list(&improvement_text, "assignees").is_empty());
+    assert_eq!(
+        world.filed("security-tracker").len(),
+        1,
+        "merged with the open finding"
+    );
+    assert!(
+        world
+            .read_item("security-tracker", "cve-older")
+            .contains(&format!("Additional evidence from follow-up run `{BATCH}`"))
+    );
+    if paging_fails {
+        // Only the critical bug's write is withheld, receipted, and pending a retry.
+        assert_eq!(world.filed("bug-tracker").len(), 1, "{published}");
+        let withheld: Vec<&Value> = published["outcomes"]
+            .as_array()
+            .expect("outcomes")
+            .iter()
+            .filter(|one| one["outcome"] == "route-command-failed")
+            .collect();
+        assert_eq!(withheld.len(), 1, "{published}");
+        assert!(
+            withheld[0]["error"]
+                .as_str()
+                .is_some_and(|error| error.contains("the pager is down")),
+            "{published}"
+        );
+        let pending = std::fs::read_to_string(world.work().join("feedback/pending.json"))
+            .expect("a pending write");
+        assert!(
+            pending.contains("route-command-failed") && pending.contains("withheld"),
+            "{pending}"
+        );
+        return;
+    }
+    let (critical_id, critical_text) = filed(&world, "bug-tracker", "checkout-crashes-on-submit");
+    assert_eq!(
+        front(&critical_text)["priority"],
+        "urgent",
+        "{critical_text}"
+    );
+    assert_eq!(list(&critical_text, "labels"), ["escalated"]);
+    assert_eq!(
+        list(&critical_text, "assignees"),
+        [ON_CALL],
+        "assigned to the on-call the command named"
+    );
+    assert_eq!(record(&critical_text)["board_assignee"], ON_CALL);
+
+    // A later batch finds a person reassigned both bugs, and leaves that person's choice.
+    const LATER: &str = "nightly-2026-11-11";
+    let (high_id, _) = filed(&world, "bug-tracker", "search-drops-last-character");
+    for id in [&critical_id, &high_id] {
+        let text = world.read_item("bug-tracker", id);
+        let held = list(&text, "assignees");
+        world.edit_item("bug-tracker", id, &format!("- {}", held[0]), "- Sam Okafor");
+    }
+    let d5 = world.draft(
+        LATER,
+        "the checkout crashes on submit",
+        &["src/checkout.rs"],
+        "Seen again.\n",
+    );
+    let d6 = world.draft(
+        LATER,
+        "the search box drops the last character",
+        &["src/search.rs"],
+        "Seen again.\n",
+    );
+    world.ok("prepare", &["prepare", "--batch", LATER], "");
+    for (id, root_cause) in [
+        (&critical_id, "checkout-crashes-on-submit"),
+        (&high_id, "search-drops-last-character"),
+    ] {
+        let item = format!("bug-tracker:{id}");
+        world.ok(
+            "agent",
+            &[
+                "ticket",
+                "comment",
+                "--batch",
+                LATER,
+                "--item",
+                &item,
+                "--root-cause",
+                root_cause,
+            ],
+            "Seen again at the basis.\n",
+        );
+        world.ok(
+            "agent",
+            &["ticket", "re-estimate", "--batch", LATER, &item],
+            "",
+        );
+    }
+    world.answer(
+        LATER,
+        &[
+            answer(
+                &d5,
+                "bug",
+                "filed",
+                &["checkout-crashes-on-submit"],
+                "Evidence.",
+            ),
+            answer(
+                &d6,
+                "bug",
+                "filed",
+                &["search-drops-last-character"],
+                "Evidence.",
+            ),
+        ],
+    );
+    let checked = world.ok("check", &["check", "--batch", LATER], "");
+    assert_eq!(checked["sound"], true, "{checked}");
+    world.ok("publish", &["publish", "--batch", LATER], "");
+    for id in [&critical_id, &high_id] {
+        let text = world.read_item("bug-tracker", id);
+        assert_eq!(
+            list(&text, "assignees"),
+            ["Sam Okafor"],
+            "a person's choice stands: {text}"
+        );
+    }
+}
+
+fn inline_fixes() {
+    const BATCH: &str = "nightly-2026-11-10";
+    let mut world = world_of("inline-fixes");
+    let d1 = world.draft(
+        BATCH,
+        "the zoom level resets",
+        &["src/zoom.rs"],
+        "Zoom resets.\n",
+    );
+    let d2 = world.draft(
+        BATCH,
+        "the undo stack forgets renames",
+        &["src/undo.rs"],
+        "Undo skips a rename.\n",
+    );
+    let d3 = world.draft(
+        BATCH,
+        "the font service times out",
+        &["src/fonts.rs"],
+        "The vendor's font service times out.\n",
+    );
+    world.ok("prepare", &["prepare", "--batch", BATCH], "");
+    let undo = Ticket::new(
+        "undo-forgets-renames",
+        "the undo stack forgets renames",
+        &[&d2],
+    );
+    let mut fonts = Ticket::new(
+        "font-service-times-out",
+        "the font service times out",
+        &[&d3],
+    );
+    fonts.kind = Some("external-defect".to_owned());
+    for ticket in [&undo, &fonts] {
+        world.ticket(BATCH, ticket);
+        world.ok(
+            "agent",
+            &["ticket", "copy", "--batch", BATCH, &ticket.slug],
+            "",
+        );
+    }
+    world.answer(
+        BATCH,
+        &[
+            answer(&d1, "root-cause", "fixed-inline", &[], "Fixed in this run."),
+            answer(
+                &d2,
+                "root-cause",
+                "filed",
+                &["undo-forgets-renames"],
+                "Verified.",
+            ),
+            answer(
+                &d3,
+                "external-defect",
+                "fixed-inline",
+                &[],
+                "Fixed in 0123456789abcdef0123456789abcdef01234567.",
+            ),
+        ],
+    );
+    let checked = world.ok("check", &["check", "--batch", BATCH], "");
+    assert_eq!(checked["sound"], false, "{checked}");
+    let problems = checked["problems"].to_string();
+    assert!(
+        problems.contains("the disposition `fixed-inline` requires the change that addressed it"),
+        "{problems}"
+    );
+    assert!(
+        problems
+            .contains("the kind `external-defect` does not allow the disposition `fixed-inline`"),
+        "{problems}"
+    );
+    world.answer(
+        BATCH,
+        &[
+            answer(
+                &d1,
+                "root-cause",
+                "fixed-inline",
+                &[],
+                "Fixed in https://github.com/example/widgets/pull/12.",
+            ),
+            answer(
+                &d2,
+                "root-cause",
+                "filed",
+                &["undo-forgets-renames"],
+                "Verified.",
+            ),
+            answer(
+                &d3,
+                "external-defect",
+                "filed",
+                &["font-service-times-out"],
+                "Verified.",
+            ),
+        ],
+    );
+    let checked = world.ok("check", &["check", "--batch", BATCH], "");
+    assert_eq!(checked["sound"], true, "{checked}");
+    world.ok("publish", &["publish", "--batch", BATCH], "");
+    let filed_items = world.filed("backlog");
+    assert_eq!(
+        filed_items.len(),
+        2,
+        "nothing for the fixed draft: {filed_items:?}"
+    );
+    for (_, text) in &filed_items {
+        assert_eq!(front(text)["status"], "backlog", "at Proposal: {text}");
+        assert_eq!(front(text)["priority"], "low", "{text}");
+    }
+    assert_eq!(
+        record(&filed(&world, "backlog", "font-service-times-out").1)["kind"],
+        "external-defect"
+    );
+}

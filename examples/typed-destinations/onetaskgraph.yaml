@@ -1,0 +1,18 @@
+sources:
+  drafts:
+    plugin: local-md
+    config: {root: .follow-ups, assignees: true}
+  product-triage:
+    plugin: github-projects
+    config:
+      owner: example-owner
+      project_number: 7
+      repository: example-owner/example-repo
+      token_env: GH_PROJECTS_TOKEN
+  bug-tracker:
+    plugin: linear
+    config: {api_key_env: LINEAR_API_KEY, team: BUG, assignees: true}
+  security-tracker:
+    visibility: private
+    plugin: linear
+    config: {api_key_env: LINEAR_API_KEY, team: SEC}

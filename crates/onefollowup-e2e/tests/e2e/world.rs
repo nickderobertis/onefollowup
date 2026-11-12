@@ -30,6 +30,12 @@ impl World {
     /// A world whose store holds `drafts` and each of `destinations`, configured by
     /// `onefollowup.yaml`.
     pub fn new(destinations: &[&str], config: &str) -> Self {
+        Self::assigning(destinations, &[], config)
+    }
+
+    /// A world whose store holds `drafts` and each of `destinations`, each source `assigning`
+    /// names holding assignees (`config.assignees: true`), configured by `onefollowup.yaml`.
+    pub fn assigning(destinations: &[&str], assigning: &[&str], config: &str) -> Self {
         let root = std::env::temp_dir();
         #[cfg(not(windows))]
         let root = root.canonicalize().expect("the temporary root resolves");
@@ -41,6 +47,9 @@ impl World {
             store.push_str(&format!(
                 "  {source}:\n    plugin: local-md\n    config:\n      root: {source}-root\n"
             ));
+            if assigning.contains(&source) {
+                store.push_str("      assignees: true\n");
+            }
         }
         std::fs::write(root.join("onetaskgraph.yaml"), store).expect("the store");
         std::fs::write(root.join("onefollowup.yaml"), config).expect("the configuration");

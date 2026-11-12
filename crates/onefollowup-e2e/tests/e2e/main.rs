@@ -7,6 +7,7 @@ mod budget;
 mod budget_runner;
 mod configuration;
 mod duplicates;
+mod examples;
 mod journey;
 mod refusals;
 mod safeguards;

@@ -955,9 +955,7 @@ fn updates(publishing: &Publishing<'_, '_>, assignments: Vec<Assignment>, answer
                     continue;
                 }
             };
-        if !staged && edges.is_empty() && estimated.level == record.priority_estimate {
-            continue;
-        }
+        let unrecorded = edges.is_empty();
         if !edges.is_empty() {
             let mut held_edges = record.edges.take().unwrap_or_default();
             held_edges.extend(edges);
@@ -973,9 +971,31 @@ fn updates(publishing: &Publishing<'_, '_>, assignments: Vec<Assignment>, answer
                 Level::Low => Priority::Low,
             });
         let following = held_now == stored;
+        // The route the item now matches sets its priority over the estimate, as it does a
+        // copy's, and names the person it is assigned to.
+        let route = if batch.config.routes.is_empty() {
+            None
+        } else {
+            item_route(publishing, &item, &record, &read.item.content)
+        };
+        let written = route
+            .and_then(|route| route.set.priority)
+            .map_or(estimated.level, ticket::level_of);
+        let person = route.and_then(|route| route.set.assignee.clone());
+        // An item only the batch's edges reach is written when they move something of it.
+        if !staged
+            && unrecorded
+            && estimated.level == record.priority_estimate
+            && (!following || record.board_estimate == Some(written))
+            && person
+                .as_deref()
+                .is_none_or(|person| record.board_assignee.as_deref() == Some(person))
+        {
+            continue;
+        }
         record.priority_estimate = estimated.level;
         if following {
-            record.board_estimate = Some(estimated.level);
+            record.board_estimate = Some(written);
         }
         let body = estimated.line.as_ref().map_or_else(
             || read.item.content.clone(),
@@ -988,7 +1008,7 @@ fn updates(publishing: &Publishing<'_, '_>, assignments: Vec<Assignment>, answer
                 .cloned()
                 .or_else(|| read.item.version.clone()),
             body: Some(body),
-            priority: following.then(|| level_word(estimated.level).to_owned()),
+            priority: following.then(|| level_word(written).to_owned()),
             when_priority: if following {
                 vec![read.item.priority.clone()]
             } else {
@@ -1003,7 +1023,7 @@ fn updates(publishing: &Publishing<'_, '_>, assignments: Vec<Assignment>, answer
             frequency: record.frequency,
             occurrences: count,
             priority: if following {
-                held(level_word(estimated.level))
+                held(level_word(written))
             } else {
                 held(&read.item.priority)
             },
@@ -1018,8 +1038,6 @@ fn updates(publishing: &Publishing<'_, '_>, assignments: Vec<Assignment>, answer
             writes: Vec::new(),
             error: None,
         };
-        let person = item_route(publishing, &item, &record, &read.item.content)
-            .and_then(|route| route.set.assignee.clone());
         let assignment = person
             .filter(|person| record.board_assignee.as_deref() != Some(person.as_str()))
             .map(|person| Assignment {

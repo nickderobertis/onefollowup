@@ -376,6 +376,18 @@ impl Graph {
                 },
             };
             for end in [&edge.from, &edge.to] {
+                if let End::Item(item) = end
+                    && decide::read_of(state, item).is_some()
+                    && !state.relations.iter().any(|read| read.item == *item)
+                {
+                    problems.push((
+                        subject.clone(),
+                        format!(
+                            "prepare has not read the edges `{item}` already holds, which its relations' cardinality, rollups and routes count: run `onefollowup prepare --batch {}` again, which reads them",
+                            batch.batch
+                        ),
+                    ));
+                }
                 let in_play = match end {
                     End::Ticket(slug) => staged(batch, state, outbox, bound, slug),
                     End::Item(item) => decide::read_of(state, item).is_some(),
@@ -794,16 +806,21 @@ fn held(batch: &Batch<'_>, state: &BatchState) -> Vec<Held> {
     };
     let mut held = BTreeSet::new();
     for item in &state.relations {
-        for link in item.links.iter().filter(|link| link.outgoing) {
+        for link in &item.links {
             if config
                 .relations
                 .iter()
                 .any(|one| one.name == link.link_type)
             {
+                let (from, to) = if link.outgoing {
+                    (item.item.clone(), link.other.clone())
+                } else {
+                    (link.other.clone(), item.item.clone())
+                };
                 held.insert(Held {
                     relation: link.link_type.clone(),
-                    from: item.item.clone(),
-                    to: link.other.clone(),
+                    from,
+                    to,
                 });
             }
         }

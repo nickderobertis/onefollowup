@@ -1,0 +1,44 @@
+destination: eng
+drafts_source: drafts
+default_kind: root-cause
+fields:
+  error_signature: {description: "The error code the failure reports, exactly as logged, such as TIMEOUT-42"}
+  client: {description: "The id of the client that saw the failure, such as acme"}
+kinds:
+  - name: root-cause
+    description: The underlying defect behind one or more symptoms
+    ticket_template: templates/root-cause.md.j2
+    duplicates: agent
+    priority: {model: estimate}
+    initial_status: proposal
+  - name: symptom
+    description: One observable failure, across every client that sees it
+    ticket_template: templates/symptom.md.j2
+    duplicates: {same: [error_signature]}
+    priority: {model: estimate}
+    initial_status: proposal
+  - name: client-symptom
+    description: One client's occurrences of a symptom
+    ticket_template: templates/client-symptom.md.j2
+    duplicates: {same: [error_signature, client]}
+    priority: {model: estimate}
+    initial_status: proposal
+relations:
+  - name: occurs-for
+    from: client-symptom
+    to: symptom
+    cardinality: many-to-one
+    decided_by: {match: [error_signature]}
+    store: parent
+    rollup: occurrences
+  - name: caused-by
+    from: symptom
+    to: root-cause
+    cardinality: many-to-many
+    decided_by: agent
+    store: link
+    rollup: max
+routes:
+  - name: widespread-root-cause
+    match: {kind: [root-cause], relations: {caused-by: {min: 3}}}
+    set: {priority: high, labels: [widespread]}

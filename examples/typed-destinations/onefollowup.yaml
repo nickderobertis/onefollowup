@@ -1,0 +1,38 @@
+destination: product-triage
+drafts_source: drafts
+default_kind: bug
+fields:
+  error_signature: {description: "The scanner's finding id, exactly as reported, such as CVE-2026-1234"}
+kinds:
+  - name: bug
+    description: Reproducible product defect
+    ticket_template: templates/bug.md.j2
+    duplicates: agent
+    priority: {model: estimate}
+    initial_status: proposal
+    destination: bug-tracker
+  - name: improvement
+    description: Product improvement
+    ticket_template: templates/improvement.md.j2
+    duplicates: agent
+    priority: {fixed: low}
+    initial_status: proposal
+  - name: security
+    description: Security finding requiring restricted review
+    ticket_template: templates/security.md.j2
+    duplicates: {same: [error_signature]}
+    priority: {model: estimate}
+    initial_status: proposal
+    destination: security-tracker
+    dispositions: [filed, not-reproducible, already-fixed]
+routes:
+  - name: page-on-critical
+    match: {kind: [bug], severity: [critical]}
+    set: {status_role: proposal, priority: urgent, labels: [escalated]}
+    command: [scripts/notify-oncall.sh]
+  - name: remaining-bugs
+    match: {kind: [bug]}
+    set: {labels: [bug], assignee: jane.doe}
+  - name: security-labelled
+    match: {kind: [security]}
+    set: {labels: [security]}

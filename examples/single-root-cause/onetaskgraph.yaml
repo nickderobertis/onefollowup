@@ -1,0 +1,14 @@
+sources:
+  drafts:
+    plugin: local-md
+    config: {root: .follow-ups}
+  followups:
+    visibility: public
+    plugin: github-projects
+    config:
+      owner: example-owner
+      project_number: 3
+      repository: example-owner/example-repo
+      token_env: GH_PROJECTS_TOKEN
+      status_mapping: {backlog: Proposal, draft: Deferred, queued: Queued, done: Done, cancelled: Cancelled}
+      priority_mapping: {urgent: Urgent, high: High, medium: Medium, low: Low}

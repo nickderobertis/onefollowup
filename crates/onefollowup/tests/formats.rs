@@ -16,7 +16,9 @@ use onefollowup::formats::markers::{
 };
 use onefollowup::formats::outbox::{Outbox, StagedWrite};
 use onefollowup::formats::pending::Pending;
-use onefollowup::formats::receipts::{Outcome, ReceiptJournal};
+use onefollowup::formats::receipts::{
+    AssignAction, AssignOutcome, EdgeAction, Outcome, ReceiptJournal, RelateOutcome,
+};
 use onefollowup::formats::responses::Responses;
 use onefollowup::formats::snapshot::{Launched, Snapshot};
 use onefollowup::formats::ticket::TicketRecord;
@@ -324,6 +326,61 @@ fn the_receipt_journal_round_trips() {
             .any(|receipt| matches!(receipt.outcome, Outcome::Comment(_)))
     );
     assert_eq!(journal.render(), text);
+}
+
+#[test]
+fn an_edges_and_an_assignees_receipt_lines_round_trip_within_schema_3() {
+    let text = fixture("receipts/journal-relations-schema3.jsonl");
+    let journal = ReceiptJournal::parse(&text).expect("a schema-3 journal");
+    let edges: Vec<&RelateOutcome> = journal
+        .receipts
+        .iter()
+        .filter_map(|receipt| match &receipt.outcome {
+            Outcome::Relate(edge) => Some(edge),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        edges.iter().map(|edge| edge.action).collect::<Vec<_>>(),
+        [EdgeAction::Written, EdgeAction::Exists, EdgeAction::Failed]
+    );
+    assert!(edges[0].derived && edges[0].store == "parent");
+    assert!(
+        journal.receipts[2].card.is_none(),
+        "an unwritten edge names no card"
+    );
+    let assigned: Vec<&AssignOutcome> = journal
+        .receipts
+        .iter()
+        .filter_map(|receipt| match &receipt.outcome {
+            Outcome::Assign(assign) => Some(assign),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(assigned[0].action, AssignAction::Written);
+    assert_eq!(assigned[0].when, ["alice"]);
+    assert_eq!(assigned[1].action, AssignAction::Held);
+    assert!(
+        assigned[1].when.is_empty(),
+        "never assigned: held to nobody"
+    );
+    assert_eq!(
+        assigned[1].error.as_ref().map(|error| error.kind.as_str()),
+        Some("assignee-held")
+    );
+    assert_eq!(journal.render(), text);
+    let assign = text.lines().nth(3).expect("an assign line");
+    assert!(
+        matches!(
+            ReceiptJournal::parse(&assign.replacen(
+                "\"card\": \"bugs:item-3\"",
+                "\"card\": null",
+                1
+            )),
+            Err(FormatError::Malformed { .. })
+        ),
+        "an assignee's receipt names its card"
+    );
 }
 
 #[test]

@@ -654,6 +654,7 @@ the batch id stands where they say `run`.
 | Pending writes | 1 | `feedback/pending.json`. |
 | Existing tickets | 1 | `existing-tickets.json`. |
 | Outbox | 1 | `outbox/<batch>.json`: the staged writes `publish` sends. |
+| Batch state | 1 | `state/<batch>.json`: onefollowup's own working file — the input set, prepare's reads and each publish. An optional member onefollowup adds within 1: `relations` (prepare's `task relations` read of the tickets it found), omitted when empty. |
 
 ## Development
 

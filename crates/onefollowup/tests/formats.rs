@@ -7,6 +7,7 @@
 //! one below — the version read is refused naming the format, the schema found and the
 //! schema read.
 
+use onefollowup::formats::batch::BatchState;
 use onefollowup::formats::dispositions::{CarriedDispositions, Dispositions};
 use onefollowup::formats::draft::{DraftRecord, DraftsProjectRecord};
 use onefollowup::formats::existing_tickets::ExistingTickets;
@@ -554,4 +555,25 @@ fn an_outbox_written_by_the_library_round_trips() {
         Outbox::parse(&unknown_op),
         Err(FormatError::Malformed { .. })
     ));
+}
+
+#[test]
+fn a_batch_state_written_before_relations_still_reads_and_one_carrying_them_round_trips() {
+    // Written by this crate at the base of the relations change, carrying no `relations`.
+    let before = fixture("batch-state/state-before-relations.json");
+    let state = BatchState::parse(&before).expect("a schema-1 state from before relations");
+    assert!(state.relations.is_empty());
+    assert_eq!(
+        state.render(),
+        before,
+        "a state with no relations writes as it always did"
+    );
+    let with = fixture("batch-state/state-with-relations.json");
+    let state = BatchState::parse(&with).expect("a schema-1 state carrying relations");
+    assert_eq!(state.relations.len(), 1);
+    assert_eq!(
+        state.relations[0].links[0].other_end,
+        onefollowup::store::LinkEnd::Missing
+    );
+    assert_eq!(state.render(), with);
 }

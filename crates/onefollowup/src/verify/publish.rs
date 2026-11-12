@@ -118,10 +118,6 @@ fn holds_assignees(store: &Store, name: &str) -> bool {
 ///
 /// Why the ticket's write is withheld: the command could not run, exited non-zero, printed
 /// something else than an override, or assigned someone where `sources` hold no assignee.
-#[allow(
-    clippy::too_many_arguments,
-    reason = "the batch, the store, the route and its argv, the document and the sources"
-)]
 fn route_command(
     batch: &Batch<'_>,
     store: &Store,

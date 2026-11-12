@@ -394,6 +394,7 @@ pub fn run(settings: &Settings, args: BatchArgs) -> Result<Published, Error> {
                     priority: Some(priority),
                     repositories: Some(vec![decision.record.repository.clone()]),
                     metadata,
+                    assignee: None,
                 },
             )?,
             None => store.create_task(&NewTask {
@@ -406,6 +407,7 @@ pub fn run(settings: &Settings, args: BatchArgs) -> Result<Published, Error> {
                 labels: decision.labels.clone(),
                 repositories: vec![decision.record.repository.clone()],
                 metadata,
+                assignee: None,
             })?,
         };
         state
@@ -646,6 +648,8 @@ fn re_estimates(
                 Vec::new()
             },
             metadata: BTreeMap::from([(batch.record_key(), ticket::record_value(&record))]),
+            assignee: None,
+            when_assignees: None,
         };
         let summary = ReEstimateOutcome {
             estimate_line: estimated.line.clone().unwrap_or_default(),

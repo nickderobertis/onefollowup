@@ -171,6 +171,7 @@ pub fn run(settings: &Settings, args: DraftArgs) -> Result<Drafted, Error> {
         labels: Vec::new(),
         repositories: vec![args.repository],
         metadata: BTreeMap::from([(batch.draft_key(), json(&record.render()))]),
+        assignee: None,
     })?;
     Ok(Drafted {
         schema_version: SCHEMA_VERSION,

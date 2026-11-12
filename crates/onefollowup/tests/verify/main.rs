@@ -4,6 +4,7 @@
 //! tools. (`crates/onefollowup-e2e` runs the same journeys against the built binary.)
 
 mod adoption;
+mod assignees;
 mod baseline;
 mod configuration;
 mod duplicates;

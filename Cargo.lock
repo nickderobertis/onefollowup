@@ -1287,7 +1287,7 @@ dependencies = [
 
 [[package]]
 name = "onefollowup"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "chrono",
  "clap",
@@ -1310,7 +1310,7 @@ dependencies = [
 
 [[package]]
 name = "onefollowup-e2e"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "assert_cmd",
  "chrono",

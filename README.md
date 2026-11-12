@@ -541,8 +541,11 @@ match wins:
 on stdin; its stdout is empty or a JSON object of `status_role`, `priority`, `labels` and
 `assignee` overriding `set`, and a non-zero exit withholds that ticket's write, receipted
 as `route-command-failed`. `relations` counts a relation's edges at either end of the ticket,
-staged ones included. An existing item the batch re-estimates is matched too, its route's
-`priority` and `assignee` applied (its `command` runs only before a ticket's copy).
+staged ones included. An existing item the batch re-estimates is matched too: its route's
+`command` runs before that item's write with the same document, its stdout's `priority` and
+`assignee` overriding the route's `set`, and a non-zero exit withholds that item's writes alone
+(its re-estimate, assignee and evidence comment), receipted `route-command-failed`. Labels and
+status are a copy's to write.
 
 A ticket has **one assignee**, as a Linear issue does, written only to a source whose store
 configuration sets `config.assignees: true` — the destination, and the drafts source the copy

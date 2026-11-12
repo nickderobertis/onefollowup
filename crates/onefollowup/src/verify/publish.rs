@@ -111,6 +111,61 @@ fn holds_assignees(store: &Store, name: &str) -> bool {
     store.source_setting(name, "assignees") == Some(Value::Bool(true))
 }
 
+/// Run a matched route's `command` before its ticket's write, with `document` on stdin, and
+/// read what it overrides; an assignee it names must land on sources that hold one.
+///
+/// # Errors
+///
+/// Why the ticket's write is withheld: the command could not run, exited non-zero, printed
+/// something else than an override, or assigned someone where `sources` hold no assignee.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the batch, the store, the route and its argv, the document and the sources"
+)]
+fn route_command(
+    batch: &Batch<'_>,
+    store: &Store,
+    route: &Route,
+    argv: &[String],
+    document: &Value,
+    sources: &[&str],
+) -> Result<Override, String> {
+    let ran = command::run(
+        argv,
+        &document.to_string(),
+        batch.settings.working_directory(),
+        batch.settings.environment(),
+    );
+    let given: Override = match ran {
+        Err(error) => return Err(error),
+        Ok(ran) if ran.exit != 0 => {
+            return Err(format!(
+                "the route `{}` command exited {}: {}",
+                route.name,
+                ran.exit,
+                ran.stderr.trim()
+            ));
+        }
+        Ok(ran) if ran.stdout.trim().is_empty() => Override::default(),
+        Ok(ran) => serde_json::from_str(&ran.stdout).map_err(|error| {
+            format!(
+                "the route `{}` command printed what is not an override of `status_role`, `priority`, `labels` and `assignee`: {error}",
+                route.name
+            )
+        })?,
+    };
+    let unheld = sources
+        .iter()
+        .find(|source| !holds_assignees(store, source));
+    match (&given.assignee, unheld) {
+        (Some(person), Some(source)) => Err(format!(
+            "the route `{}` command assigned `{person}`, and the source `{source}` does not set `config.assignees: true`, so it holds no assignee",
+            route.name
+        )),
+        _ => Ok(given),
+    }
+}
+
 fn held(word: &str) -> HeldPriority {
     serde_json::from_value(Value::from(word)).unwrap_or(HeldPriority::None)
 }
@@ -227,50 +282,22 @@ pub fn run(settings: &Settings, args: BatchArgs) -> Result<Published, Error> {
         if let Some((_, route)) = &decision.route
             && let Some(argv) = &route.command
         {
-            let stdin = json!({
-                "schema_version": 1,
-                "ticket": ticket::record_value(&decision.record),
-                "kind": decision.kind.name,
-                "severity": decision.severity,
-                "repository": decision.record.repository,
-                "paths": decision.paths,
-                "route": route.name,
-            })
-            .to_string();
-            let ran = command::run(
+            let overridden = route_command(
+                &batch,
+                &store,
+                route,
                 argv,
-                &stdin,
-                settings.working_directory(),
-                settings.environment(),
-            );
-            let overridden: Result<Override, String> = match ran {
-                Err(error) => Err(error),
-                Ok(ran) if ran.exit != 0 => Err(format!(
-                    "the route `{}` command exited {}: {}",
-                    route.name,
-                    ran.exit,
-                    ran.stderr.trim()
-                )),
-                Ok(ran) if ran.stdout.trim().is_empty() => Ok(Override::default()),
-                Ok(ran) => serde_json::from_str(&ran.stdout).map_err(|error| {
-                    format!(
-                        "the route `{}` command printed what is not an override of `status_role`, `priority`, `labels` and `assignee`: {error}",
-                        route.name
-                    )
+                &json!({
+                    "schema_version": 1,
+                    "ticket": ticket::record_value(&decision.record),
+                    "kind": decision.kind.name,
+                    "severity": decision.severity,
+                    "repository": decision.record.repository,
+                    "paths": decision.paths,
+                    "route": route.name,
                 }),
-            };
-            let overridden = overridden.and_then(|given| {
-                let unheld = [decision.destination.as_str(), drafts.as_str()]
-                    .into_iter()
-                    .find(|source| !holds_assignees(&store, source));
-                match (&given.assignee, unheld) {
-                    (Some(person), Some(source)) => Err(format!(
-                        "the route `{}` command assigned `{person}`, and the source `{source}` does not set `config.assignees: true`, so it holds no assignee",
-                        route.name
-                    )),
-                    _ => Ok(given),
-                }
-            });
+                &[decision.destination.as_str(), drafts.as_str()],
+            );
             match overridden {
                 Err(message) => {
                     answers.push(
@@ -619,8 +646,8 @@ pub fn run(settings: &Settings, args: BatchArgs) -> Result<Published, Error> {
             })
         })
         .collect();
-    updates(&publishing, assignments, &mut answers);
-    comments(&batch, &outbox, &store, &mut answers);
+    let withheld = updates(&publishing, assignments, &mut answers);
+    comments(&batch, &outbox, &store, &withheld, &mut answers);
     edges(&publishing, &mut answers);
 
     let Answers {
@@ -900,7 +927,11 @@ enum Entry {
     clippy::too_many_lines,
     reason = "one pass: decide each item's update, send per source, receipt each answer"
 )]
-fn updates(publishing: &Publishing<'_, '_>, assignments: Vec<Assignment>, answers: &mut Answers) {
+fn updates(
+    publishing: &Publishing<'_, '_>,
+    assignments: Vec<Assignment>,
+    answers: &mut Answers,
+) -> Vec<(String, String)> {
     let Publishing {
         batch,
         state,
@@ -931,6 +962,7 @@ fn updates(publishing: &Publishing<'_, '_>, assignments: Vec<Assignment>, answer
         }
     }
     let mut by_source: BTreeMap<String, Vec<Entry>> = BTreeMap::new();
+    let mut withheld: Vec<(String, String)> = Vec::new();
     let source_of = |item: &str| {
         item.split_once(':')
             .map(|(source, _)| source.to_owned())
@@ -978,10 +1010,67 @@ fn updates(publishing: &Publishing<'_, '_>, assignments: Vec<Assignment>, answer
         } else {
             item_route(publishing, &item, &record, &read.item.content)
         };
-        let written = route
+        let mut written = route
             .and_then(|route| route.set.priority)
             .map_or(estimated.level, ticket::level_of);
-        let person = route.and_then(|route| route.set.assignee.clone());
+        let mut person = route.and_then(|route| route.set.assignee.clone());
+        // Its route's command runs before its write, as before a copy's; what it prints
+        // overrides the route's `set`, and its failure withholds this item's writes alone.
+        if let Some(route) = route
+            && let Some(argv) = &route.command
+        {
+            let kind = record
+                .kind
+                .clone()
+                .unwrap_or_else(|| batch.config.default_kind.clone());
+            let document = json!({
+                "schema_version": 1,
+                "ticket": ticket::record_value(&record),
+                "kind": kind,
+                "severity": ticket::severity(&read.item.content, &batch.config.rubric),
+                "repository": record.repository,
+                "paths": Vec::<String>::new(),
+                "route": route.name,
+            });
+            match route_command(
+                batch,
+                store,
+                route,
+                argv,
+                &document,
+                &[source_of(&item).as_str()],
+            ) {
+                Err(message) => {
+                    answers.push(
+                        index,
+                        re_estimate_refused(
+                            batch,
+                            &item,
+                            Some(read.item.title.clone()),
+                            "route-command-failed",
+                            &message,
+                        ),
+                        outcome(
+                            index,
+                            StagedOp::ReEstimate,
+                            Some(item.clone()),
+                            "route-command-failed",
+                            Some(message.clone()),
+                        ),
+                    );
+                    withheld.push((item.clone(), message));
+                    continue;
+                }
+                Ok(given) => {
+                    if let Some(priority) = given.priority {
+                        written = ticket::level_of(priority);
+                    }
+                    if given.assignee.is_some() {
+                        person = given.assignee;
+                    }
+                }
+            }
+        }
         // An item only the batch's edges reach is written when they move something of it.
         if !staged
             && unrecorded
@@ -1183,6 +1272,7 @@ fn updates(publishing: &Publishing<'_, '_>, assignments: Vec<Assignment>, answer
             }
         }
     }
+    withheld
 }
 
 /// An existing item's assignee as its `update-many` writes it: the one person, held to the
@@ -1413,7 +1503,15 @@ fn re_estimate_refused(
     }
 }
 
-fn comments(batch: &Batch<'_>, outbox: &Outbox, store: &Store, answers: &mut Answers) {
+/// One `comment add-many` per source of the batch's evidence comments; a comment on an item
+/// whose route command failed is withheld with that item's other writes.
+fn comments(
+    batch: &Batch<'_>,
+    outbox: &Outbox,
+    store: &Store,
+    withheld: &[(String, String)],
+    answers: &mut Answers,
+) {
     let mut by_source: BTreeMap<String, Vec<(usize, CommentPost, String)>> = BTreeMap::new();
     for (index, write) in outbox.writes.iter().enumerate() {
         let StagedWrite::Comment {
@@ -1424,6 +1522,34 @@ fn comments(batch: &Batch<'_>, outbox: &Outbox, store: &Store, answers: &mut Ans
         else {
             continue;
         };
+        if let Some((_, message)) = withheld.iter().find(|(one, _)| one == item) {
+            answers.push(
+                index,
+                Receipt {
+                    batch: batch.batch.clone(),
+                    ticket: None,
+                    card: Some(item.clone()),
+                    outcome: Outcome::Comment(CommentOutcome {
+                        id: None,
+                        item: Some(item.clone()),
+                        root_cause: Some(root_cause.clone()),
+                        url: None,
+                        error: Some(ReceiptError {
+                            kind: "route-command-failed".to_owned(),
+                            message: message.clone(),
+                        }),
+                    }),
+                },
+                outcome(
+                    index,
+                    StagedOp::Comment,
+                    Some(item.clone()),
+                    "route-command-failed",
+                    Some(message.clone()),
+                ),
+            );
+            continue;
+        }
         let source = item
             .split_once(':')
             .map(|(source, _)| source.to_owned())

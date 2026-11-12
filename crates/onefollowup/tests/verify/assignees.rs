@@ -538,3 +538,173 @@ fn a_route_command_assigning_where_the_destination_holds_no_assignee_withholds_t
     );
     assert!(world.filed("followups").is_empty());
 }
+
+/// A later batch's evidence and re-estimate on each of the three tickets `three_tickets`
+/// filed, its answers given; checked and published.
+fn later_batch(world: &mut World) -> Value {
+    let mut answers = Vec::new();
+    let mut cards = Vec::new();
+    for slug in [
+        "checkout-crashes",
+        "search-drops-a-letter",
+        "export-is-slow",
+    ] {
+        let title = slug.replace('-', " ");
+        let draft = world.draft(LATER, &title, &[], "Seen again.\n");
+        answers.push(answer(&draft, "root-cause", "filed", &[slug], "Evidence."));
+        cards.push((format!("followups:{}", item(world, slug).0), slug));
+    }
+    world.ok("prepare", &["prepare", "--batch", LATER], "");
+    for (card, slug) in &cards {
+        world.ok(
+            "agent",
+            &[
+                "ticket",
+                "comment",
+                "--batch",
+                LATER,
+                "--item",
+                card,
+                "--root-cause",
+                slug,
+            ],
+            "Seen again at the basis.\n",
+        );
+        world.ok(
+            "agent",
+            &["ticket", "re-estimate", "--batch", LATER, card],
+            "",
+        );
+    }
+    world.answer(LATER, &answers);
+    let checked = world.ok("check", &["check", "--batch", LATER], "");
+    assert_eq!(checked["sound"], true, "{checked}");
+    world.ok("publish", &["publish", "--batch", LATER], "")
+}
+
+/// A world whose rotation command names whoever `on-call` holds, and fails while `pager-down`
+/// exists; its first batch filed with the rotation naming `bob`.
+fn rotating_world() -> World {
+    let mut world = World::assigning(
+        &["followups"],
+        &["drafts", "followups"],
+        &assigning("alice"),
+    );
+    let root = world.root.display().to_string();
+    world.script(
+        "rotation-today",
+        &format!(
+            "cat > {root}/rotation.json\n[ -f {root}/pager-down ] && {{ echo 'the rotation service is down' >&2; exit 4; }}\necho \"{{\\\"assignee\\\": \\\"$(cat {root}/on-call)\\\"}}\""
+        ),
+    );
+    std::fs::write(world.root.join("on-call"), "bob").expect("written");
+    three_tickets(&mut world, BATCH);
+    world
+}
+
+#[test]
+fn a_later_batch_runs_an_existing_tickets_route_command_and_writes_the_person_it_names() {
+    let mut world = rotating_world();
+    let (critical, _) = item(&world, "checkout-crashes");
+    std::fs::remove_file(world.root.join("rotation.json")).expect("the first batch's");
+    // The rotation has moved on to erin.
+    std::fs::write(world.root.join("on-call"), "erin").expect("written");
+    let published = later_batch(&mut world);
+    let handed: Value = serde_json::from_str(
+        &std::fs::read_to_string(world.root.join("rotation.json"))
+            .expect("the route command ran for the existing ticket"),
+    )
+    .expect("JSON");
+    assert_eq!(handed["route"], "rotation", "{handed}");
+    assert_eq!(handed["ticket"]["root_cause"], "checkout-crashes");
+    assert_eq!(handed["severity"], "critical");
+    let text = world.read_item("followups", &critical);
+    assert_eq!(assignees(&text), ["erin"], "{published}\n{text}");
+    assert_eq!(record(&text)["board_assignee"], "erin");
+    let assigned = world
+        .receipts(LATER)
+        .into_iter()
+        .find(|receipt| {
+            receipt["command"] == "assign" && receipt["card"] == format!("followups:{critical}")
+        })
+        .expect("the existing ticket's assignee is receipted");
+    assert_eq!(assigned["outcome"]["when"], json!(["bob"]), "{assigned}");
+    assert_eq!(assigned["outcome"]["action"], "written");
+}
+
+#[test]
+fn a_route_commands_new_person_leaves_a_persons_own_reassignment_standing() {
+    let mut world = rotating_world();
+    let (critical, _) = item(&world, "checkout-crashes");
+    world.edit_item("followups", &critical, "- bob", "- carol");
+    std::fs::write(world.root.join("on-call"), "erin").expect("written");
+    later_batch(&mut world);
+    assert!(
+        world.root.join("rotation.json").is_file(),
+        "the command ran for the existing ticket"
+    );
+    let text = world.read_item("followups", &critical);
+    assert_eq!(
+        assignees(&text),
+        ["carol"],
+        "a person's choice stands: {text}"
+    );
+    assert_eq!(
+        record(&text)["board_assignee"],
+        "bob",
+        "nothing landed: {text}"
+    );
+    let held = world
+        .receipts(LATER)
+        .into_iter()
+        .find(|receipt| {
+            receipt["command"] == "assign" && receipt["card"] == format!("followups:{critical}")
+        })
+        .expect("the held assignee is receipted");
+    assert_eq!(held["outcome"]["assignee"], "erin", "{held}");
+    assert_eq!(held["outcome"]["error"]["kind"], "assignee-held", "{held}");
+}
+
+#[test]
+fn a_failing_route_command_withholds_only_that_existing_tickets_writes() {
+    let mut world = rotating_world();
+    let (critical, _) = item(&world, "checkout-crashes");
+    let (other, _) = item(&world, "search-drops-a-letter");
+    let before = world.read_item("followups", &critical);
+    let other_before = world.read_item("followups", &other);
+    std::fs::write(world.root.join("pager-down"), "").expect("written");
+    let published = later_batch(&mut world);
+    assert_eq!(
+        world.read_item("followups", &critical),
+        before,
+        "the ticket whose command failed is unchanged: {published}"
+    );
+    let failed: Vec<&Value> = published["outcomes"]
+        .as_array()
+        .expect("outcomes")
+        .iter()
+        .filter(|one| one["outcome"] == "route-command-failed")
+        .collect();
+    assert_eq!(
+        failed.len(),
+        2,
+        "its comment and its re-estimate: {published}"
+    );
+    assert!(
+        failed
+            .iter()
+            .all(|one| one["item"] == format!("followups:{critical}")
+                && one["error"]
+                    .as_str()
+                    .is_some_and(|error| error.contains("the rotation service is down"))),
+        "{published}"
+    );
+    let other_after = world.read_item("followups", &other);
+    assert_ne!(other_after, other_before, "the other ticket published");
+    assert!(other_after.contains(&format!("Additional evidence from follow-up run `{LATER}`")));
+    let settled = world.ok("settle", &["settle", "--batch", LATER], "");
+    assert_eq!(
+        settled["pending"], 2,
+        "both withheld writes stay visible: {settled}"
+    );
+}

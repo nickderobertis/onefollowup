@@ -10,5 +10,6 @@ mod duplicates;
 mod edges;
 mod journey;
 mod refusals;
+mod relations;
 mod safeguards;
 mod world;

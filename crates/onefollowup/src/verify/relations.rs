@@ -116,6 +116,8 @@ pub struct Graph {
     pub files: Vec<TicketFile>,
     /// Each staged `relate` that does not read as an edge, with why.
     pub unread: Vec<(usize, String)>,
+    /// Each of those whose ends read, which still counts against its relation's cardinality.
+    pub refused: Vec<Edge>,
 }
 
 /// Which tickets a graph derives edges from.
@@ -205,7 +207,21 @@ impl Graph {
                     to,
                     asserted: Some(index),
                 }),
-                Err(message) => unread.push((index, message)),
+                Err(message) => {
+                    // An edge refused only for being asserted still counts against its
+                    // relation's cardinality.
+                    if let Some(configured) = graph.relation(batch, relation)
+                        && let Ok((from, to)) = graph.ends(batch, state, configured, from, to)
+                    {
+                        graph.refused.push(Edge {
+                            relation: relation.clone(),
+                            from,
+                            to,
+                            asserted: Some(index),
+                        });
+                    }
+                    unread.push((index, message));
+                }
             }
         }
         graph.edges = edges;
@@ -257,6 +273,19 @@ impl Graph {
                     .join(", ")
             ));
         }
+        self.ends(batch, state, configured, from, to)
+    }
+
+    /// An edge's two ends, resolved and held to the relation's kinds.
+    fn ends(
+        &self,
+        batch: &Batch<'_>,
+        state: &BatchState,
+        configured: &Relation,
+        from: &str,
+        to: &str,
+    ) -> Result<(End, End), String> {
+        let relation = &configured.name;
         let from = end_of(batch, state, &self.files, from)?;
         let to = end_of(batch, state, &self.files, to)?;
         for (end, wanted, side) in [
@@ -423,7 +452,8 @@ impl Graph {
                 }
             }
         }
-        let all = self.all(batch, state, bound);
+        let mut all = self.all(batch, state, bound);
+        all.extend(self.refused.iter().cloned());
         for relation in &batch.config.relations {
             if relation.cardinality != Cardinality::ManyToOne {
                 continue;

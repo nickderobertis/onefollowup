@@ -106,7 +106,14 @@ const VERBS: &[(&[&str], &[&str])] = &[
             "--root-cause",
             "a-root-cause",
         ],
-        &["ticket", "comment", "--batch", "b1", "--root-cause", "a-root-cause"],
+        &[
+            "ticket",
+            "comment",
+            "--batch",
+            "b1",
+            "--root-cause",
+            "a-root-cause",
+        ],
     ),
     (
         &["ticket", "re-estimate", "--batch", "b1", "followups:42"],

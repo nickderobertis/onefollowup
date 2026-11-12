@@ -18,6 +18,7 @@ const IMPLEMENTED: &[&str] = &[
     "ticket copy",
     "ticket comment",
     "ticket re-estimate",
+    "ticket relate",
     "check",
     "publish",
     "settle",
@@ -110,8 +111,8 @@ const VERBS: &[(&[&str], &[&str])] = &[
             "comment",
             "--batch",
             "b1",
-            "--item",
-            "followups:42",
+            "--root-cause",
+            "a-root-cause",
         ],
     ),
     (

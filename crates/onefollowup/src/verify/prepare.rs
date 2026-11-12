@@ -1,13 +1,14 @@
 //! `prepare`: snapshot the batch's input set — its drafts and the `batch_preparing` hook's
-//! inputs — read the destination once for the whole batch (one search, one comments read),
-//! and write the verifying agent's task and answers skeleton.
+//! inputs — read the destination once for the whole batch (one search, one comments read, and
+//! under a configuration with relations one `task relations` read of the tickets found), and
+//! write the verifying agent's task and answers skeleton.
 
 use indexmap::IndexMap;
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
 use crate::api::{PrepareArgs, Prepared, SCHEMA_VERSION};
-use crate::config::{Duplicates, PriorityModel, Settings};
+use crate::config::{DecidedBy, Duplicates, PriorityModel, Settings};
 use crate::error::Error;
 use crate::formats::Versioned;
 use crate::formats::batch::{BatchState, Input, Read};
@@ -17,6 +18,7 @@ use crate::formats::existing_tickets::ExistingTickets;
 use crate::store::{Search, SearchIn, Store};
 use crate::verify::command;
 use crate::verify::context::Batch;
+use crate::verify::relations::{self, Graph, Scope};
 use crate::verify::template;
 use crate::work;
 
@@ -225,6 +227,7 @@ pub fn run(settings: &Settings, args: PrepareArgs) -> Result<Prepared, Error> {
                     merged: Vec::new(),
                     checked: None,
                     publishes: Vec::new(),
+                    relations: Vec::new(),
                 },
             }
         }
@@ -302,7 +305,7 @@ pub fn run(settings: &Settings, args: PrepareArgs) -> Result<Prepared, Error> {
                     else {
                         continue;
                     };
-                    let asked = format!("{field}={value}");
+                    let asked = crate::verify::tools::asked(&destination, field, value);
                     if searched_values.contains(&asked) {
                         continue;
                     }
@@ -335,6 +338,46 @@ pub fn run(settings: &Settings, args: PrepareArgs) -> Result<Prepared, Error> {
                 });
             }
         }
+        // Each match-decided relation's target is looked for on its `to` kind's destination.
+        for ticket in &tickets {
+            for relation in &batch.config.relations {
+                let DecidedBy::Match(fields) = &relation.decided_by else {
+                    continue;
+                };
+                let to = batch.kind(&relation.to);
+                if ticket.kind_name(batch.config) != relation.from
+                    || to.is_none_or(|to| batch.destination_of(to) != destination)
+                {
+                    continue;
+                }
+                for field in fields {
+                    let Some(value) = ticket.field(field).map(str::trim).filter(|v| !v.is_empty())
+                    else {
+                        continue;
+                    };
+                    let asked = crate::verify::tools::asked(&destination, field, value);
+                    if searched_values.contains(&asked) {
+                        continue;
+                    }
+                    let at = searched_values.len();
+                    searches.push(Search {
+                        key: format!("value:{at}"),
+                        metadata: vec![(
+                            format!("{}/fields/{field}", batch.record_key()),
+                            value.to_owned(),
+                        )],
+                        ..Search::default()
+                    });
+                    searches.push(Search {
+                        key: format!("value-text:{at}"),
+                        text: Some(value.to_owned()),
+                        within: SearchIn::Content,
+                        ..Search::default()
+                    });
+                    searched_values.push(asked);
+                }
+            }
+        }
         if searches.is_empty() {
             continue;
         }
@@ -351,13 +394,42 @@ pub fn run(settings: &Settings, args: PrepareArgs) -> Result<Prepared, Error> {
             }
         }
     }
-    if !reads.is_empty() {
-        let ids: Vec<String> = reads.iter().map(|read| read.item.id.clone()).collect();
-        for (read, detail) in reads.iter_mut().zip(store.read(&ids, true)?) {
-            if let Some(item) = detail.item {
-                read.item = item;
+    // Every item a staged edge names is read too, in the same read, so its relations are.
+    let named: Vec<String> = batch
+        .outbox()?
+        .writes
+        .iter()
+        .flat_map(|write| match write {
+            crate::formats::outbox::StagedWrite::Relate { from, to, .. } => {
+                vec![from.clone(), to.clone()]
             }
-            read.comments = detail.comments;
+            _ => Vec::new(),
+        })
+        .filter(|end| batch.is_destination_item(end))
+        .collect();
+    let mut ids: Vec<String> = reads.iter().map(|read| read.item.id.clone()).collect();
+    for end in named {
+        if !ids.contains(&end) {
+            ids.push(end);
+        }
+    }
+    if !ids.is_empty() {
+        let details = store.read(&ids, true)?;
+        for (at, detail) in details.into_iter().enumerate() {
+            let Some(item) = detail.item else {
+                continue;
+            };
+            match reads.get_mut(at) {
+                Some(read) => {
+                    read.item = item;
+                    read.comments = detail.comments;
+                }
+                None => reads.push(Read {
+                    item,
+                    comments: detail.comments,
+                    found_by: vec!["edge".to_owned()],
+                }),
+            }
         }
     }
     let record_key = batch.record_key();
@@ -370,14 +442,54 @@ pub fn run(settings: &Settings, args: PrepareArgs) -> Result<Prepared, Error> {
     work::write(
         &batch.work.existing_tickets(&batch.batch),
         &ExistingTickets {
-            tickets: existing_tickets,
+            tickets: existing_tickets.clone(),
         },
     )?;
+    // Under relations, the edges the found tickets hold, in one read; then, in one more, each
+    // ticket at their other ends, whose facts a rollup takes.
+    state.relations = if batch.config.relations.is_empty() || existing_tickets.is_empty() {
+        Vec::new()
+    } else {
+        store.relations(&existing_tickets)?
+    };
+    let mut related: Vec<String> = Vec::new();
+    for item in &state.relations {
+        let ends = item
+            .parent
+            .iter()
+            .chain(&item.children)
+            .chain(item.links.iter().map(|link| &link.other));
+        for end in ends {
+            if !reads.iter().any(|read| read.item.id == *end) && !related.contains(end) {
+                related.push(end.clone());
+            }
+        }
+    }
+    if !related.is_empty() {
+        for detail in store.read(&related, true)? {
+            if let Some(item) = detail.item {
+                reads.push(Read {
+                    item,
+                    comments: detail.comments,
+                    found_by: vec!["related".to_owned()],
+                });
+            }
+        }
+    }
     state.reads = reads;
     state.read_at_receipt = crate::verify::journal::read(&batch)?.receipts.len();
     state.searched_values = searched_values;
     state.checked = None;
     batch.save_state(&state)?;
+    let journal = crate::verify::journal::read(&batch)?;
+    let graph = Graph::of(
+        &batch,
+        &state,
+        &batch.outbox()?,
+        &crate::verify::journal::bound(&journal),
+        Scope::Written,
+    )?;
+    let missing_links = relations::missing_links(&state);
 
     // The verifying agent's task.
     let drafts: Vec<Value> = scoped
@@ -406,6 +518,8 @@ pub fn run(settings: &Settings, args: PrepareArgs) -> Result<Prepared, Error> {
         inputs: inputs.len(),
         answers: batch.work.dispositions(&batch.batch),
         task_template: task_path,
+        absent_targets: graph.absent,
+        missing_links,
         store_operations: store.operations(),
     })
 }
@@ -448,7 +562,25 @@ fn render_task(batch: &Batch<'_>, drafts: &[Value], inputs: &[Value]) -> Result<
     let relations: Vec<Value> = config
         .relations
         .iter()
-        .map(|relation| json!({"name": relation.name, "description": ""}))
+        .map(|relation| {
+            let description = match &relation.decided_by {
+                DecidedBy::Match(fields) => format!(
+                    "a `{}` to the `{}` carrying its {}: derived from those fields, never staged by hand",
+                    relation.from,
+                    relation.to,
+                    fields
+                        .iter()
+                        .map(|field| format!("`{field}`"))
+                        .collect::<Vec<_>>()
+                        .join(" and ")
+                ),
+                DecidedBy::Agent => format!(
+                    "a `{}` to a `{}`, as you judge it: stage each edge with `onefollowup ticket relate --relation {}`",
+                    relation.from, relation.to, relation.name
+                ),
+            };
+            json!({"name": relation.name, "description": description})
+        })
         .collect();
     Ok(template::render(
         &batch.task_template(),

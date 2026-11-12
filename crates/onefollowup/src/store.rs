@@ -19,12 +19,12 @@ use onetaskgraph_core::config::{self, Layer};
 use onetaskgraph_core::{
     BATCH_SCHEMA_VERSION, Body, CommentBatch, CommentBatchItem, CopyAction, CopyConditions,
     CopyItems, CopyRequest, CopyScope, Engine, Environment, FindIn, FindQuery, FindRequest,
-    GlobalId, ProjectCreate, Qualified, SourceState, StatusPolicy, TaskCreate, UpdateBatch,
-    UpdateBatchItem,
+    GlobalId, LinkBatch, LinkItem, OtherEnd, ParentBatch, ParentEdge, ProjectCreate, Qualified,
+    RELATIONS_SCHEMA_VERSION, SourceState, StatusPolicy, TaskCreate, UpdateBatch, UpdateBatchItem,
 };
 use onetaskgraph_plugin_api::{
-    Classification, Location, MetadataKey, NativeId, Priority, Repository, SourceName, Status,
-    StatusCategory, Task, TaskUpdate,
+    Classification, LinkDirection, Location, MetadataKey, NativeId, Priority, Repository,
+    SourceName, Status, StatusCategory, Task, TaskUpdate,
 };
 use serde::Serialize;
 use serde_json::Value;
@@ -110,9 +110,9 @@ pub struct Source {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, serde::Deserialize)]
 pub struct StoreOperation {
     /// The call: `find`, `read`, `copy`, `comment-add-many`, `update-many`, `create-task`,
-    /// `update-task` or `create-project`.
+    /// `update-task`, `create-project`, `relations`, `parent-set-many` or `link-add-many`.
     pub op: String,
-    /// The source it reached.
+    /// The source it reached; for a call over several, their names joined by `,`.
     pub source: String,
     /// Whether that source is a destination — anything but the drafts source.
     pub destination: bool,
@@ -266,6 +266,8 @@ pub struct NewTask {
     pub repositories: Vec<String>,
     /// Its metadata.
     pub metadata: BTreeMap<String, Value>,
+    /// The one person it is assigned to, for a source holding assignees.
+    pub assignee: Option<String>,
 }
 
 /// A change to one task: every field named is written, the rest kept.
@@ -283,6 +285,8 @@ pub struct TaskChange {
     pub repositories: Option<Vec<String>>,
     /// Metadata keys set.
     pub metadata: BTreeMap<String, Value>,
+    /// The one person it is assigned to, replacing whoever it held.
+    pub assignee: Option<String>,
 }
 
 /// A many-item copy into one destination.
@@ -369,11 +373,75 @@ pub struct HeldUpdate {
     pub when_priority: Vec<String>,
     /// Metadata keys set.
     pub metadata: BTreeMap<String, Value>,
+    /// The one person it is assigned to, replacing whoever it held.
+    pub assignee: Option<String>,
+    /// Write only while it is assigned to exactly these people, `[]` while unassigned.
+    pub when_assignees: Option<Vec<String>>,
+}
+
+/// One task's relations as its source holds them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, serde::Deserialize)]
+pub struct ItemRelations {
+    /// The task, qualified.
+    pub item: String,
+    /// Its parent, qualified.
+    pub parent: Option<String>,
+    /// Its children, qualified.
+    pub children: Vec<String>,
+    /// Every link it holds.
+    pub links: Vec<HeldLink>,
+}
+
+/// One link as one endpoint holds it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, serde::Deserialize)]
+pub struct HeldLink {
+    /// The link's type name.
+    pub link_type: String,
+    /// Whether this endpoint is the link's `from`.
+    pub outgoing: bool,
+    /// The other endpoint, qualified.
+    pub other: String,
+    /// Whether the other end holds the link too.
+    pub other_end: LinkEnd,
+}
+
+/// Whether a link's other end holds it too.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum LinkEnd {
+    /// It does.
+    Present,
+    /// It was read, and does not: a whole-body rewrite there lost it.
+    Missing,
+    /// It was not among the items read.
+    Unread,
+}
+
+/// One edge of a many-edge write: a child's parent, or a typed link.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EdgeWrite {
+    /// The child, or the link's `from`, qualified.
+    pub from: String,
+    /// The parent, or the link's `to`, qualified.
+    pub to: String,
+    /// The link's type name; ignored for a parent.
+    pub link_type: String,
+}
+
+/// What became of one edge of a many-edge write.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EdgeAnswer {
+    /// For a parent: `written`, `unchanged`, `version-moved`, `refused` or `error`; for a
+    /// link: `written`, `exists`, `partial` or `error`.
+    pub outcome: String,
+    /// Why, when it did not land.
+    pub reason: Option<String>,
 }
 
 /// An opened store.
 pub struct Store {
     engine: Engine,
+    settings: BTreeMap<String, Value>,
     runtime: tokio::runtime::Runtime,
     local: Option<String>,
     log: RefCell<Vec<StoreOperation>>,
@@ -474,8 +542,15 @@ impl Store {
             .enable_all()
             .build()
             .map_err(|error| StoreError::Refused(format!("no runtime to drive it: {error}")))?;
+        let settings = loaded
+            .config
+            .sources()
+            .iter()
+            .map(|(name, source)| (name.to_string(), source.config().clone()))
+            .collect();
         Ok(Self {
             engine: Engine::build(&loaded.config, &loaded.secrets),
+            settings,
             runtime,
             local: None,
             log: RefCell::new(Vec::new()),
@@ -500,6 +575,19 @@ impl Store {
                 available: matches!(listing.state, SourceState::Available { .. }),
             })
             .collect()
+    }
+
+    /// The setting `key` of the source `name`'s own `config` block, as its configuration
+    /// states it — read from the configuration alone, asking the source nothing.
+    #[must_use]
+    pub fn source_setting(&self, name: &str, key: &str) -> Option<Value> {
+        self.settings.get(name)?.get(key).cloned()
+    }
+
+    /// Whether the store's configuration declares the source `name`.
+    #[must_use]
+    pub fn declares(&self, name: &str) -> bool {
+        self.settings.contains_key(name)
     }
 
     /// Every operation made so far, in order.
@@ -684,6 +772,7 @@ impl Store {
             metadata: metadata_keys(&task.metadata)?,
             assets: Vec::new(),
             classification: Classification::Public,
+            assignee: task.assignee.clone(),
         };
         let created = self
             .runtime
@@ -734,6 +823,7 @@ impl Store {
                 .as_deref()
                 .map(repositories)
                 .transpose()?,
+            assignees: change.assignee.clone().map(|person| vec![person]),
         };
         let updated = self
             .runtime
@@ -908,6 +998,8 @@ impl Store {
                             .map(|word| priority(word))
                             .collect::<Result<_, _>>()?,
                         metadata: update.metadata.clone(),
+                        assignee: update.assignee.clone().map(Some),
+                        when_assignees: update.when_assignees.clone(),
                         ..UpdateBatchItem::default()
                     })
                 })
@@ -927,6 +1019,133 @@ impl Store {
                 comment: None,
                 version: result.version,
                 current_version: result.current_version,
+                reason: result.reason,
+            })
+            .collect())
+    }
+
+    fn count_over(&self, op: &str, ids: &[&str], items: usize) {
+        let mut sources: Vec<&str> = ids
+            .iter()
+            .filter_map(|id| id.split_once(':').map(|(source, _)| source))
+            .collect();
+        sources.sort_unstable();
+        sources.dedup();
+        self.log.borrow_mut().push(StoreOperation {
+            op: op.to_owned(),
+            source: sources.join(","),
+            destination: sources
+                .iter()
+                .any(|source| self.local.as_deref() != Some(*source)),
+            items,
+        });
+    }
+
+    /// The relations of every task `ids` names, of any sources, in one call: each one's
+    /// parent and links, a link's other end compared when that end is among `ids`.
+    ///
+    /// # Errors
+    ///
+    /// An id that is not a qualified id, or the store's refusal of the read.
+    pub fn relations(&self, ids: &[String]) -> Result<Vec<ItemRelations>, StoreError> {
+        let globals = ids
+            .iter()
+            .map(|id| global(id))
+            .collect::<Result<Vec<_>, _>>()?;
+        let answered = self
+            .runtime
+            .block_on(self.engine.task_relations(&globals, false));
+        let named: Vec<&str> = ids.iter().map(String::as_str).collect();
+        self.count_over("relations", &named, ids.len());
+        let first = named.first().copied().unwrap_or_default();
+        let answered = answered.map_err(|error| Self::failed("a relations read", first, error))?;
+        Ok(answered
+            .items
+            .into_iter()
+            .map(|item| ItemRelations {
+                item: item.item.to_string(),
+                parent: item.parent.map(|parent| parent.to_string()),
+                children: item.children.iter().map(ToString::to_string).collect(),
+                links: item
+                    .links
+                    .into_iter()
+                    .map(|link| HeldLink {
+                        link_type: link.link_type,
+                        outgoing: link.direction == LinkDirection::Out,
+                        other: link.other.to_string(),
+                        other_end: match link.other_end {
+                            OtherEnd::Present => LinkEnd::Present,
+                            OtherEnd::Missing => LinkEnd::Missing,
+                            OtherEnd::Unread => LinkEnd::Unread,
+                        },
+                    })
+                    .collect(),
+            })
+            .collect())
+    }
+
+    /// Set each child's parent of `edges`, in one call, each answered on its own.
+    ///
+    /// # Errors
+    ///
+    /// The store's refusal of the whole batch, before anything was written.
+    pub fn set_parents(&self, edges: &[EdgeWrite]) -> Result<Vec<EdgeAnswer>, StoreError> {
+        let batch = ParentBatch {
+            schema_version: RELATIONS_SCHEMA_VERSION,
+            edges: edges
+                .iter()
+                .map(|edge| ParentEdge {
+                    child: edge.from.clone(),
+                    parent: Some(edge.to.clone()),
+                    if_version: None,
+                })
+                .collect(),
+        };
+        let answered = self.runtime.block_on(self.engine.set_parents(&batch));
+        let named: Vec<&str> = edges.iter().map(|edge| edge.from.as_str()).collect();
+        self.count_over("parent-set-many", &named, edges.len());
+        let first = named.first().copied().unwrap_or_default();
+        let answered = answered.map_err(|error| Self::failed("a parent batch", first, error))?;
+        Ok(answered
+            .results
+            .into_iter()
+            .map(|result| EdgeAnswer {
+                outcome: word(&result.outcome),
+                reason: result.reason,
+            })
+            .collect())
+    }
+
+    /// Add each typed link of `links`, in one call, each answered on its own.
+    ///
+    /// # Errors
+    ///
+    /// The store's refusal of the whole batch, before anything was written.
+    pub fn add_links(&self, links: &[EdgeWrite]) -> Result<Vec<EdgeAnswer>, StoreError> {
+        let batch = LinkBatch {
+            schema_version: RELATIONS_SCHEMA_VERSION,
+            links: links
+                .iter()
+                .map(|link| LinkItem {
+                    from: link.from.clone(),
+                    to: link.to.clone(),
+                    link_type: link.link_type.clone(),
+                })
+                .collect(),
+        };
+        let answered = self.runtime.block_on(self.engine.add_links(&batch));
+        let named: Vec<&str> = links
+            .iter()
+            .flat_map(|link| [link.from.as_str(), link.to.as_str()])
+            .collect();
+        self.count_over("link-add-many", &named, links.len());
+        let first = named.first().copied().unwrap_or_default();
+        let answered = answered.map_err(|error| Self::failed("a link batch", first, error))?;
+        Ok(answered
+            .results
+            .into_iter()
+            .map(|result| EdgeAnswer {
+                outcome: word(&result.outcome),
                 reason: result.reason,
             })
             .collect())

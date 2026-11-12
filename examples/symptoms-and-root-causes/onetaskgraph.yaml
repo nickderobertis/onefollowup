@@ -1,0 +1,11 @@
+sources:
+  drafts:
+    plugin: local-md
+    config: {root: .follow-ups}
+  eng:
+    plugin: linear
+    config:
+      api_key_env: LINEAR_API_KEY
+      team: ENG
+      link_types:
+        caused-by: {native: related}

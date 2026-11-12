@@ -1,0 +1,42 @@
+{
+  "schema": 1,
+  "batch": "nightly-2026-11-05",
+  "aliases": [],
+  "project": "nightly-2026-11-05",
+  "inputs": [
+    {
+      "id": "drafts:the-theme-resets-after-an-update",
+      "source": "draft",
+      "title": "the theme resets after an update",
+      "repository": "github.com/example/widgets",
+      "paths": [
+        "src/theme.rs"
+      ],
+      "body": "The theme resets after an update.\n"
+    }
+  ],
+  "reads": [],
+  "read_at_receipt": 0,
+  "searched_values": [],
+  "tickets": {
+    "theme-resets-after-update": "drafts:widgets-the-theme-resets-after-an-update"
+  },
+  "merged": [],
+  "checked": null,
+  "publishes": [
+    {
+      "journal_from": 0,
+      "writes": [
+        {
+          "op": "copy",
+          "ticket": "drafts:nightly-2026-11-05/tickets/theme-resets-after-update",
+          "destination": "followups"
+        }
+      ],
+      "digests": {
+        "0": "973319c1fd676e05bf2047030cda5b49ab4d882ca9786fb511c932162b977725"
+      },
+      "settled": true
+    }
+  ]
+}

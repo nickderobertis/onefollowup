@@ -1,10 +1,8 @@
-//! Routes: matched in order against a ticket's kind, severity, repository and paths, the
-//! first match winning; its `set` applied over the kind's defaults, and its `command` run
-//! before the ticket's write.
-//!
-//! A route's `match.relations` and `set.assignee` are the relations' to decide, which this
-//! release does not implement: a `relations` condition is not evaluated, and an assignee is
-//! not written.
+//! Routes: matched in order against a ticket's kind, severity, repository, paths and edge
+//! counts, the first match winning; its `set` applied over the kind's defaults, and its
+//! `command` run before the ticket's write.
+
+use indexmap::IndexMap;
 
 use crate::config::{Route, RouteMatch};
 
@@ -19,6 +17,8 @@ pub struct Facts<'a> {
     pub repository: &'a str,
     /// The paths its drafts name.
     pub paths: &'a [String],
+    /// How many edges of each relation it is either end of, staged ones counted.
+    pub relations: &'a IndexMap<String, u32>,
 }
 
 /// The first route `facts` match, with its position.
@@ -50,7 +50,12 @@ fn matches(condition: &RouteMatch, facts: &Facts<'_>) -> bool {
             .iter()
             .any(|path| globs.iter().any(|glob| glob_match(glob, path)))
     });
-    kind && severity && repository && path
+    let relations = condition.relations.as_ref().is_none_or(|minimums| {
+        minimums.iter().all(|(relation, minimum)| {
+            facts.relations.get(relation).copied().unwrap_or_default() >= minimum.min
+        })
+    });
+    kind && severity && repository && path && relations
 }
 
 /// Whether `text` matches `glob`: `**` any run of characters, `*` any run without a `/`, `?`

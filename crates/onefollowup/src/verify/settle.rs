@@ -13,7 +13,7 @@ use crate::formats::Versioned;
 use crate::formats::markers::EvidenceComment;
 use crate::formats::outbox::StagedWrite;
 use crate::formats::pending::{Pending, PendingEntry, PendingState, PendingWrite};
-use crate::formats::receipts::{Outcome, Receipt};
+use crate::formats::receipts::{AssignAction, Outcome, Receipt};
 use crate::formats::ticket::TicketRecord;
 use crate::store::Search;
 use crate::verify::command;
@@ -93,6 +93,23 @@ fn standing(sent: &Sent) -> Standing {
             }
             None => Standing::Unconfirmed,
         },
+        Outcome::Relate(edge) => match &edge.error {
+            Some(error) => Standing::Refused {
+                kind: error.kind.clone(),
+                message: error.message.clone(),
+                card: receipt.card.clone(),
+            },
+            None => Standing::Confirmed,
+        },
+        // A held assignee is a person's own assignment standing, which is what was meant.
+        Outcome::Assign(assign) => match &assign.error {
+            Some(error) if assign.action == AssignAction::Failed => Standing::Refused {
+                kind: error.kind.clone(),
+                message: error.message.clone(),
+                card: receipt.card.clone(),
+            },
+            _ => Standing::Confirmed,
+        },
     }
 }
 
@@ -122,6 +139,9 @@ fn answers(
         }
         (StagedWrite::ReEstimate { item, .. }, Outcome::ReEstimate(_)) => {
             receipt.card.as_deref() == Some(item.as_str())
+        }
+        (StagedWrite::Relate { relation, from, to }, Outcome::Relate(edge)) => {
+            !edge.derived && edge.relation == *relation && edge.from == *from && edge.to == *to
         }
         _ => false,
     }
@@ -210,6 +230,25 @@ pub fn run(settings: &Settings, args: BatchArgs) -> Result<Settled, Error> {
                 receipt: found.map(|at| after[at].clone()),
                 digest: publish.digests.get(&index.to_string()).cloned(),
                 ticket_item,
+            });
+        }
+        // An edge derived from the tickets' fields answers no staged write of its own: it
+        // stands as its receipt says, pending when it did not land. (An assignee's receipt is
+        // the journal's alone: pending writes name no assignee.)
+        for (at, receipt) in after.iter().enumerate() {
+            let write = match &receipt.outcome {
+                Outcome::Relate(edge) if !used[at] => StagedWrite::Relate {
+                    relation: edge.relation.clone(),
+                    from: edge.from.clone(),
+                    to: edge.to.clone(),
+                },
+                _ => continue,
+            };
+            sent.push(Sent {
+                write,
+                receipt: Some((*receipt).clone()),
+                digest: None,
+                ticket_item: None,
             });
         }
     }

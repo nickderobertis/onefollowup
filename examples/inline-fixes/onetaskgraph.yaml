@@ -1,0 +1,11 @@
+sources:
+  drafts:
+    plugin: local-md
+    config: {root: .follow-ups}
+  backlog:
+    plugin: github-projects
+    config:
+      owner: example-owner
+      project_number: 9
+      repository: example-owner/example-repo
+      token_env: GH_PROJECTS_TOKEN

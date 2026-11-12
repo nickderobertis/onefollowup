@@ -1,0 +1,20 @@
+destination: backlog
+drafts_source: drafts
+default_kind: root-cause
+kinds:
+  - name: root-cause
+    description: The underlying defect, in code this repository's change can fix
+    priority: {fixed: low}
+    initial_status: proposal
+    dispositions: [filed, not-reproducible, already-fixed, too-low-impact, fixed-inline]
+  - name: external-defect
+    description: A defect outside this repository, which its own change cannot fix
+    priority: {fixed: low}
+    initial_status: proposal
+dispositions:
+  - {name: filed, description: Verified ticket or evidence filed, requires: [ticket]}
+  - {name: not-reproducible, description: Could not reproduce, requires: [reason]}
+  - {name: already-fixed, description: Already resolved, requires: [reason]}
+  - {name: too-low-impact, description: Impact below the bar, requires: [reason]}
+  - {name: fixed-inline, description: Fixed in this run's own change, requires: [change]}
+default_dispositions: [filed, not-reproducible, already-fixed, too-low-impact]

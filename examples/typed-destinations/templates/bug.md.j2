@@ -1,0 +1,63 @@
+{#-
+  A `bug` ticket of the typed-destinations example: a reproducible product defect, filed on
+  `bug-tracker`; a critical one pages on-call and is assigned to them.
+
+  Variables: `rubric` (the policy's rubric) and `fields` (the ticket's declared field values,
+  a map name -> value; before any value is known, name -> {description}).
+-#}
+{%- set parts = rubric.impact_parts -%}
+{%- set lines = rubric.impact_lines -%}
+{%- set costs = rubric.workaround_costs -%}
+## Root cause
+
+<the guarantee the product breaks, and what a user sees when it does>
+
+## Impact
+
+<the {{ parts | length }} labelled parts below, then the {{ lines | length }} lines below, each
+exactly once and in this order, both severities judged by the rubric (`onefollowup kinds`
+prints it). The last line is `onefollowup ticket board-status`'s to write>
+
+**{{ parts[0] }}.** <each affected group by name>
+**{{ parts[1] }}.** <the cost per occurrence, and how often it happens>
+**{{ parts[2] }}.** <the impact itself, in plain words>
+**{{ parts[3] }}.**
+- {{ costs[0] }}: <effort, and who does it>
+- {{ costs[1] }}: <what is lost or degraded, or none>
+- {{ costs[2] }}: <how the workaround is found>
+
+- {{ lines[0] }}: <the severity with no workaround applied>
+- {{ lines[1] }}: <the workaround, or {{ rubric.no_workaround }}>
+- {{ lines[2] }}: <the severity that remains once the workaround is taken>
+- Priority estimate: <written by `onefollowup ticket board-status`>
+
+## Examples
+
+<the steps that reproduce it>
+
+## Suggested fix
+
+<the one change that removes the defect, and the locations that contribute to it>
+
+## Owning batches
+
+<every batch whose evidence this ticket carries>
+
+{% if fields -%}
+## Fields
+
+{% for name, value in fields | items -%}
+{% if value is mapping -%}
+- {{ name }}: <{{ value.description | trim }}>
+{% else -%}
+- {{ name }}: {{ value }}
+{% endif -%}
+{% endfor %}
+{% endif -%}
+## Related tickets
+
+<optional: leave this section out when it has no entries. Each ticket this one depends on or resembles, one linked bullet each>
+
+## Evidence
+
+<the host the reproduction ran on, then per draft: its id and the reproduced claim>

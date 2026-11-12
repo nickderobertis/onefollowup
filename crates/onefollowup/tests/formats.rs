@@ -7,6 +7,7 @@
 //! one below — the version read is refused naming the format, the schema found and the
 //! schema read.
 
+use onefollowup::formats::batch::BatchState;
 use onefollowup::formats::dispositions::{CarriedDispositions, Dispositions};
 use onefollowup::formats::draft::{DraftRecord, DraftsProjectRecord};
 use onefollowup::formats::existing_tickets::ExistingTickets;
@@ -16,7 +17,9 @@ use onefollowup::formats::markers::{
 };
 use onefollowup::formats::outbox::{Outbox, StagedWrite};
 use onefollowup::formats::pending::Pending;
-use onefollowup::formats::receipts::{Outcome, ReceiptJournal};
+use onefollowup::formats::receipts::{
+    AssignAction, AssignOutcome, EdgeAction, EdgeStore, Outcome, ReceiptJournal, RelateOutcome,
+};
 use onefollowup::formats::responses::Responses;
 use onefollowup::formats::snapshot::{Launched, Snapshot};
 use onefollowup::formats::ticket::TicketRecord;
@@ -327,6 +330,61 @@ fn the_receipt_journal_round_trips() {
 }
 
 #[test]
+fn an_edges_and_an_assignees_receipt_lines_round_trip_within_schema_3() {
+    let text = fixture("receipts/journal-relations-schema3.jsonl");
+    let journal = ReceiptJournal::parse(&text).expect("a schema-3 journal");
+    let edges: Vec<&RelateOutcome> = journal
+        .receipts
+        .iter()
+        .filter_map(|receipt| match &receipt.outcome {
+            Outcome::Relate(edge) => Some(edge),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        edges.iter().map(|edge| edge.action).collect::<Vec<_>>(),
+        [EdgeAction::Written, EdgeAction::Exists, EdgeAction::Failed]
+    );
+    assert!(edges[0].derived && edges[0].store == EdgeStore::Parent);
+    assert!(
+        journal.receipts[2].card.is_none(),
+        "an unwritten edge names no card"
+    );
+    let assigned: Vec<&AssignOutcome> = journal
+        .receipts
+        .iter()
+        .filter_map(|receipt| match &receipt.outcome {
+            Outcome::Assign(assign) => Some(assign),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(assigned[0].action, AssignAction::Written);
+    assert_eq!(assigned[0].when, ["alice"]);
+    assert_eq!(assigned[1].action, AssignAction::Held);
+    assert!(
+        assigned[1].when.is_empty(),
+        "never assigned: held to nobody"
+    );
+    assert_eq!(
+        assigned[1].error.as_ref().map(|error| error.kind.as_str()),
+        Some("assignee-held")
+    );
+    assert_eq!(journal.render(), text);
+    let assign = text.lines().nth(3).expect("an assign line");
+    assert!(
+        matches!(
+            ReceiptJournal::parse(&assign.replacen(
+                "\"card\": \"bugs:item-3\"",
+                "\"card\": null",
+                1
+            )),
+            Err(FormatError::Malformed { .. })
+        ),
+        "an assignee's receipt names its card"
+    );
+}
+
+#[test]
 fn a_receipt_journal_with_a_line_of_another_schema_is_refused() {
     for (path, found) in [
         (
@@ -497,4 +555,25 @@ fn an_outbox_written_by_the_library_round_trips() {
         Outbox::parse(&unknown_op),
         Err(FormatError::Malformed { .. })
     ));
+}
+
+#[test]
+fn a_batch_state_written_before_relations_still_reads_and_one_carrying_them_round_trips() {
+    // Written by this crate at the base of the relations change, carrying no `relations`.
+    let before = fixture("batch-state/state-before-relations.json");
+    let state = BatchState::parse(&before).expect("a schema-1 state from before relations");
+    assert!(state.relations.is_empty());
+    assert_eq!(
+        state.render(),
+        before,
+        "a state with no relations writes as it always did"
+    );
+    let with = fixture("batch-state/state-with-relations.json");
+    let state = BatchState::parse(&with).expect("a schema-1 state carrying relations");
+    assert_eq!(state.relations.len(), 1);
+    assert_eq!(
+        state.relations[0].links[0].other_end,
+        onefollowup::store::LinkEnd::Missing
+    );
+    assert_eq!(state.render(), with);
 }

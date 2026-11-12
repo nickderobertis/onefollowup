@@ -1,0 +1,64 @@
+{#-
+  A `client-symptom` ticket of the symptoms-and-root-causes example: one client's
+  occurrences of a symptom, a sub-issue of the symptom whose `error_signature` it carries.
+
+  Variables: `rubric` (the policy's rubric) and `fields` (the ticket's declared field values,
+  a map name -> value; before any value is known, name -> {description}).
+-#}
+{%- set parts = rubric.impact_parts -%}
+{%- set lines = rubric.impact_lines -%}
+{%- set costs = rubric.workaround_costs -%}
+## Root cause
+
+<what the client saw, and when: the failure as it reached them>
+
+## Impact
+
+<the {{ parts | length }} labelled parts below, then the {{ lines | length }} lines below, each
+exactly once and in this order, both severities judged by the rubric (`onefollowup kinds`
+prints it). The last line is `onefollowup ticket board-status`'s to write>
+
+**{{ parts[0] }}.** <each affected group by name>
+**{{ parts[1] }}.** <the cost per occurrence, and how often it happens>
+**{{ parts[2] }}.** <the impact itself, in plain words>
+**{{ parts[3] }}.**
+- {{ costs[0] }}: <effort, and who does it>
+- {{ costs[1] }}: <what is lost or degraded, or none>
+- {{ costs[2] }}: <how the workaround is found>
+
+- {{ lines[0] }}: <the severity with no workaround applied>
+- {{ lines[1] }}: <the workaround, or {{ rubric.no_workaround }}>
+- {{ lines[2] }}: <the severity that remains once the workaround is taken>
+- Priority estimate: <written by `onefollowup ticket board-status`>
+
+## Examples
+
+<each occurrence the client reported>
+
+## Suggested fix
+
+<what the client can do until the symptom is fixed, or none>
+
+## Owning batches
+
+<every batch whose evidence this ticket carries>
+
+{% if fields -%}
+## Fields
+
+{% for name, value in fields | items -%}
+{% if value is mapping -%}
+- {{ name }}: <{{ value.description | trim }}>
+{% else -%}
+- {{ name }}: {{ value }}
+{% endif -%}
+{% endfor %}
+{% endif -%}
+## Related tickets
+
+<optional: leave this section out when it has no entries. This ticket is a sub-issue of the `symptom` carrying its `error_signature`, derived and
+never asserted>
+
+## Evidence
+
+<the host the verification ran on, then per draft: its id and the client's logged error>

@@ -1,15 +1,17 @@
-//! The verifying agent's tools, `ticket validate|search|board-status|copy|comment|re-estimate`.
-//! None writes to a destination: `copy`, `comment` and `re-estimate` stage into the batch's
-//! outbox, and `search` is the one that reads it.
+//! The verifying agent's tools, `ticket
+//! validate|search|board-status|copy|comment|re-estimate|relate`. None writes to a
+//! destination: `copy`, `comment`, `re-estimate` and `relate` stage into the batch's outbox,
+//! and `search` reads it — as `validate`, `copy` and `comment` do for a field value no search
+//! of the batch asked about yet.
 
 use std::io::Read as _;
 
 use crate::api::{
     BoardComment, BoardStatus, ItemStatus, SCHEMA_VERSION, SearchHit, SearchResults, Staged,
     TicketBoardStatusArgs, TicketCommentArgs, TicketCopyArgs, TicketReEstimateArgs,
-    TicketSearchArgs, TicketValidateArgs, TicketValidated,
+    TicketRelateArgs, TicketSearchArgs, TicketValidateArgs, TicketValidated,
 };
-use crate::config::{Duplicates, Settings};
+use crate::config::{Cardinality, DecidedBy, Duplicates, Settings};
 use crate::error::Error;
 use crate::formats::HeldPriority;
 use crate::formats::batch::{BatchState, Merged, Read};
@@ -19,6 +21,7 @@ use crate::store::{Search, SearchIn};
 use crate::verify::context::Batch;
 use crate::verify::decide::{self, read_of};
 use crate::verify::journal;
+use crate::verify::relations::{self, Graph, Scope};
 use crate::verify::ticket::{self, Context, SLUG, TicketFile};
 
 /// Every rule `ticket` breaks, held to the batch's input set when it was prepared.
@@ -52,12 +55,35 @@ pub fn validate(settings: &Settings, args: TicketValidateArgs) -> Result<TicketV
     let state = batch.read_state()?;
     let ticket = batch.ticket(&args.ticket)?;
     let problems = ticket_problems(&batch, state.as_ref(), &ticket);
+    let (absent_targets, store_operations) = match state {
+        Some(mut state) if !batch.config.relations.is_empty() => {
+            let store_operations = ask_targets(&batch, &mut state, &ticket)?;
+            batch.save_state(&state)?;
+            let journal = journal::read(&batch)?;
+            let graph = Graph::of(
+                &batch,
+                &state,
+                &batch.outbox()?,
+                &journal::bound(&journal),
+                Scope::Written,
+            )?;
+            let absent = graph
+                .absent
+                .into_iter()
+                .filter(|absent| absent.ticket == ticket.slug)
+                .collect();
+            (absent, store_operations)
+        }
+        _ => (Vec::new(), Vec::new()),
+    };
     Ok(TicketValidated {
         schema_version: SCHEMA_VERSION,
         batch: batch.batch,
         ticket: ticket.slug,
         sound: problems.is_empty(),
         problems,
+        absent_targets,
+        store_operations,
     })
 }
 
@@ -170,11 +196,16 @@ pub fn board_status(
     }
     let ticket = batch.ticket(&args.item)?;
     let journal = journal::read(&batch)?;
+    let bound = journal::bound(&journal);
+    let outbox = batch.outbox()?;
+    let graph = Graph::of(&batch, &state, &outbox, &bound, Scope::Staged)?;
     let decision = decide::decide(
         &batch,
         &state,
-        &journal::bound(&journal),
+        &bound,
         &journal::latest(&journal, state.read_at_receipt),
+        &graph,
+        &outbox,
         &ticket,
     )
     .map_err(Error::Refused)?;
@@ -254,7 +285,7 @@ fn stage(outbox: &mut Outbox, write: StagedWrite, same: impl Fn(&StagedWrite) ->
 }
 
 fn casefolded(value: &str) -> String {
-    value.trim().to_lowercase()
+    relations::folded(value)
 }
 
 fn is_open(category: &str) -> bool {
@@ -312,7 +343,16 @@ pub fn copy(settings: &Settings, args: TicketCopyArgs) -> Result<Staged, Error> 
             .map(|field| casefolded(ticket.field(field).unwrap_or_default()))
             .collect();
         if values.iter().all(|value| !value.is_empty()) {
-            let store_operations = ask_values(&batch, &mut state, fields, &ticket, &destination)?;
+            let asked: Vec<(String, String)> = fields
+                .iter()
+                .map(|field| {
+                    (
+                        field.clone(),
+                        ticket.field(field).unwrap_or_default().trim().to_owned(),
+                    )
+                })
+                .collect();
+            let store_operations = ask_values(&batch, &mut state, &asked, &destination)?;
             let carries = |field_value: &dyn Fn(&str) -> Option<String>| {
                 fields.iter().zip(&values).all(|(field, value)| {
                     field_value(field).is_some_and(|held| casefolded(&held) == *value)
@@ -435,20 +475,25 @@ pub fn copy(settings: &Settings, args: TicketCopyArgs) -> Result<Staged, Error> 
     })
 }
 
-/// Ask the destination about a `same` ticket's listed values prepare's search did not cover,
-/// in one search, adding what it finds to the batch's reads.
+/// The key a search of `destination` for a field's value is remembered by.
+#[must_use]
+pub fn asked(destination: &str, field: &str, value: &str) -> String {
+    format!("{destination}:{field}={value}")
+}
+
+/// Ask `destination` about the field values prepare's search did not cover, in one search,
+/// adding what it finds to the batch's reads.
 fn ask_values(
     batch: &Batch<'_>,
     state: &mut BatchState,
-    fields: &[String],
-    ticket: &TicketFile,
+    values: &[(String, String)],
     destination: &str,
 ) -> Result<Vec<crate::store::StoreOperation>, Error> {
     let mut searches = Vec::new();
-    for field in fields {
-        let value = ticket.field(field).unwrap_or_default().trim().to_owned();
-        let asked = format!("{field}={value}");
-        if state.searched_values.contains(&asked) {
+    for (field, value) in values {
+        let value = value.clone();
+        let key = asked(destination, field, &value);
+        if state.searched_values.contains(&key) {
             continue;
         }
         let at = state.searched_values.len();
@@ -466,12 +511,13 @@ fn ask_values(
             within: SearchIn::Content,
             ..Search::default()
         });
-        state.searched_values.push(asked);
+        state.searched_values.push(key);
     }
     if searches.is_empty() {
         return Ok(Vec::new());
     }
     let store = batch.store()?;
+    let reads_before = state.reads.len();
     for found in store.find(destination, &searches)? {
         for item in found.items {
             if !state.reads.iter().any(|read| read.item.id == item.id) {
@@ -483,36 +529,114 @@ fn ask_values(
             }
         }
     }
+    // An item found here is read with its comments, as prepare reads one, so its occurrences
+    // count wherever it is related.
+    let added: Vec<String> = state.reads[reads_before..]
+        .iter()
+        .map(|read| read.item.id.clone())
+        .collect();
+    if !added.is_empty() && !batch.config.relations.is_empty() {
+        for (read, detail) in state.reads[reads_before..]
+            .iter_mut()
+            .zip(store.read(&added, true)?)
+        {
+            if let Some(item) = detail.item {
+                read.item = item;
+            }
+            read.comments = detail.comments;
+        }
+    }
     Ok(store.operations())
 }
 
-/// `ticket comment`: stage this batch's evidence comment on another batch's item.
+/// Ask each relation's `to` destination about a ticket's values of the fields its match
+/// compares, so an absent target is told from one not yet searched for.
+fn ask_targets(
+    batch: &Batch<'_>,
+    state: &mut BatchState,
+    ticket: &TicketFile,
+) -> Result<Vec<crate::store::StoreOperation>, Error> {
+    let mut operations = Vec::new();
+    for relation in &batch.config.relations {
+        let DecidedBy::Match(fields) = &relation.decided_by else {
+            continue;
+        };
+        if ticket.kind_name(batch.config) != relation.from {
+            continue;
+        }
+        let Some(kind) = batch.kind(&relation.to) else {
+            continue;
+        };
+        let values: Vec<(String, String)> = fields
+            .iter()
+            .map(|field| {
+                (
+                    field.clone(),
+                    ticket.field(field).unwrap_or_default().trim().to_owned(),
+                )
+            })
+            .filter(|(_, value)| !value.is_empty())
+            .collect();
+        operations.extend(ask_values(
+            batch,
+            state,
+            &values,
+            &batch.destination_of(kind),
+        )?);
+    }
+    Ok(operations)
+}
+
+/// `ticket comment`: stage this batch's evidence comment on another batch's item — given
+/// the declared fields observed, on the most specific existing ticket they name.
 ///
 /// # Errors
 ///
 /// A batch not prepared, an item it did not read or that is this batch's own, a root cause
-/// that is not a slug, or empty evidence.
+/// that is not a slug, empty evidence, or an item less specific than the existing ticket the
+/// observed fields name.
 pub fn comment(settings: &Settings, args: TicketCommentArgs) -> Result<Staged, Error> {
     let batch = Batch::new(settings, &args.batch)?;
-    let state = batch.state()?;
-    if !SLUG.is_match(&args.root_cause) {
-        return Err(Error::Refused(format!(
-            "`{}` is not a root-cause slug",
-            args.root_cause
-        )));
-    }
-    let read = read_of(&state, &args.item).ok_or_else(|| {
+    let mut state = batch.state()?;
+    let mut store_operations = Vec::new();
+    let item = if args.fields.is_empty() {
+        args.item.clone().ok_or_else(|| {
+            Error::Refused(
+                "name the item with `--item`, or the declared fields observed with `--field`"
+                    .to_owned(),
+            )
+        })?
+    } else {
+        let (item, operations) = most_specific(&batch, &mut state, &args)?;
+        batch.save_state(&state)?;
+        store_operations = operations;
+        item
+    };
+    let read = read_of(&state, &item).ok_or_else(|| {
         Error::Refused(format!(
-            "`{}` is not an item this batch read: search for it, or prepare the batch again",
-            args.item
+            "`{item}` is not an item this batch read: search for it, or prepare the batch again"
         ))
     })?;
+    let root_cause = match &args.root_cause {
+        Some(root_cause) => root_cause.clone(),
+        None => decide::item_record(&batch, read)
+            .map(|record| record.root_cause)
+            .ok_or_else(|| {
+                Error::Refused(format!(
+                    "`{item}` carries no record naming its root cause: name it with `--root-cause`"
+                ))
+            })?,
+    };
+    if !SLUG.is_match(&root_cause) {
+        return Err(Error::Refused(format!(
+            "`{root_cause}` is not a root-cause slug"
+        )));
+    }
     if decide::item_record(&batch, read)
         .is_some_and(|record| record.created_by_batch == batch.batch)
     {
         return Err(Error::Refused(format!(
-            "`{}` is this batch's own item: stage its ticket again with `ticket copy` instead",
-            args.item
+            "`{item}` is this batch's own item: stage its ticket again with `ticket copy` instead"
         )));
     }
     let evidence = match args.evidence {
@@ -532,21 +656,203 @@ pub fn comment(settings: &Settings, args: TicketCommentArgs) -> Result<Staged, E
     }
     let body = EvidenceComment {
         batch: batch.batch.clone(),
-        root_cause: args.root_cause.clone(),
+        root_cause: root_cause.clone(),
         evidence,
     }
     .render(&batch.config.namespace);
     let write = StagedWrite::Comment {
-        item: args.item.clone(),
-        root_cause: args.root_cause.clone(),
+        item: item.clone(),
+        root_cause: root_cause.clone(),
         body,
     };
     let mut outbox = batch.outbox()?;
     let index = stage(
         &mut outbox,
         write.clone(),
-        |one| matches!(one, StagedWrite::Comment { item, root_cause, .. } if *item == args.item && *root_cause == args.root_cause),
+        |one| matches!(one, StagedWrite::Comment { item: i, root_cause: r, .. } if *i == item && *r == root_cause),
     );
+    batch.save_outbox(&outbox)?;
+    Ok(Staged {
+        schema_version: SCHEMA_VERSION,
+        batch: batch.batch,
+        index,
+        write,
+        matched: (!args.fields.is_empty()).then_some(item),
+        store_operations,
+    })
+}
+
+/// The most specific existing ticket the observed fields name: of the `same` kinds whose
+/// listed fields they fill, the open item read whose values equal theirs, a kind being more
+/// specific than the `to` of a match-decided relation from it. Given `--item`, that item, unless
+/// it is less specific than the one the fields name.
+fn most_specific(
+    batch: &Batch<'_>,
+    state: &mut BatchState,
+    args: &TicketCommentArgs,
+) -> Result<(String, Vec<crate::store::StoreOperation>), Error> {
+    let config = batch.config;
+    let mut observed: Vec<(String, String)> = Vec::new();
+    for pair in &args.fields {
+        let (name, value) = pair.split_once('=').unwrap_or((pair.as_str(), ""));
+        if !config.fields.contains_key(name) {
+            return Err(Error::Refused(format!(
+                "`{name}` is not a declared field; the fields are {}",
+                config
+                    .fields
+                    .keys()
+                    .map(|one| format!("`{one}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )));
+        }
+        if !value.trim().is_empty() {
+            observed.push((name.to_owned(), value.trim().to_owned()));
+        }
+    }
+    let value_of = |field: &str| {
+        observed
+            .iter()
+            .find(|(name, _)| name == field)
+            .map(|(_, value)| value.clone())
+    };
+    let kinds: Vec<(&crate::config::Kind, &[String])> = config
+        .kinds
+        .iter()
+        .filter_map(|kind| kind.duplicates.same().map(|fields| (kind, fields)))
+        .filter(|(_, fields)| fields.iter().all(|field| value_of(field).is_some()))
+        .collect();
+    let mut operations = Vec::new();
+    let mut found: Vec<(String, String)> = Vec::new();
+    for (kind, fields) in &kinds {
+        let destination = batch.destination_of(kind);
+        let values: Vec<(String, String)> = fields
+            .iter()
+            .map(|field| (field.clone(), value_of(field).unwrap_or_default()))
+            .collect();
+        operations.extend(ask_values(batch, state, &values, &destination)?);
+        let item = state.reads.iter().find(|read| {
+            read.item.id.starts_with(&format!("{destination}:"))
+                && is_open(&read.item.status.category)
+                && decide::item_record(batch, read).is_some_and(|record| {
+                    record.kind.as_deref().unwrap_or(&config.default_kind) == kind.name
+                        && values.iter().all(|(field, value)| {
+                            record
+                                .fields
+                                .as_ref()
+                                .and_then(|held| held.get(field))
+                                .is_some_and(|held| casefolded(held) == casefolded(value))
+                        })
+                })
+        });
+        if let Some(read) = item {
+            found.push((kind.name.clone(), read.item.id.clone()));
+        }
+    }
+    let specific = found
+        .iter()
+        .find(|(kind, _)| {
+            !found
+                .iter()
+                .any(|(other, _)| other != kind && more_specific(config, other, kind))
+        })
+        .cloned();
+    match (&args.item, specific) {
+        (None, Some((_, item))) => Ok((item, operations)),
+        (None, None) => Err(Error::Refused(format!(
+            "no existing ticket of a `same` kind carries {}: write and stage a ticket of the kind the evidence is",
+            observed
+                .iter()
+                .map(|(name, value)| format!("`{name}` `{value}`"))
+                .collect::<Vec<_>>()
+                .join(" and ")
+        ))),
+        (Some(named), Some((kind, item))) if *named != item => {
+            let named_kind = found
+                .iter()
+                .find(|(_, one)| one == named)
+                .map(|(kind, _)| kind.clone())
+                .or_else(|| {
+                    read_of(state, named)
+                        .and_then(|read| decide::item_record(batch, read))
+                        .map(|record| record.kind.unwrap_or_else(|| config.default_kind.clone()))
+                });
+            if named_kind.is_some_and(|named_kind| more_specific(config, &kind, &named_kind)) {
+                return Err(Error::Refused(format!(
+                    "`{item}`, a `{kind}`, is the most specific existing ticket the observed fields name, and `{named}` is less specific: comment on `{item}`; nothing was staged"
+                )));
+            }
+            Ok((named.clone(), operations))
+        }
+        (Some(named), _) => Ok((named.clone(), operations)),
+    }
+}
+
+/// Whether `kind` is more specific than `than`: the `from` of a match-decided relation to it,
+/// directly or through others.
+fn more_specific(config: &crate::config::Config, kind: &str, than: &str) -> bool {
+    let mut reached = vec![kind.to_owned()];
+    let mut at = 0;
+    while at < reached.len() {
+        let current = reached[at].clone();
+        for relation in &config.relations {
+            if relation.from == current
+                && matches!(relation.decided_by, DecidedBy::Match(_))
+                && !reached.contains(&relation.to)
+            {
+                if relation.to == than {
+                    return true;
+                }
+                reached.push(relation.to.clone());
+            }
+        }
+        at += 1;
+    }
+    false
+}
+
+/// `ticket relate`: stage an edge of a relation the agent decides, refusing an unknown
+/// relation, one decided by matching fields, ends of the wrong kinds, and a second edge from
+/// one ticket of a many-to-one relation.
+///
+/// # Errors
+///
+/// A batch not prepared, or an edge the rules refuse: nothing is staged.
+pub fn relate(settings: &Settings, args: TicketRelateArgs) -> Result<Staged, Error> {
+    let batch = Batch::new(settings, &args.batch)?;
+    let state = batch.state()?;
+    let mut outbox = batch.outbox()?;
+    let bound = journal::bound(&journal::read(&batch)?);
+    let graph = Graph::of(&batch, &state, &outbox, &bound, Scope::Staged)?;
+    let refused = |message: String| Error::Refused(format!("{message}; nothing was staged"));
+    let (from, to) = graph
+        .asserted(&batch, &state, &args.relation, &args.from, &args.to)
+        .map_err(refused)?;
+    let relation = graph
+        .relation(&batch, &args.relation)
+        .ok_or_else(|| refused(format!("`{}` is not a configured relation", args.relation)))?;
+    if relation.cardinality == Cardinality::ManyToOne {
+        let at = relations::identity(&batch, &state, &bound, &from);
+        let target = relations::identity(&batch, &state, &bound, &to);
+        if let Some(other) = graph.all(&batch, &state, &bound).iter().find(|edge| {
+            edge.relation == relation.name
+                && relations::identity(&batch, &state, &bound, &edge.from) == at
+                && relations::identity(&batch, &state, &bound, &edge.to) != target
+        }) {
+            return Err(refused(format!(
+                "the relation `{}` is many-to-one, and {} already has its edge to {}",
+                relation.name,
+                relations::named(&batch, &from),
+                relations::named(&batch, &other.to)
+            )));
+        }
+    }
+    let write = StagedWrite::Relate {
+        relation: relation.name.clone(),
+        from: relations::spelled(&batch, &from),
+        to: relations::spelled(&batch, &to),
+    };
+    let index = stage(&mut outbox, write.clone(), |one| *one == write);
     batch.save_outbox(&outbox)?;
     Ok(Staged {
         schema_version: SCHEMA_VERSION,
@@ -567,8 +873,11 @@ pub fn re_estimate(settings: &Settings, args: TicketReEstimateArgs) -> Result<St
     let batch = Batch::new(settings, &args.batch)?;
     let state = batch.state()?;
     let mut outbox = batch.outbox()?;
+    let bound = journal::bound(&journal::read(&batch)?);
+    let graph = Graph::of(&batch, &state, &outbox, &bound, Scope::Staged)?;
     let (estimated, _, _, _) =
-        decide::re_estimate(&batch, &state, &outbox, &args.item).map_err(Error::Refused)?;
+        decide::re_estimate(&batch, &state, &outbox, &bound, &graph, &args.item)
+            .map_err(Error::Refused)?;
     let write = StagedWrite::ReEstimate {
         item: args.item.clone(),
         priority_estimate: estimated.level,

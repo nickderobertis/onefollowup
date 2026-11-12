@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use super::Versioned;
 use super::outbox::StagedWrite;
 use super::pyjson::Style;
-use crate::store::{StoreComment, StoreItem};
+use crate::store::{ItemRelations, StoreComment, StoreItem};
 
 /// A batch's state.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -42,6 +42,10 @@ pub struct BatchState {
     pub checked: Option<Vec<String>>,
     /// Each `publish`'s writes, oldest first.
     pub publishes: Vec<PublishRecord>,
+    /// What `prepare`'s one `task relations` read of the found tickets held, under a
+    /// configuration with relations; omitted when empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub relations: Vec<ItemRelations>,
 }
 
 /// One input of the batch.

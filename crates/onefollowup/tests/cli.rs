@@ -22,18 +22,6 @@ fn dispatched(arguments: &[&str]) -> Result<String, Error> {
 #[test]
 fn every_stubbed_verb_reaches_its_function_and_refuses() {
     let verbs: &[&[&str]] = &[
-        &[
-            "ticket",
-            "relate",
-            "--batch",
-            "b",
-            "--relation",
-            "r",
-            "--from",
-            "a",
-            "--to",
-            "b",
-        ],
         &["comments", "gather", "--dry-run"],
         &["comments", "launches", "--snapshot", "s"],
         &["comments", "check", "--feedback", "f"],
@@ -144,6 +132,18 @@ fn every_verify_verb_reaches_its_function_and_refuses_a_batch_id_that_is_none() 
             "r",
         ],
         &["ticket", "re-estimate", "--batch", "not a batch", "s:i"],
+        &[
+            "ticket",
+            "relate",
+            "--batch",
+            "not a batch",
+            "--relation",
+            "r",
+            "--from",
+            "a",
+            "--to",
+            "b",
+        ],
         &["check", "--batch", "not a batch"],
         &["publish", "--batch", "not a batch"],
         &["settle", "--batch", "not a batch"],

@@ -1,6 +1,10 @@
 //! The receipt journal (schema 3), `receipts/<batch>.jsonl`: one line per outcome of a
 //! write to a destination, appended and never rewritten. Each line is spelled with its keys
 //! sorted at every depth and non-ASCII written raw.
+//!
+//! Two line kinds onefollowup adds within schema 3 — `relate`, an edge's outcome, and
+//! `assign`, an assignee's — are written only under a configuration with relations or an
+//! assignee, so a batch under neither writes exactly the lines it always did.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -43,6 +47,10 @@ pub enum Outcome {
     Comment(CommentOutcome),
     /// A re-estimate.
     ReEstimate(ReEstimateOutcome),
+    /// An edge of a relation.
+    Relate(RelateOutcome),
+    /// An item's assignee.
+    Assign(AssignOutcome),
 }
 
 impl Outcome {
@@ -51,8 +59,72 @@ impl Outcome {
             Self::Copy(_) => "copy",
             Self::Comment(_) => "comment",
             Self::ReEstimate(_) => "re-estimate",
+            Self::Relate(_) => "relate",
+            Self::Assign(_) => "assign",
         }
     }
+}
+
+/// An edge's outcome.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RelateOutcome {
+    /// The relation's name.
+    pub relation: String,
+    /// How the store holds it: `parent` or `link`.
+    pub store: String,
+    /// The `from` end as the batch names it: its ticket, or an item.
+    pub from: String,
+    /// The `to` end as the batch names it.
+    pub to: String,
+    /// The `to` item the edge was written to, once there was one.
+    pub to_card: Option<String>,
+    /// Whether the edge was derived from the tickets' fields rather than asserted.
+    pub derived: bool,
+    /// What the write did.
+    pub action: EdgeAction,
+    /// Why it did not land.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<ReceiptError>,
+}
+
+/// What an edge's write did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum EdgeAction {
+    /// Wrote it.
+    Written,
+    /// Found it already held, and wrote nothing.
+    Exists,
+    /// Did not write it; `error` says why.
+    Failed,
+}
+
+/// An assignee's outcome.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AssignOutcome {
+    /// The one person written.
+    pub assignee: String,
+    /// The people the item had to hold for the write to land: what onefollowup last wrote.
+    pub when: Vec<String>,
+    /// What the write did.
+    pub action: AssignAction,
+    /// Why it did not land.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<ReceiptError>,
+}
+
+/// What an assignee's write did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum AssignAction {
+    /// Wrote it.
+    Written,
+    /// The item held a person's own assignment, which stands; nothing was written.
+    Held,
+    /// Did not write it; `error` says why.
+    Failed,
 }
 
 /// A copy's outcome.
@@ -295,12 +367,16 @@ impl Receipt {
                 "re-estimate" => {
                     Outcome::ReEstimate(serde_path_to_error::deserialize(value).map_err(read)?)
                 }
+                "relate" => Outcome::Relate(serde_path_to_error::deserialize(value).map_err(read)?),
+                "assign" => Outcome::Assign(serde_path_to_error::deserialize(value).map_err(read)?),
                 other => return Err(malformed(format!("`{other}` is not a command"))),
             })
         };
         let outcome = outcome(line.outcome)?;
-        if line.card.is_none() && !matches!(outcome, Outcome::Copy(_)) {
-            return Err(malformed("only a copy's receipt names no card".to_owned()));
+        if line.card.is_none() && !matches!(outcome, Outcome::Copy(_) | Outcome::Relate(_)) {
+            return Err(malformed(
+                "only a copy's or an edge's receipt names no card".to_owned(),
+            ));
         }
         Ok(Self {
             batch: line.run,
@@ -317,6 +393,8 @@ impl Receipt {
             Outcome::Copy(one) => serde_json::to_value(one),
             Outcome::Comment(one) => serde_json::to_value(one),
             Outcome::ReEstimate(one) => serde_json::to_value(one),
+            Outcome::Relate(one) => serde_json::to_value(one),
+            Outcome::Assign(one) => serde_json::to_value(one),
         }
         .unwrap_or(Value::Null);
         let line = Line {

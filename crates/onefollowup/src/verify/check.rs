@@ -1,6 +1,7 @@
-//! `check`: hold the batch's answers, tickets and staged writes to the rules before anything
-//! is written, reading nothing of the destination; when they are sound, record what it held
-//! so `publish` sends exactly that.
+//! `check`: hold the batch's answers, tickets, edges and staged writes to the rules before
+//! anything is written, reading nothing of the destination (only, for a route that assigns,
+//! the store's configuration); when they are sound, record what it held so `publish` sends
+//! exactly that.
 
 use std::collections::BTreeMap;
 use std::sync::LazyLock;
@@ -15,6 +16,7 @@ use crate::formats::batch::BatchState;
 use crate::formats::dispositions::{CarriedDispositions, DispositionEntry, Dispositions};
 use crate::formats::outbox::{Outbox, StagedWrite};
 use crate::verify::context::Batch;
+use crate::verify::relations::{Graph, Scope};
 use crate::verify::tools::ticket_problems;
 use crate::work;
 
@@ -84,14 +86,12 @@ pub fn run(settings: &Settings, args: BatchArgs) -> Result<Checked, Error> {
     let mut problems = Vec::new();
     answers(&batch, &state, &outbox, &mut problems)?;
     tickets(&batch, &state, &outbox, &mut problems)?;
-    for (index, write) in outbox.writes.iter().enumerate() {
-        if let StagedWrite::Relate { .. } = write {
-            problems.push(problem(
-                named(index, write),
-                "relations are not published by this release; remove the edge",
-            ));
-        }
+    let bound = crate::verify::journal::bound(&crate::verify::journal::read(&batch)?);
+    let graph = Graph::of(&batch, &state, &outbox, &bound, Scope::Staged)?;
+    for (subject, message) in graph.problems(&batch, &state, &outbox, &bound) {
+        problems.push(problem(subject, message));
     }
+    assigning(&batch, &mut problems)?;
     let sound = problems.is_empty();
     state.checked = if sound {
         Some(digests(&batch, &outbox)?)
@@ -371,6 +371,59 @@ fn tickets(
                         .join(", ")
                 ),
             ));
+        }
+    }
+    Ok(())
+}
+
+/// Every route that assigns a person, held to the store's configuration: each kind it may
+/// match must go to a destination source, and come from a drafts source, that set
+/// `config.assignees: true`, since an assignee travels from the one to the other.
+fn assigning(batch: &Batch<'_>, problems: &mut Vec<Problem>) -> Result<(), Error> {
+    let config = batch.config;
+    let assigning: Vec<&crate::config::Route> = config
+        .routes
+        .iter()
+        .filter(|route| route.set.assignee.is_some())
+        .collect();
+    if assigning.is_empty() {
+        return Ok(());
+    }
+    let store = batch.store()?;
+    for route in assigning {
+        let person = route.set.assignee.clone().unwrap_or_default();
+        let kinds: Vec<&crate::config::Kind> = config
+            .kinds
+            .iter()
+            .filter(|kind| {
+                route
+                    .matches
+                    .kind
+                    .as_ref()
+                    .is_none_or(|kinds| kinds.contains(&kind.name))
+            })
+            .collect();
+        let mut reported: Vec<String> = Vec::new();
+        for kind in kinds {
+            for (source, role) in [
+                (batch.destination_of(kind), "destination"),
+                (config.drafts_source.clone(), "drafts source"),
+            ] {
+                if reported.contains(&source)
+                    || store.source_setting(&source, "assignees")
+                        == Some(serde_json::Value::Bool(true))
+                {
+                    continue;
+                }
+                problems.push(problem(
+                    format!("route:{}", route.name),
+                    format!(
+                        "the route `{}` assigns `{person}` to tickets of the kind `{}`, and its {role} source `{source}` does not set `config.assignees: true`, so it holds no assignee: set `sources.{source}.config.assignees: true` in the store's configuration, or remove the route's `assignee`",
+                        route.name, kind.name
+                    ),
+                ));
+                reported.push(source);
+            }
         }
     }
     Ok(())

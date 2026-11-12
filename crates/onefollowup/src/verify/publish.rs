@@ -3,6 +3,13 @@
 //! version-held copy of its bound ones per destination, one `update-many` of its
 //! re-estimates and one `comment add-many` of its evidence comments — and receipt every
 //! outcome.
+//!
+//! Under a configuration with relations, a ticket whose edges point to another new ticket is
+//! copied after it, so the record it lands with names that ticket's item in its `edges`; the
+//! batch's edges are then written in one `task parent set-many` and one `task link add-many`,
+//! each edge receipted. An existing item the batch relates, or whose estimate its related
+//! tickets now move, is re-estimated in the same `update-many`, which also carries each
+//! existing item's assignee, held to what onefollowup last wrote there.
 
 use std::collections::BTreeMap;
 
@@ -11,23 +18,27 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::api::{BatchArgs, PublishOutcome, Published, SCHEMA_VERSION, StagedOp};
-use crate::config::{Priority, Settings, StatusRole};
+use crate::config::{Priority, RelationStore, Route, Settings, StatusRole};
 use crate::error::Error;
 use crate::formats::batch::{BatchState, PublishRecord};
 use crate::formats::outbox::{Outbox, StagedWrite};
 use crate::formats::receipts::{
-    CommentOutcome, Condition, CopyAction, CopyOutcome, Outcome, ReEstimateOutcome,
-    ReEstimateWrite, Receipt, ReceiptError, ReceiptResult, ReceiptStatus, WriteKind,
+    AssignAction, AssignOutcome, CommentOutcome, Condition, CopyAction, CopyOutcome, EdgeAction,
+    Outcome, ReEstimateOutcome, ReEstimateWrite, Receipt, ReceiptError, ReceiptResult,
+    ReceiptStatus, RelateOutcome, WriteKind,
 };
+use crate::formats::ticket::{Edge as RecordEdge, TicketRecord};
 use crate::formats::{HeldPriority, Level};
 use crate::store::{
-    CommentPost, Copied, CopyBatch, HeldUpdate, NewTask, Store, TaskChange, WriteState,
+    CommentPost, Copied, CopyBatch, EdgeWrite, HeldUpdate, NewTask, Store, TaskChange, WriteState,
 };
 use crate::verify::check::{self, named};
 use crate::verify::command;
 use crate::verify::context::Batch;
-use crate::verify::decide::{self, Decision, priority_of};
+use crate::verify::decide::{self, Bound, Decision, priority_of};
 use crate::verify::journal;
+use crate::verify::relations::{self, End, Graph, Scope};
+use crate::verify::routes::{self, Facts};
 use crate::verify::ticket::{self, priority_word};
 
 /// What a route's command may print to override its `set`.
@@ -52,6 +63,52 @@ struct Planned {
     record: Value,
     digest: String,
     item: String,
+    /// When it is copied: after every new ticket its edges point to.
+    level: usize,
+    /// Whether an earlier landed copy of the same content makes it write nothing.
+    unchanged: bool,
+}
+
+/// What every part of one publish reads.
+struct Publishing<'a, 'b> {
+    batch: &'a Batch<'b>,
+    state: &'a BatchState,
+    outbox: &'a Outbox,
+    latest: &'a BTreeMap<String, String>,
+    bound: &'a Bound,
+    graph: &'a Graph,
+    store: &'a Store,
+    /// Each ticket's card this publish's copies landed, by its root cause.
+    cards: &'a BTreeMap<String, String>,
+}
+
+/// An existing item's assignee to write, held to what onefollowup last wrote there.
+struct Assignment {
+    index: usize,
+    item: String,
+    ticket: Option<String>,
+    person: String,
+    recorded: Option<String>,
+    record: TicketRecord,
+}
+
+/// The receipts and outcomes a publish gathers, each in its write's place.
+#[derive(Default)]
+struct Answers {
+    receipts: Vec<(usize, Receipt)>,
+    outcomes: Vec<PublishOutcome>,
+}
+
+impl Answers {
+    fn push(&mut self, index: usize, receipt: Receipt, published: PublishOutcome) {
+        self.receipts.push((index, receipt));
+        self.outcomes.push(published);
+    }
+}
+
+/// Whether the store's configuration has the source `name` hold assignees.
+fn holds_assignees(store: &Store, name: &str) -> bool {
+    store.source_setting(name, "assignees") == Some(Value::Bool(true))
 }
 
 fn held(word: &str) -> HeldPriority {
@@ -142,10 +199,9 @@ pub fn run(settings: &Settings, args: BatchArgs) -> Result<Published, Error> {
     let bound = journal::bound(&journal);
     let latest = journal::latest(&journal, state.read_at_receipt);
     let store = batch.store()?;
-    let mut receipts: Vec<(usize, Receipt)> = Vec::new();
-    let mut outcomes: Vec<PublishOutcome> = Vec::new();
+    let graph = Graph::of(&batch, &state, &outbox, &bound, Scope::Staged)?;
+    let mut answers = Answers::default();
     let mut planned: Vec<Planned> = Vec::new();
-    let mut digests = IndexMap::new();
     let drafts = batch.config.drafts_source.clone();
 
     // Every copy, decided from the ticket, its kind, its route and prepare's read.
@@ -155,23 +211,18 @@ pub fn run(settings: &Settings, args: BatchArgs) -> Result<Published, Error> {
         };
         let slug = batch.ticket_slug(key).unwrap_or_default();
         let file = batch.ticket(&slug)?;
-        let mut decision = match decide::decide(&batch, &state, &bound, &latest, &file) {
-            Ok(decision) => decision,
-            Err(message) => {
-                receipts.push((
-                    index,
-                    journal::refused_copy(&batch.batch, key, None, "invalid", &message),
-                ));
-                outcomes.push(outcome(
-                    index,
-                    StagedOp::Copy,
-                    None,
-                    "invalid",
-                    Some(message),
-                ));
-                continue;
-            }
-        };
+        let mut decision =
+            match decide::decide(&batch, &state, &bound, &latest, &graph, &outbox, &file) {
+                Ok(decision) => decision,
+                Err(message) => {
+                    answers.push(
+                        index,
+                        journal::refused_copy(&batch.batch, key, None, "invalid", &message),
+                        outcome(index, StagedOp::Copy, None, "invalid", Some(message)),
+                    );
+                    continue;
+                }
+            };
         let ticket_id = decision.item.clone().unwrap_or_else(|| key.clone());
         if let Some((_, route)) = &decision.route
             && let Some(argv) = &route.command
@@ -208,9 +259,21 @@ pub fn run(settings: &Settings, args: BatchArgs) -> Result<Published, Error> {
                     )
                 }),
             };
+            let overridden = overridden.and_then(|given| {
+                let unheld = [decision.destination.as_str(), drafts.as_str()]
+                    .into_iter()
+                    .find(|source| !holds_assignees(&store, source));
+                match (&given.assignee, unheld) {
+                    (Some(person), Some(source)) => Err(format!(
+                        "the route `{}` command assigned `{person}`, and the source `{source}` does not set `config.assignees: true`, so it holds no assignee",
+                        route.name
+                    )),
+                    _ => Ok(given),
+                }
+            });
             match overridden {
                 Err(message) => {
-                    receipts.push((
+                    answers.push(
                         index,
                         journal::refused_copy(
                             &batch.batch,
@@ -219,14 +282,14 @@ pub fn run(settings: &Settings, args: BatchArgs) -> Result<Published, Error> {
                             "route-command-failed",
                             &message,
                         ),
-                    ));
-                    outcomes.push(outcome(
-                        index,
-                        StagedOp::Copy,
-                        decision.card.clone(),
-                        "route-command-failed",
-                        Some(message),
-                    ));
+                        outcome(
+                            index,
+                            StagedOp::Copy,
+                            decision.card.clone(),
+                            "route-command-failed",
+                            Some(message),
+                        ),
+                    );
                     continue;
                 }
                 Ok(given) => {
@@ -247,7 +310,12 @@ pub fn run(settings: &Settings, args: BatchArgs) -> Result<Published, Error> {
                     if let Some(labels) = given.labels {
                         decision.labels = labels;
                     }
-                    let _assignee = given.assignee;
+                    if let Some(person) = given.assignee {
+                        if decision.card.is_none() {
+                            decision.record.board_assignee = Some(person.clone());
+                        }
+                        decision.assignee = Some(person);
+                    }
                 }
             }
         }
@@ -256,7 +324,7 @@ pub fn run(settings: &Settings, args: BatchArgs) -> Result<Published, Error> {
                 (None, _) => {
                     let message =
                         "the ticket was never copied, so there is no item to withdraw".to_owned();
-                    receipts.push((
+                    answers.push(
                         index,
                         journal::refused_copy(
                             &batch.batch,
@@ -265,14 +333,14 @@ pub fn run(settings: &Settings, args: BatchArgs) -> Result<Published, Error> {
                             "nothing-to-withdraw",
                             &message,
                         ),
-                    ));
-                    outcomes.push(outcome(
-                        index,
-                        StagedOp::Copy,
-                        None,
-                        "nothing-to-withdraw",
-                        Some(message),
-                    ));
+                        outcome(
+                            index,
+                            StagedOp::Copy,
+                            None,
+                            "nothing-to-withdraw",
+                            Some(message),
+                        ),
+                    );
                     continue;
                 }
                 (Some(card), Some(read)) if batch.protected(&read.item.status.category) => {
@@ -297,201 +365,268 @@ pub fn run(settings: &Settings, args: BatchArgs) -> Result<Published, Error> {
                             version: read.item.version.clone(),
                         });
                     }
-                    receipts.push((index, receipt));
-                    outcomes.push(outcome(
+                    answers.push(
                         index,
-                        StagedOp::Copy,
-                        Some(card.clone()),
-                        "protected",
-                        Some(message),
-                    ));
+                        receipt,
+                        outcome(
+                            index,
+                            StagedOp::Copy,
+                            Some(card.clone()),
+                            "protected",
+                            Some(message),
+                        ),
+                    );
                     continue;
                 }
                 _ => {}
             }
         }
-        let record = ticket::record_value(&decision.record);
-        let digest = ticket::digest(&file.title, &decision.body, &record);
-        digests.insert(index.to_string(), digest.clone());
-        // A withdrawal changes the item's status, which the digest does not hold, so it is
-        // never an unchanged re-copy.
-        if decision.card.is_some()
-            && !decision.withdrawal
-            && let Some(item) = &decision.item
-            && let Some((line, Some(landed))) = journal::last_landed(&journal, item)
-            && landed == digest
-        {
-            receipts.push((
-                index,
-                Receipt {
-                    batch: batch.batch.clone(),
-                    ticket: Some(item.clone()),
-                    card: decision.card.clone(),
-                    outcome: Outcome::Copy(CopyOutcome {
-                        action: CopyAction::SkippedUnchanged,
-                        result: None,
-                        status_condition: None,
-                        priority_condition: None,
-                        error: None,
-                        held: None,
-                        digest: Some(digest),
-                        unchanged_since: Some(line),
-                    }),
-                },
-            ));
-            outcomes.push(outcome(
-                index,
-                StagedOp::Copy,
-                decision.card.clone(),
-                "skipped-unchanged",
-                None,
-            ));
-            continue;
-        }
         planned.push(Planned {
             index,
             title: file.title.clone(),
-            record,
-            digest,
+            record: Value::Null,
+            digest: String::new(),
             item: ticket_id,
             decision,
+            level: 0,
+            unchanged: false,
         });
     }
+    levels(&state, &bound, &mut planned);
 
-    // What this publish sends is recorded, and the outbox emptied, before anything is sent.
-    state.publishes.push(PublishRecord {
-        journal_from: journal.receipts.len(),
-        writes: outbox.writes.clone(),
-        digests,
-        settled: false,
-    });
-    state.checked = None;
-    batch.save_state(&state)?;
-    batch.save_outbox(&Outbox {
-        batch: batch.batch.clone(),
-        writes: Vec::new(),
-    })?;
-
-    // Each ticket is written to the drafts source as it is copied, under the batch's project.
-    if planned
-        .iter()
-        .any(|plan| !state.tickets.contains_key(&plan.decision.slug))
-    {
-        store.ensure_project(&drafts, &state.project, &state.project, &BTreeMap::new())?;
-    }
-    for plan in &mut planned {
-        let decision = &plan.decision;
-        let metadata = BTreeMap::from([(batch.record_key(), plan.record.clone())]);
-        let status = batch.category_of(decision.status_role);
-        let priority = priority_word(decision.priority).to_owned();
-        let written = match state.tickets.get(&decision.slug) {
-            Some(item) => store.update_task(
-                item,
-                &TaskChange {
-                    title: Some(plan.title.clone()),
-                    body: Some(decision.body.clone()),
-                    status: Some(status),
-                    priority: Some(priority),
-                    repositories: Some(vec![decision.record.repository.clone()]),
-                    metadata,
-                    assignee: None,
-                },
-            )?,
-            None => store.create_task(&NewTask {
-                source: drafts.clone(),
-                project: state.project.clone(),
-                title: plan.title.clone(),
-                body: decision.body.clone(),
-                status,
-                priority,
-                labels: decision.labels.clone(),
-                repositories: vec![decision.record.repository.clone()],
-                metadata,
-                assignee: None,
-            })?,
-        };
-        state
-            .tickets
-            .insert(decision.slug.clone(), written.id.clone());
-        plan.item = written.id;
-    }
-    batch.save_state(&state)?;
-
-    // The copies: per destination, new tickets in one create-only copy, bound ones in one
-    // copy held to their versions, withdrawals in one held copy that writes their status.
-    let mut groups: BTreeMap<(String, u8), Vec<&Planned>> = BTreeMap::new();
-    for plan in &planned {
-        let group = match (&plan.decision.card, plan.decision.withdrawal) {
-            (None, _) => 0,
-            (Some(_), false) => 1,
-            (Some(_), true) => 2,
-        };
-        groups
-            .entry((plan.decision.destination.clone(), group))
-            .or_default()
-            .push(plan);
-    }
-    for ((destination, group), plans) in &groups {
-        let request = CopyBatch {
-            destination: destination.clone(),
-            items: plans.iter().map(|plan| plan.item.clone()).collect(),
-            create: *group == 0,
-            preserve_status: *group != 2,
-            versions: plans
-                .iter()
-                .filter_map(|plan| {
-                    plan.decision
-                        .hold
-                        .clone()
-                        .map(|hold| (plan.item.clone(), hold))
-                })
-                .collect(),
-        };
-        match store.copy(&request) {
-            Ok(copied) => {
-                for plan in plans {
-                    let answer = copied.iter().find(|one| one.source == plan.item);
-                    let (receipt, published) = copy_receipt(&batch, plan, answer);
-                    receipts.push((plan.index, receipt));
-                    outcomes.push(published);
-                }
-            }
-            Err(error) => {
-                for plan in plans {
-                    let message = error.to_string();
-                    receipts.push((
-                        plan.index,
-                        journal::refused_copy(
-                            &batch.batch,
-                            &plan.item,
-                            plan.decision.card.clone(),
-                            "store-refused",
-                            &message,
-                        ),
-                    ));
-                    outcomes.push(outcome(
+    // Level by level: each ticket's record, with the items its edges point to; what this
+    // publish sends recorded, and the outbox emptied, before anything is sent; each ticket
+    // written to the drafts source under the batch's project; then the level's copies — per
+    // destination, new tickets in one create-only copy, bound ones in one copy held to their
+    // versions, withdrawals in one held copy that writes their status.
+    let mut cards: BTreeMap<String, String> = BTreeMap::new();
+    let mut digests = IndexMap::new();
+    let mut project_written = false;
+    let top = planned.iter().map(|plan| plan.level).max().unwrap_or(0);
+    for level in 0..=top {
+        for plan in planned.iter_mut().filter(|plan| plan.level == level) {
+            record_edges(&batch, &state, &bound, &cards, plan);
+            plan.record = ticket::record_value(&plan.decision.record);
+            plan.digest = ticket::digest(&plan.title, &plan.decision.body, &plan.record);
+            digests.insert(plan.index.to_string(), plan.digest.clone());
+            // A withdrawal changes the item's status, which the digest does not hold, so it is
+            // never an unchanged re-copy.
+            if plan.decision.card.is_some()
+                && !plan.decision.withdrawal
+                && let Some(item) = &plan.decision.item
+                && let Some((line, Some(landed))) = journal::last_landed(&journal, item)
+                && landed == plan.digest
+            {
+                plan.unchanged = true;
+                answers.push(
+                    plan.index,
+                    Receipt {
+                        batch: batch.batch.clone(),
+                        ticket: Some(item.clone()),
+                        card: plan.decision.card.clone(),
+                        outcome: Outcome::Copy(CopyOutcome {
+                            action: CopyAction::SkippedUnchanged,
+                            result: None,
+                            status_condition: None,
+                            priority_condition: None,
+                            error: None,
+                            held: None,
+                            digest: Some(plan.digest.clone()),
+                            unchanged_since: Some(line),
+                        }),
+                    },
+                    outcome(
                         plan.index,
                         StagedOp::Copy,
                         plan.decision.card.clone(),
-                        "store-refused",
-                        Some(message),
-                    ));
+                        "skipped-unchanged",
+                        None,
+                    ),
+                );
+            }
+        }
+        if level == 0 {
+            state.publishes.push(PublishRecord {
+                journal_from: journal.receipts.len(),
+                writes: outbox.writes.clone(),
+                digests: digests.clone(),
+                settled: false,
+            });
+            state.checked = None;
+            batch.save_state(&state)?;
+            batch.save_outbox(&Outbox {
+                batch: batch.batch.clone(),
+                writes: Vec::new(),
+            })?;
+        } else if let Some(publish) = state.publishes.last_mut() {
+            publish.digests = digests.clone();
+            batch.save_state(&state)?;
+        }
+        let sending: Vec<usize> = (0..planned.len())
+            .filter(|at| planned[*at].level == level && !planned[*at].unchanged)
+            .collect();
+        if !project_written
+            && sending
+                .iter()
+                .any(|at| !state.tickets.contains_key(&planned[*at].decision.slug))
+        {
+            store.ensure_project(&drafts, &state.project, &state.project, &BTreeMap::new())?;
+            project_written = true;
+        }
+        for &at in &sending {
+            let plan = &mut planned[at];
+            let decision = &plan.decision;
+            let metadata = BTreeMap::from([(batch.record_key(), plan.record.clone())]);
+            let status = batch.category_of(decision.status_role);
+            let priority = priority_word(decision.priority).to_owned();
+            // Only a ticket not yet on its card carries an assignee: the copy that creates the
+            // card writes it there.
+            let assignee = decision
+                .card
+                .is_none()
+                .then(|| decision.assignee.clone())
+                .flatten();
+            let written = match state.tickets.get(&decision.slug) {
+                Some(item) => store.update_task(
+                    item,
+                    &TaskChange {
+                        title: Some(plan.title.clone()),
+                        body: Some(decision.body.clone()),
+                        status: Some(status),
+                        priority: Some(priority),
+                        repositories: Some(vec![decision.record.repository.clone()]),
+                        metadata,
+                        assignee,
+                    },
+                )?,
+                None => store.create_task(&NewTask {
+                    source: drafts.clone(),
+                    project: state.project.clone(),
+                    title: plan.title.clone(),
+                    body: decision.body.clone(),
+                    status,
+                    priority,
+                    labels: decision.labels.clone(),
+                    repositories: vec![decision.record.repository.clone()],
+                    metadata,
+                    assignee,
+                })?,
+            };
+            state
+                .tickets
+                .insert(decision.slug.clone(), written.id.clone());
+            plan.item = written.id;
+        }
+        batch.save_state(&state)?;
+
+        let mut groups: BTreeMap<(String, u8), Vec<usize>> = BTreeMap::new();
+        for &at in &sending {
+            let plan = &planned[at];
+            let group = match (&plan.decision.card, plan.decision.withdrawal) {
+                (None, _) => 0,
+                (Some(_), false) => 1,
+                (Some(_), true) => 2,
+            };
+            groups
+                .entry((plan.decision.destination.clone(), group))
+                .or_default()
+                .push(at);
+        }
+        for ((destination, group), members) in &groups {
+            let plans: Vec<&Planned> = members.iter().map(|at| &planned[*at]).collect();
+            let request = CopyBatch {
+                destination: destination.clone(),
+                items: plans.iter().map(|plan| plan.item.clone()).collect(),
+                create: *group == 0,
+                preserve_status: *group != 2,
+                versions: plans
+                    .iter()
+                    .filter_map(|plan| {
+                        plan.decision
+                            .hold
+                            .clone()
+                            .map(|hold| (plan.item.clone(), hold))
+                    })
+                    .collect(),
+            };
+            match store.copy(&request) {
+                Ok(copied) => {
+                    for plan in plans {
+                        let answer = copied.iter().find(|one| one.source == plan.item);
+                        if let Some(answer) = answer
+                            && answer.error.is_none()
+                            && let Some(card) = &answer.item
+                            && matches!(answer.action.as_str(), "created" | "updated" | "unchanged")
+                        {
+                            cards.insert(plan.decision.slug.clone(), card.clone());
+                        }
+                        let (receipt, published) = copy_receipt(&batch, plan, answer);
+                        answers.push(plan.index, receipt, published);
+                    }
+                }
+                Err(error) => {
+                    for plan in plans {
+                        let message = error.to_string();
+                        answers.push(
+                            plan.index,
+                            journal::refused_copy(
+                                &batch.batch,
+                                &plan.item,
+                                plan.decision.card.clone(),
+                                "store-refused",
+                                &message,
+                            ),
+                            outcome(
+                                plan.index,
+                                StagedOp::Copy,
+                                plan.decision.card.clone(),
+                                "store-refused",
+                                Some(message),
+                            ),
+                        );
+                    }
                 }
             }
         }
     }
 
-    re_estimates(
-        &batch,
-        &state,
-        &outbox,
-        &latest,
-        &store,
-        &mut receipts,
-        &mut outcomes,
-    );
-    comments(&batch, &outbox, &store, &mut receipts, &mut outcomes);
+    let publishing = Publishing {
+        batch: &batch,
+        state: &state,
+        outbox: &outbox,
+        latest: &latest,
+        bound: &bound,
+        graph: &graph,
+        store: &store,
+        cards: &cards,
+    };
+    // A bound ticket re-copied keeps its card's assignee; one its route now names another
+    // person for is assigned in the `update-many`, held to what onefollowup last wrote.
+    let assignments: Vec<Assignment> = planned
+        .iter()
+        .filter(|plan| !plan.unchanged)
+        .filter_map(|plan| {
+            let card = plan.decision.card.clone()?;
+            let person = plan.decision.assignee.clone()?;
+            let recorded = plan.decision.record.board_assignee.clone();
+            (recorded.as_deref() != Some(person.as_str())).then(|| Assignment {
+                index: plan.index,
+                item: card,
+                ticket: Some(plan.item.clone()),
+                person,
+                recorded,
+                record: plan.decision.record.clone(),
+            })
+        })
+        .collect();
+    updates(&publishing, assignments, &mut answers);
+    comments(&batch, &outbox, &store, &mut answers);
+    edges(&publishing, &mut answers);
 
+    let Answers {
+        mut receipts,
+        mut outcomes,
+    } = answers;
     outcomes.sort_by_key(|one| one.index);
     receipts.sort_by_key(|(index, _)| *index);
     let receipts: Vec<Receipt> = receipts.into_iter().map(|(_, receipt)| receipt).collect();
@@ -510,6 +645,124 @@ pub fn run(settings: &Settings, args: BatchArgs) -> Result<Published, Error> {
         outcomes,
         store_operations: store.operations(),
     })
+}
+
+/// Give each planned copy its level: one past the deepest new ticket of this publish its
+/// edges point to, so that ticket's card exists when its own record is written. A cycle is
+/// cut at the number of tickets.
+fn levels(state: &BatchState, bound: &Bound, planned: &mut [Planned]) {
+    let new: BTreeMap<String, usize> = planned
+        .iter()
+        .enumerate()
+        .filter(|(_, plan)| plan.decision.card.is_none())
+        .map(|(at, plan)| (plan.decision.slug.clone(), at))
+        .collect();
+    let cap = planned.len();
+    for _ in 0..cap {
+        let mut moved = false;
+        for at in 0..planned.len() {
+            let level = planned[at]
+                .decision
+                .edges
+                .iter()
+                .filter_map(|(_, to)| match to {
+                    End::Ticket(slug) if relations::card(state, bound, slug).is_none() => {
+                        new.get(slug).copied()
+                    }
+                    _ => None,
+                })
+                .filter(|other| *other != at)
+                .map(|other| (planned[other].level + 1).min(cap))
+                .max()
+                .unwrap_or(0);
+            if level != planned[at].level {
+                planned[at].level = level;
+                moved = true;
+            }
+        }
+        if !moved {
+            break;
+        }
+    }
+}
+
+/// The item an end stands for now: an item, or a ticket's card — landed by this publish, or
+/// by an earlier one.
+fn item_of(
+    state: &BatchState,
+    bound: &Bound,
+    cards: &BTreeMap<String, String>,
+    end: &End,
+) -> Option<String> {
+    match end {
+        End::Item(item) => Some(item.clone()),
+        End::Ticket(slug) => cards
+            .get(slug)
+            .cloned()
+            .or_else(|| relations::card(state, bound, slug)),
+    }
+}
+
+/// Record in a ticket's record each edge from it whose `to` has an item, beside the edges its
+/// card already records.
+fn record_edges(
+    batch: &Batch<'_>,
+    state: &BatchState,
+    bound: &Bound,
+    cards: &BTreeMap<String, String>,
+    plan: &mut Planned,
+) {
+    let mut edges: Vec<RecordEdge> = plan
+        .decision
+        .read
+        .as_ref()
+        .and_then(|read| decide::item_record(batch, read))
+        .and_then(|record| record.edges)
+        .unwrap_or_default();
+    for (relation, to) in &plan.decision.edges {
+        if let Some(to) = item_of(state, bound, cards, to) {
+            let edge = RecordEdge {
+                relation: relation.clone(),
+                to,
+            };
+            if !edges.contains(&edge) {
+                edges.push(edge);
+            }
+        }
+    }
+    plan.decision.record.edges = (!edges.is_empty()).then_some(edges);
+}
+
+/// The first route an existing item matches, as its record and content state its facts.
+fn item_route<'a>(
+    publishing: &Publishing<'_, 'a>,
+    item: &str,
+    record: &TicketRecord,
+    content: &str,
+) -> Option<&'a Route> {
+    let batch = publishing.batch;
+    let kind = record
+        .kind
+        .clone()
+        .unwrap_or_else(|| batch.config.default_kind.clone());
+    let severity = ticket::severity(content, &batch.config.rubric);
+    let counts = publishing.graph.counts(
+        batch,
+        publishing.state,
+        publishing.bound,
+        &End::Item(item.to_owned()),
+    );
+    routes::first(
+        &batch.config.routes,
+        &Facts {
+            kind: &kind,
+            severity: severity.as_deref(),
+            repository: &record.repository,
+            paths: &[],
+            relations: &counts,
+        },
+    )
+    .map(|(_, route)| route)
 }
 
 fn copy_receipt(
@@ -579,43 +832,137 @@ fn copy_receipt(
     )
 }
 
-#[allow(
-    clippy::too_many_arguments,
-    reason = "the publish's shared reads and the two lists it appends to"
-)]
-fn re_estimates(
-    batch: &Batch<'_>,
-    state: &BatchState,
-    outbox: &Outbox,
-    latest: &BTreeMap<String, String>,
-    store: &Store,
-    receipts: &mut Vec<(usize, Receipt)>,
-    outcomes: &mut Vec<PublishOutcome>,
-) {
-    let mut by_source: BTreeMap<String, Vec<(usize, HeldUpdate, ReEstimateOutcome)>> =
-        BTreeMap::new();
-    for (index, write) in outbox.writes.iter().enumerate() {
-        let StagedWrite::ReEstimate { item, .. } = write else {
+/// The existing items the batch's edges reach without a staged re-estimate: each `from`
+/// item to record a new edge in, and each `to` item a rollup feeds, with the edges to record.
+fn implied(publishing: &Publishing<'_, '_>) -> IndexMap<String, Vec<RecordEdge>> {
+    let mut implied: IndexMap<String, Vec<RecordEdge>> = IndexMap::new();
+    let Publishing {
+        batch,
+        state,
+        bound,
+        cards,
+        graph,
+        ..
+    } = publishing;
+    let planned_card = |end: &End| match end {
+        End::Ticket(slug) => {
+            let key = batch.ticket_key(slug);
+            let staged =
+                publishing.outbox.writes.iter().any(
+                    |write| matches!(write, StagedWrite::Copy { ticket, .. } if *ticket == key),
+                );
+            (!staged)
+                .then(|| relations::card(state, bound, slug))
+                .flatten()
+        }
+        End::Item(item) => Some(item.clone()),
+    };
+    for edge in &graph.edges {
+        let Some(relation) = graph.relation(batch, &edge.relation) else {
             continue;
         };
+        if let Some(from) = planned_card(&edge.from)
+            && let Some(to) = item_of(state, bound, cards, &edge.to)
+        {
+            let recorded = decide::read_of(state, &from)
+                .and_then(|read| decide::item_record(batch, read))
+                .and_then(|record| record.edges)
+                .unwrap_or_default();
+            let wanted = RecordEdge {
+                relation: relation.name.clone(),
+                to,
+            };
+            if !recorded.contains(&wanted) {
+                let edges = implied.entry(from).or_default();
+                if !edges.contains(&wanted) {
+                    edges.push(wanted);
+                }
+            }
+        }
+        if relation.rollup != crate::config::Rollup::None
+            && let Some(to) = planned_card(&edge.to)
+        {
+            implied.entry(to).or_default();
+        }
+    }
+    implied
+}
+
+/// One write of an item's `update-many`, and what its answer is receipted as.
+enum Entry {
+    ReEstimate(usize, HeldUpdate, ReEstimateOutcome),
+    Assign(usize, HeldUpdate, Box<Assignment>),
+}
+
+/// One `update-many` per source: each staged re-estimate, each item the batch's edges reach,
+/// and each existing item's assignee, after them and held to what onefollowup last wrote.
+#[allow(
+    clippy::too_many_lines,
+    reason = "one pass: decide each item's update, send per source, receipt each answer"
+)]
+fn updates(publishing: &Publishing<'_, '_>, assignments: Vec<Assignment>, answers: &mut Answers) {
+    let Publishing {
+        batch,
+        state,
+        outbox,
+        latest,
+        bound,
+        graph,
+        store,
+        ..
+    } = publishing;
+    let mut targets: Vec<(usize, String, Vec<RecordEdge>, bool)> = outbox
+        .writes
+        .iter()
+        .enumerate()
+        .filter_map(|(index, write)| match write {
+            StagedWrite::ReEstimate { item, .. } => Some((index, item.clone(), Vec::new(), true)),
+            _ => None,
+        })
+        .collect();
+    let mut next = outbox.writes.len();
+    for (item, edges) in implied(publishing) {
+        match targets.iter_mut().find(|(_, one, _, _)| *one == item) {
+            Some(target) => target.2 = edges,
+            None => {
+                targets.push((next, item, edges, false));
+                next += 1;
+            }
+        }
+    }
+    let mut by_source: BTreeMap<String, Vec<Entry>> = BTreeMap::new();
+    let source_of = |item: &str| {
+        item.split_once(':')
+            .map(|(source, _)| source.to_owned())
+            .unwrap_or_default()
+    };
+    for (index, item, edges, staged) in targets {
         let (estimated, count, mut record, read) =
-            match decide::re_estimate(batch, state, outbox, item) {
+            match decide::re_estimate(batch, state, outbox, bound, graph, &item) {
                 Ok(found) => found,
                 Err(message) => {
-                    receipts.push((
+                    answers.push(
                         index,
-                        re_estimate_refused(batch, item, None, "invalid", &message),
-                    ));
-                    outcomes.push(outcome(
-                        index,
-                        StagedOp::ReEstimate,
-                        Some(item.clone()),
-                        "invalid",
-                        Some(message),
-                    ));
+                        re_estimate_refused(batch, &item, None, "invalid", &message),
+                        outcome(
+                            index,
+                            StagedOp::ReEstimate,
+                            Some(item.clone()),
+                            "invalid",
+                            Some(message),
+                        ),
+                    );
                     continue;
                 }
             };
+        if !staged && edges.is_empty() && estimated.level == record.priority_estimate {
+            continue;
+        }
+        if !edges.is_empty() {
+            let mut held_edges = record.edges.take().unwrap_or_default();
+            held_edges.extend(edges);
+            record.edges = Some(held_edges);
+        }
         let held_now = priority_of(&read.item.priority);
         let stored = record
             .board_estimate
@@ -637,7 +984,7 @@ fn re_estimates(
         let update = HeldUpdate {
             item: item.clone(),
             if_version: latest
-                .get(item)
+                .get(&item)
                 .cloned()
                 .or_else(|| read.item.version.clone()),
             body: Some(body),
@@ -671,22 +1018,41 @@ fn re_estimates(
             writes: Vec::new(),
             error: None,
         };
-        let source = item
-            .split_once(':')
-            .map(|(source, _)| source.to_owned())
-            .unwrap_or_default();
-        by_source
-            .entry(source)
-            .or_default()
-            .push((index, update, summary));
+        let person = item_route(publishing, &item, &record, &read.item.content)
+            .and_then(|route| route.set.assignee.clone());
+        let assignment = person
+            .filter(|person| record.board_assignee.as_deref() != Some(person.as_str()))
+            .map(|person| Assignment {
+                index,
+                item: item.clone(),
+                ticket: None,
+                person,
+                recorded: record.board_assignee.clone(),
+                record: record.clone(),
+            });
+        let entries = by_source.entry(source_of(&item)).or_default();
+        entries.push(Entry::ReEstimate(index, update, summary));
+        if let Some(assignment) = assignment {
+            entries.push(assign_entry(batch, assignment));
+        }
     }
-    for (source, entries) in by_source {
+    for assignment in assignments {
+        by_source
+            .entry(source_of(&assignment.item))
+            .or_default()
+            .push(assign_entry(batch, assignment));
+    }
+    for (source, mut entries) in by_source {
+        // Each assignee is written after the item's other writes, which hold to its version.
+        entries.sort_by_key(|entry| matches!(entry, Entry::Assign(..)));
         let updates: Vec<HeldUpdate> = entries
             .iter()
-            .map(|(_, update, _)| update.clone())
+            .map(|entry| match entry {
+                Entry::ReEstimate(_, update, _) | Entry::Assign(_, update, _) => update.clone(),
+            })
             .collect();
         let answered = store.update_many(&source, &updates);
-        for (at, (index, update, mut summary)) in entries.into_iter().enumerate() {
+        for (at, entry) in entries.into_iter().enumerate() {
             let answer = answered.as_ref().ok().and_then(|answers| answers.get(at));
             let (word, error) = match (&answered, answer) {
                 (Err(error), _) => ("store-refused".to_owned(), Some(error.to_string())),
@@ -700,63 +1066,304 @@ fn re_estimates(
                         "written" => None,
                         "version-moved" => Some(format!(
                             "{} moved to version {} since it was read, so nothing was written over the change",
-                            update.item,
+                            answer.item,
                             answer.current_version.clone().unwrap_or_default()
                         )),
-                        "held" => Some(format!(
-                            "{} no longer holds the priority it was read at, so nothing was written",
-                            update.item
-                        )),
+                        "held" => Some(match &entry {
+                            Entry::Assign(..) => format!(
+                                "{} is no longer assigned to exactly whom onefollowup last assigned, so a person's assignment stands and nothing was written",
+                                answer.item
+                            ),
+                            Entry::ReEstimate(..) => format!(
+                                "{} no longer holds the priority it was read at, so nothing was written",
+                                answer.item
+                            ),
+                        }),
                         _ => Some(answer.reason.clone().unwrap_or_default()),
                     },
                 ),
             };
-            match &error {
-                None => {
-                    let version = answer.and_then(|answer| answer.version.clone());
-                    let result = ReceiptResult {
-                        priority: Some(summary.priority),
-                        status: None,
-                        version,
-                    };
-                    let mut parts = Vec::new();
-                    if update.priority.is_some() {
-                        parts.push(WriteKind::Priority);
+            match entry {
+                Entry::ReEstimate(index, update, mut summary) => {
+                    match &error {
+                        None => {
+                            let version = answer.and_then(|answer| answer.version.clone());
+                            let result = ReceiptResult {
+                                priority: Some(summary.priority),
+                                status: None,
+                                version,
+                            };
+                            let mut parts = Vec::new();
+                            if update.priority.is_some() {
+                                parts.push(WriteKind::Priority);
+                            }
+                            parts.push(WriteKind::Content);
+                            parts.push(WriteKind::Metadata);
+                            summary.writes = parts
+                                .into_iter()
+                                .map(|write| ReEstimateWrite {
+                                    result: Some(result.clone()),
+                                    write,
+                                })
+                                .collect();
+                        }
+                        Some(message) => {
+                            summary.error = Some(ReceiptError {
+                                kind: word.clone(),
+                                message: message.clone(),
+                            });
+                        }
                     }
-                    parts.push(WriteKind::Content);
-                    parts.push(WriteKind::Metadata);
-                    summary.writes = parts
-                        .into_iter()
-                        .map(|write| ReEstimateWrite {
-                            result: Some(result.clone()),
-                            write,
-                        })
-                        .collect();
+                    answers.push(
+                        index,
+                        Receipt {
+                            batch: batch.batch.clone(),
+                            ticket: None,
+                            card: Some(update.item.clone()),
+                            outcome: Outcome::ReEstimate(summary),
+                        },
+                        outcome(
+                            index,
+                            StagedOp::ReEstimate,
+                            Some(update.item.clone()),
+                            &word,
+                            error,
+                        ),
+                    );
                 }
-                Some(message) => {
-                    summary.error = Some(ReceiptError {
-                        kind: word.clone(),
-                        message: message.clone(),
-                    });
+                Entry::Assign(index, _, assignment) => {
+                    let (action, word) = match word.as_str() {
+                        "written" => (AssignAction::Written, "written".to_owned()),
+                        "held" => (AssignAction::Held, "assignee-held".to_owned()),
+                        _ => (AssignAction::Failed, word),
+                    };
+                    answers.push(
+                        index,
+                        Receipt {
+                            batch: batch.batch.clone(),
+                            ticket: assignment.ticket.clone(),
+                            card: Some(assignment.item.clone()),
+                            outcome: Outcome::Assign(AssignOutcome {
+                                assignee: assignment.person.clone(),
+                                when: assignment.recorded.clone().into_iter().collect(),
+                                action,
+                                error: error.as_ref().map(|message| ReceiptError {
+                                    kind: word.clone(),
+                                    message: message.clone(),
+                                }),
+                            }),
+                        },
+                        outcome(
+                            index,
+                            StagedOp::Assign,
+                            Some(assignment.item.clone()),
+                            &word,
+                            error,
+                        ),
+                    );
                 }
             }
-            receipts.push((
-                index,
-                Receipt {
-                    batch: batch.batch.clone(),
-                    ticket: None,
-                    card: Some(update.item.clone()),
-                    outcome: Outcome::ReEstimate(summary),
-                },
-            ));
-            outcomes.push(outcome(
-                index,
-                StagedOp::ReEstimate,
-                Some(update.item.clone()),
-                &word,
-                error,
-            ));
         }
+    }
+}
+
+/// An existing item's assignee as its `update-many` writes it: the one person, held to the
+/// people onefollowup last wrote there — none, when it never assigned it — and its record
+/// naming that person once it lands.
+fn assign_entry(batch: &Batch<'_>, assignment: Assignment) -> Entry {
+    let mut record = assignment.record.clone();
+    record.board_assignee = Some(assignment.person.clone());
+    Entry::Assign(
+        assignment.index,
+        HeldUpdate {
+            item: assignment.item.clone(),
+            if_version: None,
+            body: None,
+            priority: None,
+            when_priority: Vec::new(),
+            metadata: BTreeMap::from([(batch.record_key(), ticket::record_value(&record))]),
+            assignee: Some(assignment.person.clone()),
+            when_assignees: Some(assignment.recorded.clone().into_iter().collect()),
+        },
+        Box::new(assignment),
+    )
+}
+
+/// The batch's edges, derived and asserted, each written once: every parent in one
+/// `task parent set-many`, every link in one `task link add-many`, and each receipted — one
+/// whose end has no item, its ticket's copy not having landed, receipted without a write.
+#[allow(
+    clippy::too_many_lines,
+    reason = "one pass: resolve each edge, send per kind of store, receipt each answer"
+)]
+fn edges(publishing: &Publishing<'_, '_>, answers: &mut Answers) {
+    let Publishing {
+        batch,
+        state,
+        outbox,
+        bound,
+        graph,
+        store,
+        cards,
+        ..
+    } = publishing;
+    struct Sending {
+        index: usize,
+        relation: String,
+        store: RelationStore,
+        from: String,
+        to: String,
+        derived: bool,
+        write: Option<EdgeWrite>,
+    }
+    let mut sending: Vec<Sending> = Vec::new();
+    let mut seen: Vec<(String, String, String)> = Vec::new();
+    for edge in &graph.edges {
+        let Some(relation) = graph.relation(batch, &edge.relation) else {
+            continue;
+        };
+        let index = edge.asserted.unwrap_or_else(|| match &edge.from {
+            End::Ticket(slug) => {
+                let key = batch.ticket_key(slug);
+                outbox
+                    .writes
+                    .iter()
+                    .position(
+                        |write| matches!(write, StagedWrite::Copy { ticket, .. } if *ticket == key),
+                    )
+                    .unwrap_or(outbox.writes.len())
+            }
+            End::Item(_) => outbox.writes.len(),
+        });
+        let from = item_of(state, bound, cards, &edge.from);
+        let to = item_of(state, bound, cards, &edge.to);
+        let write = match (from, to) {
+            (Some(from), Some(to)) => {
+                let identity = (relation.name.clone(), from.clone(), to.clone());
+                if seen.contains(&identity) {
+                    continue;
+                }
+                seen.push(identity);
+                Some(EdgeWrite {
+                    from,
+                    to,
+                    link_type: relation.name.clone(),
+                })
+            }
+            _ => None,
+        };
+        sending.push(Sending {
+            index,
+            relation: relation.name.clone(),
+            store: relation.store,
+            from: relations::spelled(batch, &edge.from),
+            to: relations::spelled(batch, &edge.to),
+            derived: edge.asserted.is_none(),
+            write,
+        });
+    }
+    let parents: Vec<EdgeWrite> = sending
+        .iter()
+        .filter(|one| one.store == RelationStore::Parent)
+        .filter_map(|one| one.write.clone())
+        .collect();
+    let links: Vec<EdgeWrite> = sending
+        .iter()
+        .filter(|one| one.store == RelationStore::Link)
+        .filter_map(|one| one.write.clone())
+        .collect();
+    let parents_answered = (!parents.is_empty()).then(|| store.set_parents(&parents));
+    let links_answered = (!links.is_empty()).then(|| store.add_links(&links));
+    let (mut parent_at, mut link_at) = (0, 0);
+    for one in sending {
+        let (card, to_card, action, error) = match &one.write {
+            None => (
+                None,
+                None,
+                EdgeAction::Failed,
+                Some(ReceiptError {
+                    kind: "endpoint-not-written".to_owned(),
+                    message: format!(
+                        "the edge {} -> {} has an end whose ticket's copy did not land, so there is no item to join; it is written when that copy lands",
+                        one.from, one.to
+                    ),
+                }),
+            ),
+            Some(write) => {
+                let (answered, at) = match one.store {
+                    RelationStore::Parent => (&parents_answered, &mut parent_at),
+                    RelationStore::Link => (&links_answered, &mut link_at),
+                };
+                let answer = match answered {
+                    Some(Ok(answers)) => Ok(answers.get(*at).cloned()),
+                    Some(Err(error)) => Err(error.to_string()),
+                    None => Ok(None),
+                };
+                *at += 1;
+                let (action, error) = match answer {
+                    Err(message) => (
+                        EdgeAction::Failed,
+                        Some(ReceiptError {
+                            kind: "store-refused".to_owned(),
+                            message,
+                        }),
+                    ),
+                    Ok(None) => (
+                        EdgeAction::Failed,
+                        Some(ReceiptError {
+                            kind: "unanswered".to_owned(),
+                            message: "the edge batch answered nothing for this edge".to_owned(),
+                        }),
+                    ),
+                    Ok(Some(answer)) => match answer.outcome.as_str() {
+                        "written" => (EdgeAction::Written, None),
+                        "exists" | "unchanged" => (EdgeAction::Exists, None),
+                        other => (
+                            EdgeAction::Failed,
+                            Some(ReceiptError {
+                                kind: other.to_owned(),
+                                message: answer.reason.clone().unwrap_or_else(|| other.to_owned()),
+                            }),
+                        ),
+                    },
+                };
+                (
+                    Some(write.from.clone()),
+                    Some(write.to.clone()),
+                    action,
+                    error,
+                )
+            }
+        };
+        let word = match (&action, &error) {
+            (_, Some(error)) => error.kind.clone(),
+            (EdgeAction::Exists, None) => "exists".to_owned(),
+            _ => "written".to_owned(),
+        };
+        let message = error.as_ref().map(|error| error.message.clone());
+        answers.push(
+            one.index,
+            Receipt {
+                batch: batch.batch.clone(),
+                ticket: None,
+                card: card.clone(),
+                outcome: Outcome::Relate(RelateOutcome {
+                    relation: one.relation,
+                    store: match one.store {
+                        RelationStore::Parent => "parent",
+                        RelationStore::Link => "link",
+                    }
+                    .to_owned(),
+                    from: one.from,
+                    to: one.to,
+                    to_card,
+                    derived: one.derived,
+                    action,
+                    error,
+                }),
+            },
+            outcome(one.index, StagedOp::Relate, card, &word, message),
+        );
     }
 }
 
@@ -789,13 +1396,7 @@ fn re_estimate_refused(
     }
 }
 
-fn comments(
-    batch: &Batch<'_>,
-    outbox: &Outbox,
-    store: &Store,
-    receipts: &mut Vec<(usize, Receipt)>,
-    outcomes: &mut Vec<PublishOutcome>,
-) {
+fn comments(batch: &Batch<'_>, outbox: &Outbox, store: &Store, answers: &mut Answers) {
     let mut by_source: BTreeMap<String, Vec<(usize, CommentPost, String)>> = BTreeMap::new();
     for (index, write) in outbox.writes.iter().enumerate() {
         let StagedWrite::Comment {
@@ -859,14 +1460,11 @@ fn comments(
                     }),
                 }),
             };
-            receipts.push((index, receipt));
-            outcomes.push(outcome(
+            answers.push(
                 index,
-                StagedOp::Comment,
-                Some(post.item),
-                &word,
-                error,
-            ));
+                receipt,
+                outcome(index, StagedOp::Comment, Some(post.item), &word, error),
+            );
         }
     }
 }

@@ -69,7 +69,7 @@ pub fn latest(journal: &ReceiptJournal, after: usize) -> BTreeMap<String, String
                     .as_ref()
                     .and_then(|result| result.version.clone())
             }),
-            Outcome::Comment(_) => None,
+            Outcome::Comment(_) | Outcome::Relate(_) | Outcome::Assign(_) => None,
         };
         if let Some(version) = version {
             latest.insert(card.clone(), version);

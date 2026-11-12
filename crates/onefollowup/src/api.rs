@@ -22,6 +22,7 @@ use crate::formats::outbox::StagedWrite;
 use crate::formats::{HeldPriority, Level};
 use crate::store::StoreOperation;
 use crate::verify;
+pub use crate::verify::relations::{Absent, MissingLink};
 
 fn no_operations(operations: &[StoreOperation]) -> bool {
     operations.is_empty()
@@ -85,6 +86,13 @@ pub struct TicketValidated {
     pub sound: bool,
     /// Each rule it breaks.
     pub problems: Vec<String>,
+    /// Each edge its fields derive whose target does not exist: the ticket to write and
+    /// stage, which `check` requires.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub absent_targets: Vec<Absent>,
+    /// Each store operation it made.
+    #[serde(default, skip_serializing_if = "no_operations")]
+    pub store_operations: Vec<StoreOperation>,
 }
 
 /// One comment on a destination item.
@@ -219,6 +227,8 @@ pub enum StagedOp {
     ReEstimate,
     /// An edge.
     Relate,
+    /// An item's assignee, written with the batch's other writes.
+    Assign,
 }
 
 /// One staged write's outcome.
@@ -449,6 +459,14 @@ pub struct Prepared {
     pub answers: PathBuf,
     /// The verifying agent's rendered task.
     pub task_template: PathBuf,
+    /// Each edge the batch's tickets' fields derive whose target does not exist: the ticket
+    /// to write and stage.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub absent_targets: Vec<Absent>,
+    /// Each link one end of which no longer holds it: restored when the batch states that
+    /// edge again.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub missing_links: Vec<MissingLink>,
     /// Each store operation it made.
     #[serde(default, skip_serializing_if = "no_operations")]
     pub store_operations: Vec<StoreOperation>,
@@ -564,23 +582,29 @@ pub struct TicketCommentArgs {
     /// The batch.
     #[arg(long, value_name = "ID")]
     pub batch: String,
-    /// The item, qualified.
-    #[arg(long, value_name = "ITEM")]
-    pub item: String,
-    /// The root cause the evidence is for.
+    /// The item, qualified; `None` with `--field` is the most specific existing ticket the
+    /// fields name.
+    #[arg(long, value_name = "ITEM", required_unless_present = "fields")]
+    pub item: Option<String>,
+    /// The root cause the evidence is for; `None` is the item's own.
     #[arg(long, value_name = "ROOT_CAUSE")]
-    pub root_cause: String,
+    pub root_cause: Option<String>,
+    /// A declared field the evidence observed, and its value; repeat for each.
+    #[arg(long = "field", value_name = "NAME=VALUE", value_parser = key_value)]
+    pub fields: Vec<String>,
     /// The evidence; `None` reads it from stdin.
     #[arg(skip)]
     pub evidence: Option<String>,
 }
 
-/// Stage an evidence comment into the batch's outbox.
+/// Stage an evidence comment into the batch's outbox — given the declared fields observed,
+/// on the most specific existing ticket they name.
 ///
 /// # Errors
 ///
 /// A batch not prepared, a root cause that is not a slug, an item the batch did not
-/// read or that is its own, or empty evidence: nothing is staged.
+/// read or that is its own, empty evidence, or an item less specific than the existing
+/// ticket the fields name: nothing is staged.
 pub fn ticket_comment(settings: &Settings, args: TicketCommentArgs) -> Result<Staged, Error> {
     verify::tools::comment(settings, args)
 }
@@ -625,13 +649,15 @@ pub struct TicketRelateArgs {
     pub to: String,
 }
 
-/// Stage an edge into the batch's outbox.
+/// Stage an edge of a relation the agent decides into the batch's outbox.
 ///
 /// # Errors
 ///
-/// [`Error::NotImplemented`] in this release.
-pub fn ticket_relate(_settings: &Settings, _args: TicketRelateArgs) -> Result<Staged, Error> {
-    not_implemented("ticket relate")
+/// A batch not prepared, an unknown relation, one decided by matching fields, ends of the
+/// wrong kinds, or a second edge from one ticket of a many-to-one relation: nothing is
+/// staged.
+pub fn ticket_relate(settings: &Settings, args: TicketRelateArgs) -> Result<Staged, Error> {
+    verify::tools::relate(settings, args)
 }
 
 /// The arguments of a verb over one batch.

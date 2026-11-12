@@ -6,6 +6,7 @@
 //! - [`decide`] — what a ticket's copy, or an item's re-estimate, would write.
 //! - [`routes`], [`command`], [`template`] — routes, configured commands and templates.
 //! - [`journal`] — what the receipt journal says.
+//! - [`relations`] — the batch's edges, held to the configured relations.
 
 pub mod check;
 pub mod command;
@@ -15,6 +16,7 @@ pub mod draft;
 pub mod journal;
 pub mod prepare;
 pub mod publish;
+pub mod relations;
 pub mod routes;
 pub mod settle;
 pub mod template;

@@ -12,6 +12,7 @@ use crate::formats::outbox::{Outbox, StagedWrite};
 use crate::formats::ticket::TicketRecord;
 use crate::formats::{Level, Versioned};
 use crate::verify::context::Batch;
+use crate::verify::relations::{End, Graph};
 use crate::verify::routes::{self, Facts};
 use crate::verify::ticket::{self, Estimated, TicketFile};
 
@@ -56,6 +57,10 @@ pub struct Decision {
     pub record: TicketRecord,
     /// The body it is copied with.
     pub body: String,
+    /// The batch's edges from it: each relation and its `to` end.
+    pub edges: Vec<(String, End)>,
+    /// The one person its route assigns it to.
+    pub assignee: Option<String>,
 }
 
 /// A priority word read as a configured priority.
@@ -139,16 +144,23 @@ pub fn read_of<'a>(state: &'a BatchState, item: &str) -> Option<&'a Read> {
 /// landed copy recorded.
 pub type Bound = BTreeMap<String, (String, Option<String>)>;
 
-/// Decide `ticket`'s copy.
+/// Decide `ticket`'s copy, its estimate taking what its relations roll up and its route
+/// matched on its edges too.
 ///
 /// # Errors
 ///
 /// A ticket of an unconfigured kind, or one whose facts estimate nothing.
+#[allow(
+    clippy::too_many_lines,
+    reason = "one decision: the card, the estimate, the route, then what each sets"
+)]
 pub fn decide(
     batch: &Batch<'_>,
     state: &BatchState,
     bound: &Bound,
     latest: &BTreeMap<String, String>,
+    graph: &Graph,
+    outbox: &Outbox,
     ticket: &TicketFile,
 ) -> Result<Decision, String> {
     let config = batch.config;
@@ -183,7 +195,26 @@ pub fn decide(
     let occurrences = read
         .as_ref()
         .map_or(1, |read| occurrences(batch, read, &record, &empty));
-    let estimate = ticket::estimate(config, &kind, &ticket.body, record.frequency, occurrences)?;
+    let end = End::Ticket(ticket.slug.clone());
+    let (estimate, occurrences) = if graph.edges.is_empty() && graph.held.is_empty() {
+        (
+            ticket::estimate(config, &kind, &ticket.body, record.frequency, occurrences)?,
+            occurrences,
+        )
+    } else {
+        graph.rolled(
+            batch,
+            state,
+            outbox,
+            bound,
+            &end,
+            &kind,
+            &ticket.body,
+            record.frequency,
+            occurrences,
+        )?
+    };
+    let counts = graph.counts(batch, state, bound, &end);
     let severity = ticket::severity(&ticket.body, &config.rubric);
     let mut paths: Vec<String> = Vec::new();
     for draft in &record.drafts {
@@ -202,6 +233,7 @@ pub fn decide(
             severity: severity.as_deref(),
             repository: &record.repository,
             paths: &paths,
+            relations: &counts,
         },
     )
     .map(|(at, route)| (at, route.clone()));
@@ -250,6 +282,19 @@ pub fn decide(
         Some(line) => ticket::with_estimate_line(&ticket.body, line, &config.rubric),
         None => ticket.body.clone(),
     };
+    // A new ticket is copied with the person its route assigns it; a bound one keeps what its
+    // item records, the batch's `update-many` writing any other.
+    let assignee = set.assignee.clone();
+    record.board_assignee = match &read {
+        None => assignee.clone(),
+        Some(read) => item_record(batch, read).and_then(|held| held.board_assignee),
+    };
+    let edges = graph
+        .edges
+        .iter()
+        .filter(|edge| edge.from == end)
+        .map(|edge| (edge.relation.clone(), edge.to.clone()))
+        .collect();
     Ok(Decision {
         slug: ticket.slug.clone(),
         kind,
@@ -270,11 +315,13 @@ pub fn decide(
         paths,
         record,
         body,
+        edges,
+        assignee,
     })
 }
 
-/// The estimate an item's re-estimate writes, from prepare's read of it and this batch's
-/// staged comments on it.
+/// The estimate an item's re-estimate writes, from prepare's read of it, this batch's
+/// staged comments on it, and what its relations roll up into it.
 ///
 /// # Errors
 ///
@@ -283,6 +330,8 @@ pub fn re_estimate(
     batch: &Batch<'_>,
     state: &BatchState,
     outbox: &Outbox,
+    bound: &Bound,
+    graph: &Graph,
     item: &str,
 ) -> Result<(Estimated, u64, TicketRecord, Read), String> {
     let read = read_of(state, item)
@@ -309,12 +358,29 @@ pub fn re_estimate(
         format!("`{item}` records the kind `{kind_name}`, which is not configured")
     })?;
     let count = occurrences(batch, &read, &record, outbox);
-    let estimated = ticket::estimate(
-        batch.config,
-        kind,
-        &read.item.content,
-        record.frequency,
-        count,
-    )?;
+    let (estimated, count) = if graph.edges.is_empty() && graph.held.is_empty() {
+        (
+            ticket::estimate(
+                batch.config,
+                kind,
+                &read.item.content,
+                record.frequency,
+                count,
+            )?,
+            count,
+        )
+    } else {
+        graph.rolled(
+            batch,
+            state,
+            outbox,
+            bound,
+            &End::Item(item.to_owned()),
+            kind,
+            &read.item.content,
+            record.frequency,
+            count,
+        )?
+    };
     Ok((estimated, count, record, read))
 }

@@ -20,8 +20,7 @@ use onetaskgraph_core::{
     BATCH_SCHEMA_VERSION, Body, CommentBatch, CommentBatchItem, CopyAction, CopyConditions,
     CopyItems, CopyRequest, CopyScope, Engine, Environment, FindIn, FindQuery, FindRequest,
     GlobalId, LinkBatch, LinkItem, OtherEnd, ParentBatch, ParentEdge, ProjectCreate, Qualified,
-    RELATIONS_SCHEMA_VERSION, SourceState, StatusPolicy, TaskCreate, UpdateBatch,
-    UpdateBatchItem,
+    RELATIONS_SCHEMA_VERSION, SourceState, StatusPolicy, TaskCreate, UpdateBatch, UpdateBatchItem,
 };
 use onetaskgraph_plugin_api::{
     Classification, LinkDirection, Location, MetadataKey, NativeId, Priority, Repository,
@@ -381,18 +380,20 @@ pub struct HeldUpdate {
 }
 
 /// One task's relations as its source holds them.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, serde::Deserialize)]
 pub struct ItemRelations {
     /// The task, qualified.
     pub item: String,
     /// Its parent, qualified.
     pub parent: Option<String>,
+    /// Its children, qualified.
+    pub children: Vec<String>,
     /// Every link it holds.
     pub links: Vec<HeldLink>,
 }
 
 /// One link as one endpoint holds it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, serde::Deserialize)]
 pub struct HeldLink {
     /// The link's type name.
     pub link_type: String,
@@ -1053,6 +1054,7 @@ impl Store {
             .map(|item| ItemRelations {
                 item: item.item.to_string(),
                 parent: item.parent.map(|parent| parent.to_string()),
+                children: item.children.iter().map(ToString::to_string).collect(),
                 links: item
                     .links
                     .into_iter()

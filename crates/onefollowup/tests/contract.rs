@@ -73,6 +73,8 @@ fn examples() -> BTreeMap<&'static str, Value> {
                 inputs: 1,
                 answers: PathBuf::from(format!("dispositions/{BATCH}.json")),
                 task_template: PathBuf::from(format!("tasks/{BATCH}/task.md")),
+                absent_targets: Vec::new(),
+                missing_links: Vec::new(),
                 store_operations: Vec::new(),
             })),
         ),
@@ -87,6 +89,8 @@ fn examples() -> BTreeMap<&'static str, Value> {
                     "the ticket records the field `client`, which `fields` does not declare"
                         .to_owned(),
                 ],
+                absent_targets: Vec::new(),
+                store_operations: Vec::new(),
             })),
         ),
         (

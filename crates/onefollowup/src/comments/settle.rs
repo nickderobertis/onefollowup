@@ -28,7 +28,6 @@ use crate::comments::check::{self, Account};
 use crate::comments::{Pass, Snapshotted, instant, spelled};
 use crate::config::{PriorityModel, RelationStore, Rollup, Settings, StatusRole};
 use crate::error::Error;
-use crate::formats::Level;
 use crate::formats::batch::Read;
 use crate::formats::gathering::LastWritten;
 use crate::formats::markers::Reply;
@@ -36,6 +35,7 @@ use crate::formats::outbox::Outbox;
 use crate::formats::pending::{Pending, PendingEntry, PendingState, PendingWrite, WritePart};
 use crate::formats::ticket::TicketRecord;
 use crate::formats::watermark::Watermark;
+use crate::formats::{Level, Versioned as _};
 use crate::store::{BatchAnswer, HeldUpdate, ReadItem, StoreItem};
 use crate::verify::context::Batch;
 use crate::verify::decide::{self, priority_of};
@@ -624,29 +624,24 @@ fn plan(
     });
     let mut record = record;
     record.priority_estimate = estimated.level;
-    let held_now = priority_of(&item.priority);
-    let stored = record
-        .board_estimate
-        .map_or(crate::config::Priority::None, |level| {
-            priority_of(level_word(level))
-        });
-    let following = held_now == stored;
-    if following {
-        record.board_estimate = Some(estimated.level);
-    }
+    // The item's priority follows the estimate only while it holds what onefollowup last
+    // wrote there, as the item's own record says: a changed ticket's file never records it.
+    let owned = owned_priority(pass, &item);
+    let following = owned.is_some();
+    record.board_estimate = if following {
+        Some(estimated.level)
+    } else {
+        owned_estimate(pass, &item)
+    };
     let withdraw = changed.is_some_and(crate::verify::ticket::TicketFile::withdrawn);
     let mut status = None;
     if withdraw {
-        let category = &item.status.category;
-        if batch.protected(category) || batch.role_of(category) == Some(StatusRole::Cancelled) {
+        if let Some(why) = undrawable(pass, &item) {
             return Err(refuse(
                 PendingState::Withheld,
                 PendingWrite::Withdrawal,
                 item.version.clone(),
-                format!(
-                    "{issue} is at `{}`, a status a person decided on, so the batch's withdrawal of it was not written",
-                    item.status.name
-                ),
+                why,
             ));
         }
         status = Some(batch.category_of(StatusRole::Cancelled));
@@ -740,6 +735,43 @@ fn plan(
         return Err(Box::new(entry));
     }
     Ok(Some(planned))
+}
+
+/// The estimate the item's record says onefollowup last wrote as its priority.
+fn owned_estimate(pass: &Pass<'_>, item: &StoreItem) -> Option<Level> {
+    let record = item.metadata.get(&pass.record_key())?;
+    TicketRecord::parse(&record.to_string())
+        .ok()?
+        .board_estimate
+}
+
+/// The priority the item holds, when it is still the one onefollowup last wrote there — the
+/// guard a re-estimate's write holds to — and `None` when a person set it since.
+fn owned_priority(pass: &Pass<'_>, item: &StoreItem) -> Option<String> {
+    let stored = owned_estimate(pass, item).map_or(crate::config::Priority::None, |level| {
+        priority_of(level_word(level))
+    });
+    (priority_of(&item.priority) == stored).then(|| item.priority.clone())
+}
+
+/// Why a withdrawal of the item is not written, when it is not: it is at a status a person
+/// decided on, or already withdrawn.
+fn undrawable(pass: &Pass<'_>, item: &StoreItem) -> Option<String> {
+    let category = &item.status.category;
+    let decided = pass
+        .config
+        .statuses
+        .iter()
+        .into_iter()
+        .any(|(role, mapping)| {
+            mapping.category == *category && (mapping.protected || role == StatusRole::Cancelled)
+        });
+    decided.then(|| {
+        format!(
+            "{} is at `{}`, a status a person decided on, so the batch's withdrawal of it was not written",
+            item.id, item.status.name
+        )
+    })
 }
 
 /// The estimate of `issue` with its comments' occurrences, taking what the relations a
@@ -901,6 +933,26 @@ fn recover(settling: &Settling<'_, '_>, mut entry: PendingEntry) -> Recovered {
             "{} still differs from what onefollowup last wrote to it ({what}), so its write stays withheld; a person decides whether it stands",
             entry.item
         ));
+        return Recovered::Kept(Box::new(entry));
+    }
+    // A person's decision since the write was withheld keeps the whole write withheld: a
+    // priority they set, which the retry's guard would otherwise take as its own, or a status
+    // they protected the item at.
+    let decided = if entry.intended.contains_key("priority") && owned_priority(pass, item).is_none()
+    {
+        Some(format!(
+            "{} holds a priority a person set since its write was withheld, so the write stays withheld; a person decides whether it stands",
+            entry.item
+        ))
+    } else if entry.intended.contains_key("status") {
+        undrawable(pass, item)
+    } else {
+        None
+    };
+    if let Some(why) = decided {
+        entry.state = PendingState::Withheld;
+        entry.seen_version.clone_from(&item.version);
+        entry.error = Some(why);
         return Recovered::Kept(Box::new(entry));
     }
     let text = |key: &str| {

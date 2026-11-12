@@ -15,6 +15,7 @@ mod duplicates;
 mod edges;
 mod journey;
 mod outstanding;
+mod pending_recovery;
 mod refusals;
 mod refused_accounts;
 mod relations;

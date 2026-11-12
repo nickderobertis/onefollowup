@@ -71,8 +71,8 @@ impl Outcome {
 pub struct RelateOutcome {
     /// The relation's name.
     pub relation: String,
-    /// How the store holds it: `parent` or `link`.
-    pub store: String,
+    /// How the store holds it.
+    pub store: EdgeStore,
     /// The `from` end as the batch names it: its ticket, or an item.
     pub from: String,
     /// The `to` end as the batch names it.
@@ -86,6 +86,16 @@ pub struct RelateOutcome {
     /// Why it did not land.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<ReceiptError>,
+}
+
+/// How the store holds an edge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum EdgeStore {
+    /// The store's parent relation.
+    Parent,
+    /// A typed link named after the relation.
+    Link,
 }
 
 /// What an edge's write did.

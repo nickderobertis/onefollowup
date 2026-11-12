@@ -890,7 +890,7 @@ pub fn missing_links(state: &BatchState) -> Vec<MissingLink> {
         .flat_map(|item| {
             item.links
                 .iter()
-                .filter(|link| link.other_end == "missing")
+                .filter(|link| link.other_end == crate::store::LinkEnd::Missing)
                 .map(|link| MissingLink {
                     item: item.item.clone(),
                     relation: link.link_type.clone(),

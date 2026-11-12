@@ -401,9 +401,20 @@ pub struct HeldLink {
     pub outgoing: bool,
     /// The other endpoint, qualified.
     pub other: String,
-    /// Whether the other end holds the link too: `present`, `missing` (read, and it does
-    /// not) or `unread`.
-    pub other_end: String,
+    /// Whether the other end holds the link too.
+    pub other_end: LinkEnd,
+}
+
+/// Whether a link's other end holds it too.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum LinkEnd {
+    /// It does.
+    Present,
+    /// It was read, and does not: a whole-body rewrite there lost it.
+    Missing,
+    /// It was not among the items read.
+    Unread,
 }
 
 /// One edge of a many-edge write: a child's parent, or a typed link.
@@ -1063,11 +1074,10 @@ impl Store {
                         outgoing: link.direction == LinkDirection::Out,
                         other: link.other.to_string(),
                         other_end: match link.other_end {
-                            OtherEnd::Present => "present",
-                            OtherEnd::Missing => "missing",
-                            OtherEnd::Unread => "unread",
-                        }
-                        .to_owned(),
+                            OtherEnd::Present => LinkEnd::Present,
+                            OtherEnd::Missing => LinkEnd::Missing,
+                            OtherEnd::Unread => LinkEnd::Unread,
+                        },
                     })
                     .collect(),
             })

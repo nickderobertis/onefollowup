@@ -24,7 +24,7 @@ use crate::formats::batch::{BatchState, PublishRecord};
 use crate::formats::outbox::{Outbox, StagedWrite};
 use crate::formats::receipts::{
     AssignAction, AssignOutcome, CommentOutcome, Condition, CopyAction, CopyOutcome, EdgeAction,
-    Outcome, ReEstimateOutcome, ReEstimateWrite, Receipt, ReceiptError, ReceiptResult,
+    EdgeStore, Outcome, ReEstimateOutcome, ReEstimateWrite, Receipt, ReceiptError, ReceiptResult,
     ReceiptStatus, RelateOutcome, WriteKind,
 };
 use crate::formats::ticket::{Edge as RecordEdge, TicketRecord};
@@ -1368,10 +1368,9 @@ fn edges(publishing: &Publishing<'_, '_>, answers: &mut Answers) {
                 outcome: Outcome::Relate(RelateOutcome {
                     relation: one.relation,
                     store: match one.store {
-                        RelationStore::Parent => "parent",
-                        RelationStore::Link => "link",
-                    }
-                    .to_owned(),
+                        RelationStore::Parent => EdgeStore::Parent,
+                        RelationStore::Link => EdgeStore::Link,
+                    },
                     from: one.from,
                     to: one.to,
                     to_card,

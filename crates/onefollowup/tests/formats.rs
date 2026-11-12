@@ -17,7 +17,7 @@ use onefollowup::formats::markers::{
 use onefollowup::formats::outbox::{Outbox, StagedWrite};
 use onefollowup::formats::pending::Pending;
 use onefollowup::formats::receipts::{
-    AssignAction, AssignOutcome, EdgeAction, Outcome, ReceiptJournal, RelateOutcome,
+    AssignAction, AssignOutcome, EdgeAction, EdgeStore, Outcome, ReceiptJournal, RelateOutcome,
 };
 use onefollowup::formats::responses::Responses;
 use onefollowup::formats::snapshot::{Launched, Snapshot};
@@ -344,7 +344,7 @@ fn an_edges_and_an_assignees_receipt_lines_round_trip_within_schema_3() {
         edges.iter().map(|edge| edge.action).collect::<Vec<_>>(),
         [EdgeAction::Written, EdgeAction::Exists, EdgeAction::Failed]
     );
-    assert!(edges[0].derived && edges[0].store == "parent");
+    assert!(edges[0].derived && edges[0].store == EdgeStore::Parent);
     assert!(
         journal.receipts[2].card.is_none(),
         "an unwritten edge names no card"

@@ -7,6 +7,7 @@ mod answering;
 mod budget;
 mod budget_runner;
 mod comment_adoption;
+mod comment_budgets;
 mod comments;
 mod configuration;
 mod duplicates;

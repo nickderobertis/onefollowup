@@ -1488,3 +1488,139 @@ fn a_derived_link_across_two_destinations_finds_its_target_on_the_other_one() {
         "{alert}"
     );
 }
+
+#[test]
+#[allow(clippy::too_many_lines, reason = "one journey over two batches")]
+fn a_third_edge_staged_in_a_later_batch_sets_the_existing_root_causes_route_priority_and_keeps_its_labels()
+ {
+    let mut world = example_world();
+    let d1 = world.draft(BATCH, "two symptoms of one lease", &[], "Two.\n");
+    world.ok("prepare", &["prepare", "--batch", BATCH], "");
+    world.ticket(
+        BATCH,
+        &kinded("stale-cache-lease", &[&d1], "root-cause", &[])
+            .severities("medium", "low", "restart"),
+    );
+    world.ok(
+        "agent",
+        &["ticket", "copy", "--batch", BATCH, "stale-cache-lease"],
+        "",
+    );
+    for signature in ["TIMEOUT-42", "PAY-7"] {
+        let slug = signature.to_lowercase();
+        world.ticket(
+            BATCH,
+            &kinded(&slug, &[&d1], "symptom", &[("error_signature", signature)])
+                .severities("medium", "low", "retry"),
+        );
+        world.ok("agent", &["ticket", "copy", "--batch", BATCH, &slug], "");
+        world.ok(
+            "agent",
+            &[
+                "ticket",
+                "relate",
+                "--batch",
+                BATCH,
+                "--relation",
+                "caused-by",
+                "--from",
+                &slug,
+                "--to",
+                "stale-cache-lease",
+            ],
+            "",
+        );
+    }
+    world.answer(
+        BATCH,
+        &[answer(
+            &d1,
+            "root-cause",
+            "filed",
+            &["stale-cache-lease"],
+            "Verified.",
+        )],
+    );
+    let checked = world.ok("check", &["check", "--batch", BATCH], "");
+    assert_eq!(checked["sound"], true, "{checked}");
+    world.ok("publish", &["publish", "--batch", BATCH], "");
+    world.ok("settle", &["settle", "--batch", BATCH], "");
+    let (cause, text) = filed_as(&world, "eng", "stale-cache-lease");
+    assert_eq!(
+        front(&text)["priority"],
+        "low",
+        "two edges match no route: {text}"
+    );
+    assert!(
+        !front(&text)["labels"].to_string().contains("widespread"),
+        "{text}"
+    );
+    // A person labels the root cause in between.
+    let native = cause.trim_start_matches("eng:");
+    world.edit_item(
+        "eng",
+        native,
+        "priority: low\n",
+        "priority: low\nlabels:\n- id: triaged\n  name: triaged\n",
+    );
+
+    // A later batch links a third symptom to the existing root cause.
+    let d2 = world.draft(LATER, "stale-cache-lease fails", &[], "A third symptom.\n");
+    world.ok("prepare", &["prepare", "--batch", LATER], "");
+    world.ticket(
+        LATER,
+        &kinded(
+            "disk-9",
+            &[&d2],
+            "symptom",
+            &[("error_signature", "DISK-9")],
+        )
+        .severities("medium", "low", "retry"),
+    );
+    world.ok("agent", &["ticket", "copy", "--batch", LATER, "disk-9"], "");
+    world.ok(
+        "agent",
+        &[
+            "ticket",
+            "relate",
+            "--batch",
+            LATER,
+            "--relation",
+            "caused-by",
+            "--from",
+            "disk-9",
+            "--to",
+            &cause,
+        ],
+        "",
+    );
+    world.answer(
+        LATER,
+        &[answer(&d2, "symptom", "filed", &["disk-9"], "Verified.")],
+    );
+    let checked = world.ok("check", &["check", "--batch", LATER], "");
+    assert_eq!(checked["sound"], true, "{checked}");
+    let published = world.ok("publish", &["publish", "--batch", LATER], "");
+    let text = world.read_item("eng", native);
+    assert_eq!(
+        front(&text)["priority"],
+        "high",
+        "widespread-root-cause's priority: {published}\n{text}"
+    );
+    let labels: Vec<String> = front(&text)["labels"]
+        .as_array()
+        .map(|labels| {
+            labels
+                .iter()
+                .filter_map(|one| one["name"].as_str().map(str::to_owned))
+                .collect()
+        })
+        .unwrap_or_default();
+    // A route's labels are a copy's to write: the existing item keeps exactly the labels it
+    // held, onetaskgraph's batched update holding no label write.
+    assert_eq!(
+        labels,
+        ["triaged"],
+        "its labels are as they were before the batch: {text}"
+    );
+}

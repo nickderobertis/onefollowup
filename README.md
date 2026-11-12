@@ -544,8 +544,12 @@ as `route-command-failed`. `relations` counts a relation's edges at either end o
 staged ones included. An existing item the batch re-estimates is matched too: its route's
 `command` runs before that item's write with the same document, its stdout's `priority` and
 `assignee` overriding the route's `set`, and a non-zero exit withholds that item's writes alone
-(its re-estimate, assignee and evidence comment), receipted `route-command-failed`. Labels and
-status are a copy's to write.
+(its re-estimate, assignee and evidence comment), receipted `route-command-failed`. A route's
+`labels`, like its `status_role`, are written only when its ticket is copied: an existing item
+keeps its labels unchanged, since onetaskgraph's batched update has no additive label update on
+an existing item (its `TaskUpdate` deliberately carries no labels). So an existing root cause a
+later batch's third edge makes `widespread-root-cause` takes the route's `high` priority, and
+not its `widespread` label.
 
 A ticket has **one assignee**, as a Linear issue does, written only to a source whose store
 configuration sets `config.assignees: true` — the destination, and the drafts source the copy
@@ -602,7 +606,9 @@ shown as a Linear `related` relation through the source's `link_types`. Rollups:
 counts its client-symptoms' occurrences; the root cause's estimate is no lower than its highest
 symptom's. A later draft for `TIMEOUT-42` and `acme` adds evidence to that client-symptom, the
 most specific ticket observed (`ticket comment --field error_signature=TIMEOUT-42 --field
-client=acme`). When a third symptom is linked, the root cause matches `widespread-root-cause`.
+client=acme`). When a third symptom is linked, the root cause matches `widespread-root-cause`;
+linked in a later batch, the existing root cause takes its `high` priority and keeps its labels
+(a route's labels are written when its ticket is copied).
 Where: everything on the Linear team `ENG`. A GitHub variant needs `sub_issues: parent` on a
 board of its own, since a parent there is a sub-issue.
 

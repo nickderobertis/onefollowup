@@ -1,0 +1,59 @@
+{
+  "schema": 2,
+  "listings": {
+    "followups": {
+      "watermark": "2026-11-01T11:58:00Z",
+      "comments": [
+        {
+          "item": "followups:item-42",
+          "id": "IC_kwDOA1001",
+          "url": "https://github.com/example/widgets/issues/42#issuecomment-1001",
+          "author": "alice",
+          "author_kind": "person",
+          "updated_at": "2026-11-01T11:00:00.123Z",
+          "version": "2026-11-01T11:00:00.123Z",
+          "body": "Seen again after a resize \u2014 caf\u00e9."
+        },
+        {
+          "item": "followups:item-42",
+          "id": "IC_kwDOA1002",
+          "url": null,
+          "author": "dependabot[bot]",
+          "author_kind": "bot",
+          "updated_at": "2026-11-01T11:05:00Z",
+          "version": "2026-11-01T11:05:00Z",
+          "body": "Bumps serde."
+        }
+      ]
+    }
+  },
+  "last_written": [
+    {
+      "item": "followups:item-42",
+      "batch": "nightly-2026-11-01",
+      "ticket": "layout-save-reads-size-twice",
+      "stored_as": "drafts:widgets-a-layout-save-reads-one-window-size",
+      "version": "md1|5343ea25",
+      "title": "widgets: a layout save reads one window size",
+      "content": "## Root cause\n\nWidgets loses a saved layout.\n",
+      "record": {
+        "schema": 14,
+        "root_cause": "layout-save-reads-size-twice",
+        "repository": "github.com/example/widgets",
+        "created_by_run": "nightly-2026-11-01",
+        "owning_runs": [
+          "nightly-2026-11-01"
+        ],
+        "drafts": [
+          "drafts:nightly-2026-11-01-layout-save"
+        ],
+        "basis": {
+          "github.com/example/widgets": "0123456789abcdef0123456789abcdef01234567"
+        },
+        "verified_at": "2026-11-01T11:30:00Z",
+        "host": "build-host-1",
+        "priority_estimate": "medium"
+      }
+    }
+  ]
+}

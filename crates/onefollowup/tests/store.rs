@@ -109,3 +109,15 @@ fn the_status_categories_are_onetaskgraphs() {
         assert!(!store::is_status_category(word), "{word}");
     }
 }
+
+#[test]
+fn the_store_a_snapshot_names_is_the_one_the_workspace_pins() {
+    let manifest = include_str!("../../../Cargo.toml");
+    let pinned = manifest
+        .lines()
+        .find(|line| line.starts_with("onetaskgraph-core = "))
+        .and_then(|line| line.split("version = \"=").nth(1))
+        .and_then(|rest| rest.split('"').next())
+        .expect("the workspace pins onetaskgraph-core exactly");
+    assert_eq!(store::STORE_LINE, format!("onetaskgraph {pinned}"));
+}

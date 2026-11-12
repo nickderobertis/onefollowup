@@ -17,6 +17,10 @@ const SHIPPED: &[(&str, &str)] = &[
         include_str!("../../defaults/task-template.md.j2"),
     ),
     (
+        "task-template/feedback.md.j2",
+        include_str!("../../defaults/task-template/feedback.md.j2"),
+    ),
+    (
         "task-template/ownership.md.j2",
         include_str!("../../defaults/task-template/ownership.md.j2"),
     ),

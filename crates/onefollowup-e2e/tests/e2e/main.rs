@@ -3,12 +3,15 @@
 //! run the agent's tools; and the budget runner every `budgets.yaml` entry names.
 
 mod adoption;
+mod answering;
 mod budget;
 mod budget_runner;
+mod comments;
 mod configuration;
 mod duplicates;
 mod examples;
 mod journey;
+mod outstanding;
 mod refusals;
 mod safeguards;
 mod telemetry;

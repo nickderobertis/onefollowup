@@ -4,8 +4,10 @@
 //! that), so anything the command line does, a Rust caller does by calling the function.
 //!
 //! The verify loop — [`draft`], [`prepare`], the agent's `ticket_*` tools, [`check`],
-//! [`publish`] and [`settle`] — and [`config_show`] and [`kinds`] are implemented; every
-//! other verb refuses with [`Error::NotImplemented`], after its arguments are parsed.
+//! [`publish`] and [`settle`] — the comment pass — [`comments_gather`],
+//! [`comments_launches`], [`comments_check`] and [`comments_settle`] — and [`config_show`]
+//! and [`kinds`] are implemented; every other verb refuses with [`Error::NotImplemented`],
+//! after its arguments are parsed.
 
 use std::path::PathBuf;
 
@@ -21,8 +23,8 @@ use crate::error::Error;
 use crate::formats::outbox::StagedWrite;
 use crate::formats::{HeldPriority, Level};
 use crate::store::StoreOperation;
-use crate::verify;
 pub use crate::verify::relations::{Absent, MissingLink};
+use crate::{comments, verify};
 
 fn no_operations(operations: &[StoreOperation]) -> bool {
     operations.is_empty()
@@ -303,7 +305,7 @@ pub struct Settled {
 pub struct Gathered {
     /// [`SCHEMA_VERSION`].
     pub schema_version: u32,
-    /// The snapshot taken; `None` on a dry run.
+    /// The snapshot taken — a dry run's too, which `launch_command` launches.
     pub snapshot: Option<PathBuf>,
     /// Whether it was a dry run.
     pub dry_run: bool,
@@ -313,6 +315,13 @@ pub struct Gathered {
     pub selected: IndexMap<String, usize>,
     /// How many comments or items it left out.
     pub left: usize,
+    /// For a dry run: the command that launches exactly what it gathered, while the snapshot
+    /// is younger than `snapshot.launchable_for`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub launch_command: Option<String>,
+    /// Each store operation it made.
+    #[serde(default, skip_serializing_if = "no_operations")]
+    pub store_operations: Vec<StoreOperation>,
 }
 
 /// One answering dispatch a snapshot launches.
@@ -359,6 +368,16 @@ pub struct SettledLaunch {
     pub writes: usize,
     /// How many writes are pending.
     pub pending: usize,
+    /// How many of its replies the read verified.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub verified: usize,
+    /// How many of its replies the read did not show: each in `pending.json`, its comment
+    /// answered again by the next unscoped pass.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub outstanding: usize,
+    /// Each rule its account breaks, when it is unsound: then nothing of it was written.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub problems: Vec<String>,
 }
 
 /// What `comments settle` settled.
@@ -370,6 +389,18 @@ pub struct CommentsSettled {
     pub snapshot: PathBuf,
     /// Each launched batch.
     pub settled: Vec<SettledLaunch>,
+    /// How many writes did not certainly land, now in `pending.json`.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub pending: usize,
+    /// Whether a person should look: a write is pending, or an account was unsound.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub needs_attention: bool,
+    /// Where the destination's watermark stands, when this settle could move it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub watermark: Option<String>,
+    /// Each store operation it made.
+    #[serde(default, skip_serializing_if = "no_operations")]
+    pub store_operations: Vec<StoreOperation>,
 }
 
 /// One status role against the destination.
@@ -712,13 +743,15 @@ pub struct CommentsGatherArgs {
     pub dry_run: bool,
 }
 
-/// Gather comments into a snapshot.
+/// Gather comments into a snapshot: one comments-since listing of each destination, the
+/// comments selected for each owning batch, and what was left out and why.
 ///
 /// # Errors
 ///
-/// [`Error::NotImplemented`] in this release.
-pub fn comments_gather(_settings: &Settings, _args: CommentsGatherArgs) -> Result<Gathered, Error> {
-    not_implemented("comments gather")
+/// A scope naming an item no batch of this host filed, or a batch that filed none; the
+/// store's refusal; or a working file that cannot be read or written.
+pub fn comments_gather(settings: &Settings, args: CommentsGatherArgs) -> Result<Gathered, Error> {
+    comments::gather::run(settings, args)
 }
 
 /// `onefollowup comments launches`: the answering dispatches a snapshot launches.
@@ -729,16 +762,17 @@ pub struct CommentsLaunchesArgs {
     pub snapshot: PathBuf,
 }
 
-/// Plan a snapshot's launches.
+/// Claim a snapshot once and write one feedback file per batch it selected comments for.
 ///
 /// # Errors
 ///
-/// [`Error::NotImplemented`] in this release.
+/// A snapshot already launched, a dry run's older than `snapshot.launchable_for`, or one
+/// gathered before another sharing a comment was launched; or a file that cannot be written.
 pub fn comments_launches(
-    _settings: &Settings,
-    _args: CommentsLaunchesArgs,
+    settings: &Settings,
+    args: CommentsLaunchesArgs,
 ) -> Result<Launches, Error> {
-    not_implemented("comments launches")
+    comments::launch::run(settings, args)
 }
 
 /// `onefollowup comments check`: hold a gathering's responses to the rules.
@@ -749,16 +783,16 @@ pub struct CommentsCheckArgs {
     pub feedback: PathBuf,
 }
 
-/// Check a gathering's responses.
+/// Hold a feedback dispatch's response account to its snapshot.
 ///
 /// # Errors
 ///
-/// [`Error::NotImplemented`] in this release.
+/// A feedback file `comments launches` did not write, or a snapshot that does not read.
 pub fn comments_check(
-    _settings: &Settings,
-    _args: CommentsCheckArgs,
+    settings: &Settings,
+    args: CommentsCheckArgs,
 ) -> Result<CommentsChecked, Error> {
-    not_implemented("comments check")
+    comments::check::run(settings, args)
 }
 
 /// `onefollowup comments settle`: settle a snapshot's answers.
@@ -772,16 +806,18 @@ pub struct CommentsSettleArgs {
     pub launched: Vec<String>,
 }
 
-/// Settle a snapshot's answers.
+/// Settle a snapshot's answers: one batched read verifying every reply, one `update-many`
+/// of every ticket change, `pending.json` for what did not certainly land, and the watermark.
 ///
 /// # Errors
 ///
-/// [`Error::NotImplemented`] in this release.
+/// A snapshot never launched, a `--launched` naming another snapshot's feedback, the store's
+/// refusal of the read, or a working file that cannot be read or written.
 pub fn comments_settle(
-    _settings: &Settings,
-    _args: CommentsSettleArgs,
+    settings: &Settings,
+    args: CommentsSettleArgs,
 ) -> Result<CommentsSettled, Error> {
-    not_implemented("comments settle")
+    comments::settle::run(settings, args)
 }
 
 /// The arguments of a verb that takes none.

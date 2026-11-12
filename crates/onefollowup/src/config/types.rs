@@ -165,6 +165,8 @@ pub struct StatusMapping {
     pub protected: bool,
     /// Whether an agent picking up accepted tickets selects an item at this role.
     pub selected: bool,
+    /// Whether people's comments on an item at this role are answered by its owning batch.
+    pub answered: bool,
 }
 
 /// A priority, in the store's vocabulary.

@@ -12,6 +12,7 @@ pub mod batch;
 pub mod dispositions;
 pub mod draft;
 pub mod existing_tickets;
+pub mod gathering;
 pub mod markers;
 pub mod outbox;
 pub mod pending;

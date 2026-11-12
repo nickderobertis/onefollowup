@@ -1,0 +1,150 @@
+{#-
+  The feedback mode of the verifying agent's task: one batch answering the people's comments
+  one gathering quoted on its tickets, rendered by `onefollowup comments launches` into the
+  batch's feedback file.
+
+  Variables, beside the initial mode's `batch`, `destination`, `namespace`, `statuses`,
+  `rubric`, `estimate`, `ticket_template` and `tickets`:
+    mode             `feedback`.
+    feedback         path of this feedback file.
+    responses        path of the response account the agent writes.
+    check            the command that checks the account.
+    snapshot         path of the snapshot the comments were gathered into.
+    boundary         from when the gathering read, or `none`.
+    comments         list, in the order they are answered, of {issue, comment, url, author,
+                     version, body, anchor, issue_line, last_written, ticket, item_version,
+                     reply_opening, marker_confirms, marker_does_not_confirm}.
+    response_example the example response account, as JSON.
+-#}
+## What
+
+Answer the people's comments quoted below, each on a ticket batch `{{ batch }}` owns at
+`{{ destination }}`: keep each comment's ticket right in light of it, post exactly one reply to
+each, and account for every one of them, in the order they are quoted.
+
+## Why
+
+People steer a follow-up ticket by commenting on it — a question, a correction, a reason the
+ticket is wrong. Each comment is answered once, by the batch that owns the ticket it sits on,
+and any change it calls for is made to that ticket without overwriting what a person edited
+meanwhile.
+
+## Where everything is
+
+- **The comments.** They are quoted under "The comments" at the end of this task, each under
+  its anchor line, with the issue it sits on, its author, its URL and its text. They were
+  gathered into the snapshot at `{{ snapshot }}`; nothing here reads the destination again.
+- **What onefollowup last wrote of each issue.** Each comment's `Issue:` line names the file
+  in the snapshot holding the ticket onefollowup last wrote to that issue: its title, its
+  content and its record, **as onefollowup wrote them, not as the destination holds them
+  now**. Read the issue from there, never from the destination.
+- **The tickets.** Each issue's ticket is this batch's own file under {{ tickets }}, named
+  `<root-cause>.md`; each comment names its file. A change to a ticket is made in that file.
+- **The replies.** A reply is the one write you make to the destination yourself: one comment
+  on the issue, added through the store (`onetaskgraph task comment add <issue> --json`), its
+  text exactly the shape under "The reply" below. Keep the id and the URL its answer names.
+- **The account.** You write it at `{{ responses }}`; `{{ check }}` holds it to the rules.
+
+## What each status means
+
+{% for role, status in statuses | items -%}
+- **`{{ role }}`** (category `{{ status.category }}`): {{ status.description | trim }}
+  {%- if status.protected %} Protected: no batch withdraws an item here, because a person decided on it.{% endif %}
+{% endfor %}
+## What to do, in order
+
+For each comment quoted below, in the order it is quoted:
+
+1. **Keep the ticket right in light of it.** Decide whether the issue's ticket should change
+   in light of the comment and of anything investigating it found, whether or not the comment
+   asks for an edit: a question, a doubt or a correction is enough when the answer shows the
+   ticket wrong or incomplete. Where it should, make that change in the ticket's file —
+   refine the suggested fix, narrow or widen the root cause, correct the impact by the rubric
+   below, change the repository its fix is in, or withdraw it — leaving the rest of it exactly
+   as it stands. Leave its estimate and its priority as they stand: settle recounts the
+   estimate from the comments and your replies, and the item's priority follows it only while
+   nobody has set it by hand. **To withdraw** the ticket — the comment, or investigating it,
+   shows it is no longer relevant — write `cancelled` as its `status`; settle writes that only
+   while the destination still holds the item at a status that is not protected. Never change
+   a ticket no comment below sits on.
+2. **Judge whether the comment confirms the root cause, and post its one reply.** The verdict
+   is `confirms` when the comment is a new sighting of the issue's root cause or evidence that
+   it is more prevalent, `does-not-confirm` otherwise. A `confirms` reply is one more
+   occurrence, which settle counts into the issue's estimate. The reply states what changed in
+   the ticket and why, or why the ticket stands as it is.
+3. **Record it** in the account at `{{ responses }}`, to the shape under "The account" below.
+
+Then run `{{ check }}` and correct the account until it reports it sound. Finally, report each
+comment's URL beside what you did about it and the reply you posted.
+
+## A comment disputing a severity or a priority
+
+A ticket's priority is estimated from its facts and never set by hand here, so a comment
+saying a ticket's priority or severity is wrong is answered on its severities: judge both
+again by the rubric, against the ticket's own evidence and what the comment adds. Where the
+rubric supports another severity, change the `## Impact` section's labelled parts and
+severity lines to match, and nothing else; where it does not, change nothing. The severities
+are {% for level in rubric.levels %}`{{ level.name }}`{% if not loop.last %}, {% endif %}{% endfor %},
+and the estimate is the severity with the workaround, raised one level, capped at
+`{{ estimate.raise_cap }}`, when the root cause fires consistently or has
+{{ estimate.raise_at }} or more occurrences.
+
+## The reply
+
+One reply per comment, on the issue the comment sits on, its text exactly:
+
+```text
+<the comment's reply opening, as quoted under it below>
+
+<your reply, in your words>
+
+<the marker of your verdict, as quoted under it below>
+```
+
+The marker is the reply's last line and names this batch, the comment it answers and your
+verdict; a reply without it, or naming another batch, answers nothing.
+
+## The account
+
+**Every comment quoted below is accounted for, exactly once, in the order it is quoted**, in a
+JSON document at `{{ responses }}`:
+
+````json
+{{ response_example }}
+````
+
+`action` is what you did about the comment, in your words; `reply` and `reply_url` are the id
+and the URL the reply's own write answered, with `null` for a URL it named none;
+`reply_fallback` is the reason that answer gave for reading the destination before it wrote,
+or `null`; and `verdict` is the verdict your reply's marker carries.
+
+**`{{ check }}` is what says the account is complete.** It reads the account and the snapshot,
+never the destination, and refuses each quoted comment that is unanswered, answered twice or
+out of order, each response for a comment not quoted or on another batch's issue, and each
+change to a ticket no quoted comment sits on. This task is not finished while it refuses.
+Whether each reply is on the destination is settle's to verify, in the one read it makes.
+
+## The shape a changed ticket is left in
+
+````markdown
+{{ ticket_template | trim }}
+````
+
+## The comments
+{% for quoted in comments %}
+{{ quoted.anchor }}
+### Comment `{{ quoted.comment }}` by {{ quoted.author }}
+
+- Issue: {{ quoted.issue_line }}
+- What onefollowup last wrote of it: `{{ quoted.last_written }}`
+- Its ticket: `{{ quoted.ticket }}`
+- URL: {{ quoted.url }}
+- Last changed: {{ quoted.version }}
+- Reply opening: `{{ quoted.reply_opening }}`
+- Marker if it confirms: `{{ quoted.marker_confirms }}`
+- Marker if it does not: `{{ quoted.marker_does_not_confirm }}`
+
+{{ quoted.body }}
+{% else %}
+None.
+{% endfor %}

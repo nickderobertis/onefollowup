@@ -133,9 +133,11 @@ field declared here is a contract change agreed with the manager first. `kinds` 
       "batch": "nightly-2026-11-01",
       "feedback": "feedback/nightly-2026-11-01/20261101T120000Z.md",
       "writes": 2,
-      "pending": 0
+      "pending": 0,
+      "verified": 2
     }
-  ]
+  ],
+  "watermark": "2026-11-01T12:00:00Z"
 }
 ```
 

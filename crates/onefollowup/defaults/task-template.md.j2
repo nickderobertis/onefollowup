@@ -22,11 +22,17 @@
     estimate         {raise_at, raise_cap}.
     ticket_template  the rendered example ticket shape text.
 
-  Beyond those, this template reads one optional variable:
+  Beyond those, this template reads two optional variables:
     tickets          path of the directory the batch's tickets are written to; when
                      undefined, the task says "the batch's tickets directory".
+    mode             `feedback` renders the feedback mode instead, `onefollowup comments
+                     launches`' task answering people's comments (task-template/feedback.md.j2
+                     names what it reads); undefined, or `initial`, renders the task above.
 -#}
 {%- set tickets_at = tickets if tickets is defined and tickets else "the batch's tickets directory" -%}
+{%- if mode is defined and mode == "feedback" -%}
+{% include "task-template/feedback.md.j2" %}
+{%- else -%}
 ## What
 
 Verify the follow-up drafts and inputs batch `{{ batch }}` was prepared with, give each one
@@ -357,3 +363,4 @@ None.
 {% else %}
 None.
 {% endfor %}
+{%- endif %}

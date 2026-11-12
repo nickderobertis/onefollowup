@@ -16,6 +16,11 @@
 //!   tasks/<batch>/existing-tickets.json the destination's tickets prepare found
 //!   tasks/<batch>/tickets/<slug>.md     the batch's tickets, written by the agent
 //!   feedback/pending.json               writes that did not certainly land
+//!   feedback/.watermark-<source>.json   from when the next gathering lists a destination
+//!   feedback/.snapshots/<stamp>/        one comment gathering: snapshot.json, gathering.json,
+//!                                       launched.json, last-written/ and tickets/
+//!   feedback/<batch>/<stamp>.md         a batch's feedback task from one snapshot
+//!   feedback/<batch>/<stamp>.responses.json   the answering agent's account of it
 //! ```
 
 use std::io::Write as _;
@@ -117,7 +122,37 @@ impl Work {
     /// `feedback/pending.json`.
     #[must_use]
     pub fn pending(&self) -> PathBuf {
-        self.root.join("feedback").join("pending.json")
+        self.feedback().join("pending.json")
+    }
+
+    /// `feedback/`.
+    #[must_use]
+    pub fn feedback(&self) -> PathBuf {
+        self.root.join("feedback")
+    }
+
+    /// `feedback/.watermark-<source>.json`.
+    #[must_use]
+    pub fn watermark(&self, source: &str) -> PathBuf {
+        self.feedback().join(format!(".watermark-{source}.json"))
+    }
+
+    /// `feedback/.snapshots/`.
+    #[must_use]
+    pub fn snapshots(&self) -> PathBuf {
+        self.feedback().join(".snapshots")
+    }
+
+    /// `feedback/<batch>/<stamp>.md`.
+    #[must_use]
+    pub fn feedback_file(&self, batch: &str, stamp: &str) -> PathBuf {
+        self.feedback().join(batch).join(format!("{stamp}.md"))
+    }
+
+    /// `receipts/`.
+    #[must_use]
+    pub fn receipts_directory(&self) -> PathBuf {
+        self.root.join("receipts")
     }
 }
 

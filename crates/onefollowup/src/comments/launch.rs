@@ -48,13 +48,7 @@ pub fn run(settings: &Settings, args: CommentsLaunchesArgs) -> Result<Launches, 
             launched.claimed_at
         )));
     }
-    let gathered_at = instant(&snapshotted.snapshot.queried_at).ok_or_else(|| {
-        Error::Failed(format!(
-            "{}: `queried_at` is not an instant: {}",
-            directory.display(),
-            snapshotted.snapshot.queried_at
-        ))
-    })?;
+    let gathered_at = snapshotted.gathered_at()?;
     if snapshotted.snapshot.dry_run {
         let window = span(&pass.config.snapshot.launchable_for).unwrap_or_default();
         if now - gathered_at > window {
@@ -169,27 +163,7 @@ fn render(
     let namespace = &pass.config.namespace;
     let mut comments = Vec::new();
     for one in chosen {
-        let listed = snapshotted
-            .gathering
-            .listings
-            .values()
-            .flat_map(|listing| listing.comments.iter())
-            .find(|listed| listed.item == one.issue && listed.id == one.comment)
-            .ok_or_else(|| {
-                Error::Failed(format!(
-                    "{}: the selection quotes comment {} on {}, which the listing does not hold",
-                    snapshotted.directory.display(),
-                    one.comment,
-                    one.issue
-                ))
-            })?;
-        let written = snapshotted.last_written(&one.issue).ok_or_else(|| {
-            Error::Failed(format!(
-                "{}: the snapshot holds nothing onefollowup last wrote to {}",
-                snapshotted.directory.display(),
-                one.issue
-            ))
-        })?;
+        let (listed, written) = snapshotted.quoted(one)?;
         let url = listed
             .url
             .clone()

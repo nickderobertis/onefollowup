@@ -107,16 +107,16 @@ pub fn run(settings: &Settings, args: CommentsGatherArgs) -> Result<Gathered, Er
             )
         } else {
             match work::read::<Watermark>(&pass.work.watermark(board))? {
-                Some(watermark) => match instant(&watermark.since) {
-                    Some(since) => (since, "the destination's watermark".to_owned()),
-                    None => {
-                        return Err(Error::Failed(format!(
-                            "{}: `since` is not an instant: {}",
-                            pass.work.watermark(board).display(),
-                            watermark.since
-                        )));
-                    }
-                },
+                Some(watermark) => {
+                    let since = instant(&watermark.since).ok_or_else(|| {
+                        comments::io(
+                            &pass.work.watermark(board),
+                            "be read",
+                            &"its `since` is no instant",
+                        )
+                    })?;
+                    (since, "the destination's watermark".to_owned())
+                }
                 None => (epoch, "no watermark yet: every comment".to_owned()),
             }
         };
@@ -482,53 +482,24 @@ fn write_snapshot(
 ) -> Result<std::path::PathBuf, Error> {
     let root = pass.work.snapshots();
     let stamp = queried_at.format(STAMP).to_string();
-    let mut attempt = 0;
-    let directory = loop {
-        let name = if attempt == 0 {
-            stamp.clone()
-        } else {
-            format!("{stamp}-{attempt}")
-        };
-        let candidate = root.join(&name);
-        if !candidate.exists() {
-            break candidate;
-        }
-        attempt += 1;
-    };
-    let staged = root.join(format!(
-        ".staging-{}",
-        directory
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_default()
-    ));
-    if staged.exists() {
-        std::fs::remove_dir_all(&staged).map_err(|error| {
-            Error::Failed(format!(
-                "{}: could not be cleared: {error}",
-                staged.display()
-            ))
-        })?;
-    }
+    let directory = (0..)
+        .map(|attempt| match attempt {
+            0 => root.join(&stamp),
+            _ => root.join(format!("{stamp}-{attempt}")),
+        })
+        .find(|candidate| !candidate.exists())
+        .unwrap_or_else(|| root.join(&stamp));
+    // Staged under a name only this process writes, then renamed into place whole.
+    let staged = root.join(format!(".staging-{}-{stamp}", std::process::id()));
     work::write_text(&staged.join(SNAPSHOT_RECORD), &snapshot.render())?;
     work::write_text(&staged.join(GATHERING_RECORD), &gathering.render())?;
-    std::fs::create_dir_all(staged.join(LAST_WRITTEN)).map_err(|error| {
-        Error::Failed(format!(
-            "{}: could not be created: {error}",
-            staged.display()
-        ))
-    })?;
+    let last = staged.join(LAST_WRITTEN);
+    std::fs::create_dir_all(&last).map_err(|error| comments::io(&last, "be created", &error))?;
     for written in &gathering.last_written {
-        work::write_text(
-            &staged.join(last_written_file(&written.item)),
-            &last_written_text(written),
-        )?;
+        let path = staged.join(last_written_file(&written.item));
+        work::write_text(&path, &last_written_text(written))?;
     }
-    std::fs::rename(&staged, &directory).map_err(|error| {
-        Error::Failed(format!(
-            "{}: the snapshot could not be put in place: {error}",
-            directory.display()
-        ))
-    })?;
+    std::fs::rename(&staged, &directory)
+        .map_err(|error| comments::io(&directory, "be put in place", &error))?;
     Ok(directory)
 }

@@ -36,7 +36,7 @@ use crate::formats::outbox::Outbox;
 use crate::formats::pending::{Pending, PendingEntry, PendingState, PendingWrite, WritePart};
 use crate::formats::ticket::TicketRecord;
 use crate::formats::watermark::Watermark;
-use crate::store::{HeldUpdate, ReadItem, StoreItem};
+use crate::store::{BatchAnswer, HeldUpdate, ReadItem, StoreItem};
 use crate::verify::context::Batch;
 use crate::verify::decide::{self, priority_of};
 use crate::verify::ticket::{self, ESTIMATE_LINE, Estimated, level_word};
@@ -350,52 +350,19 @@ pub fn run(settings: &Settings, args: CommentsSettleArgs) -> Result<CommentsSett
             .iter()
             .map(|at| planned[*at].update.clone())
             .collect();
-        match store.update_many(source, &updates) {
-            Ok(answers) => {
-                for (at, answer) in members.iter().zip(answers) {
-                    let write = &planned[*at];
-                    if answer.outcome == "written" {
-                        landed.push(*at);
-                        continue;
-                    }
-                    let (state, error) = match answer.outcome.as_str() {
-                        "version-moved" => (
-                            PendingState::Withheld,
-                            format!(
-                                "{} moved to version {} after settle read it, so nothing was written over the change",
-                                write.update.item,
-                                answer.current_version.unwrap_or_default()
-                            ),
-                        ),
-                        "held" => (
-                            PendingState::Withheld,
-                            format!(
-                                "{} holds a priority a person set, so nothing of the write was sent",
-                                write.update.item
-                            ),
-                        ),
-                        _ => (
-                            PendingState::Failed,
-                            answer
-                                .reason
-                                .unwrap_or_else(|| "the store refused the write".to_owned()),
-                        ),
-                    };
+        let answers = store
+            .update_many(source, &updates)
+            .map_err(|error| error.to_string());
+        for (position, at) in members.iter().enumerate() {
+            let write = &planned[*at];
+            let answer = answers.as_ref().map(|answers| answers.get(position));
+            match unlanded(&write.update.item, answer) {
+                None => landed.push(*at),
+                Some((state, error)) => {
                     let seen = settling
                         .item(&write.update.item)
                         .and_then(|item| item.version.clone());
                     pending.push(settling.entry(write, state, seen, error));
-                }
-            }
-            Err(error) => {
-                for at in members {
-                    let write = &planned[*at];
-                    pending.push(settling.entry(
-                        write,
-                        PendingState::Unknown,
-                        None,
-                        error.to_string(),
-                    ));
                 }
             }
         }
@@ -426,13 +393,13 @@ pub fn run(settings: &Settings, args: CommentsSettleArgs) -> Result<CommentsSett
     if !drafts.is_empty() {
         let answers = store.update_many(&pass.config.drafts_source, &drafts)?;
         if let Some(refused) = answers.iter().find(|answer| answer.outcome != "written") {
+            let why = refused
+                .reason
+                .clone()
+                .unwrap_or_else(|| refused.outcome.clone());
             return Err(Error::Failed(format!(
-                "the destination took the writes, and the drafts source refused keeping {} in step ({}): publish its batch again so the next pass reads what onefollowup last wrote",
-                refused.item,
-                refused
-                    .reason
-                    .clone()
-                    .unwrap_or_else(|| refused.outcome.clone())
+                "the destination took the writes, and the drafts source refused keeping {} in step ({why}): publish its batch again so the next pass reads what onefollowup last wrote",
+                refused.item
             )));
         }
     }
@@ -498,6 +465,44 @@ pub fn run(settings: &Settings, args: CommentsSettleArgs) -> Result<CommentsSett
         watermark,
         store_operations: store.operations(),
     })
+}
+
+/// Why a write of `item` did not land, from its answer, or `None` when it did.
+fn unlanded(
+    item: &str,
+    answer: Result<Option<&BatchAnswer>, &String>,
+) -> Option<(PendingState, String)> {
+    let answer = match answer {
+        Ok(Some(answer)) => answer,
+        Ok(None) => {
+            return Some((
+                PendingState::Unknown,
+                "the store's answer was lost".to_owned(),
+            ));
+        }
+        Err(error) => return Some((PendingState::Unknown, error.clone())),
+    };
+    let moved = answer.current_version.as_deref().unwrap_or("another");
+    match answer.outcome.as_str() {
+        "written" => None,
+        "version-moved" => Some((
+            PendingState::Withheld,
+            format!(
+                "{item} moved to version {moved} after settle read it, so nothing was written over the change"
+            ),
+        )),
+        "held" => Some((
+            PendingState::Withheld,
+            format!("{item} holds a priority a person set, so nothing of the write was sent"),
+        )),
+        _ => Some((
+            PendingState::Failed,
+            answer
+                .reason
+                .clone()
+                .unwrap_or_else(|| answer.outcome.clone()),
+        )),
+    }
 }
 
 /// Whether the read shows a reply of `batch` on `issue` answering `comment` — the reply `id`
@@ -942,4 +947,45 @@ fn recover(settling: &Settling<'_, '_>, mut entry: PendingEntry) -> Recovered {
         snapshot_version: entry.snapshot_version.clone(),
         stored_as: Some(baseline.stored_as),
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn answered(outcome: &str, current: Option<&str>, reason: Option<&str>) -> BatchAnswer {
+        BatchAnswer {
+            item: "followups:1".to_owned(),
+            outcome: outcome.to_owned(),
+            comment: None,
+            version: None,
+            current_version: current.map(str::to_owned),
+            reason: reason.map(str::to_owned),
+        }
+    }
+
+    #[test]
+    fn each_answer_of_a_held_write_is_landed_withheld_failed_or_unknown() {
+        let item = "followups:1";
+        assert_eq!(
+            unlanded(item, Ok(Some(&answered("written", None, None)))),
+            None
+        );
+        let moved = unlanded(item, Ok(Some(&answered("version-moved", Some("v2"), None))));
+        assert_eq!(
+            moved.map(|(state, error)| (state, error.contains("moved to version v2"))),
+            Some((PendingState::Withheld, true))
+        );
+        let held = unlanded(item, Ok(Some(&answered("held", None, None))));
+        assert_eq!(held.map(|(state, _)| state), Some(PendingState::Withheld));
+        let error = unlanded(item, Ok(Some(&answered("error", None, Some("refused")))));
+        assert_eq!(error, Some((PendingState::Failed, "refused".to_owned())));
+        let lost = unlanded(item, Ok(None));
+        assert_eq!(lost.map(|(state, _)| state), Some(PendingState::Unknown));
+        let refused = "the store refused the batch".to_owned();
+        assert_eq!(
+            unlanded(item, Err(&refused)),
+            Some((PendingState::Unknown, refused.clone()))
+        );
+    }
 }

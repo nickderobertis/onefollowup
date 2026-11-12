@@ -32,10 +32,10 @@ use sha2::{Digest as _, Sha256};
 
 use crate::config::{Config, Settings};
 use crate::error::Error;
-use crate::formats::Versioned as _;
 use crate::formats::batch::BatchState;
 use crate::formats::gathering::{Gathering, LastWritten};
-use crate::formats::snapshot::{Launched, Snapshot};
+use crate::formats::snapshot::{Chosen, Launched, Snapshot};
+use crate::store::ListedComment;
 use crate::store::Store;
 use crate::verify::context::{Batch, store_directory};
 use crate::verify::journal;
@@ -169,27 +169,17 @@ pub struct Owned {
 ///
 /// A journal or state that cannot be read.
 pub fn owners(pass: &Pass<'_>) -> Result<BTreeMap<String, Owned>, Error> {
-    let mut batches: Vec<String> = match std::fs::read_dir(pass.work.receipts_directory()) {
-        Ok(entries) => entries
-            .filter_map(Result::ok)
-            .map(|entry| entry.path())
-            .filter(|path| {
-                path.extension()
-                    .is_some_and(|extension| extension == "jsonl")
-            })
-            .filter_map(|path| {
-                path.file_stem()
-                    .map(|stem| stem.to_string_lossy().into_owned())
-            })
-            .collect(),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
-        Err(error) => {
-            return Err(Error::Failed(format!(
-                "{}: could not be read: {error}",
-                pass.work.receipts_directory().display()
-            )));
-        }
-    };
+    let mut batches: Vec<String> = entries(&pass.work.receipts_directory())?
+        .into_iter()
+        .filter(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "jsonl")
+        })
+        .filter_map(|path| {
+            path.file_stem()
+                .map(|stem| stem.to_string_lossy().into_owned())
+        })
+        .collect();
     batches.sort();
     let mut owned = BTreeMap::new();
     for batch in batches {
@@ -268,6 +258,43 @@ impl Snapshotted {
         )?)
     }
 
+    /// When it was gathered.
+    ///
+    /// # Errors
+    ///
+    /// A record whose `queried_at` is no instant.
+    pub fn gathered_at(&self) -> Result<DateTime<Utc>, Error> {
+        instant(&self.snapshot.queried_at).ok_or_else(|| {
+            io(
+                &self.directory,
+                "be read",
+                &"its `queried_at` is no instant",
+            )
+        })
+    }
+
+    /// The comment `chosen` names as the listing held it, and what onefollowup last wrote to
+    /// the item it sits on.
+    ///
+    /// # Errors
+    ///
+    /// A snapshot holding either no longer.
+    pub fn quoted(&self, chosen: &Chosen) -> Result<(&ListedComment, &LastWritten), Error> {
+        let listed = self
+            .gathering
+            .listings
+            .values()
+            .flat_map(|listing| listing.comments.iter())
+            .find(|listed| listed.item == chosen.issue && listed.id == chosen.comment);
+        listed.zip(self.last_written(&chosen.issue)).ok_or_else(|| {
+            let what = format!(
+                "it no longer holds comment {} on {}",
+                chosen.comment, chosen.issue
+            );
+            io(&self.directory, "be read", &what)
+        })
+    }
+
     /// What onefollowup last wrote of `item`.
     #[must_use]
     pub fn last_written(&self, item: &str) -> Option<&LastWritten> {
@@ -309,21 +336,10 @@ impl Snapshotted {
 ///
 /// A directory that cannot be read.
 pub fn snapshot_directories(work: &Work) -> Result<Vec<PathBuf>, Error> {
-    let root = work.snapshots();
-    let mut found: Vec<PathBuf> = match std::fs::read_dir(&root) {
-        Ok(entries) => entries
-            .filter_map(Result::ok)
-            .map(|entry| entry.path())
-            .filter(|path| path.join(SNAPSHOT_RECORD).is_file())
-            .collect(),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
-        Err(error) => {
-            return Err(Error::Failed(format!(
-                "{}: could not be read: {error}",
-                root.display()
-            )));
-        }
-    };
+    let mut found: Vec<PathBuf> = entries(&work.snapshots())?
+        .into_iter()
+        .filter(|path| path.join(SNAPSHOT_RECORD).is_file())
+        .collect();
     found.sort();
     Ok(found)
 }
@@ -404,44 +420,99 @@ pub fn last_written_text(written: &LastWritten) -> String {
     )
 }
 
-/// Write `record` to `path` only when nothing is there yet.
+/// Write `text` to `path` only when nothing is there yet: `false` when something was.
 ///
 /// # Errors
 ///
-/// A record already there, or the filesystem's refusal.
+/// The filesystem's refusal.
 pub fn write_once(path: &Path, text: &str) -> Result<bool, Error> {
     use std::io::Write as _;
-    if let Some(directory) = path.parent() {
-        std::fs::create_dir_all(directory).map_err(|error| {
-            Error::Failed(format!(
-                "{}: could not be created: {error}",
-                directory.display()
-            ))
-        })?;
-    }
+    let directory = path.parent().unwrap_or(path);
+    std::fs::create_dir_all(directory).map_err(|error| io(directory, "be created", &error))?;
     match std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(path)
     {
         Ok(mut file) => {
-            file.write_all(text.as_bytes())
-                .and_then(|()| file.flush())
-                .map_err(|error| {
-                    Error::Failed(format!("{}: could not be written: {error}", path.display()))
-                })?;
+            let written = file.write_all(text.as_bytes()).and_then(|()| file.flush());
+            written.map_err(|error| io(path, "be written", &error))?;
             Ok(true)
         }
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(false),
-        Err(error) => Err(Error::Failed(format!(
-            "{}: could not be written: {error}",
-            path.display()
-        ))),
+        Err(error) => Err(io(path, "be written", &error)),
     }
 }
 
-/// `launched` rendered as its format spells it.
+/// Every entry of the directory `path`, none when there is no such directory.
+///
+/// # Errors
+///
+/// A directory that is there and cannot be read.
+pub fn entries(path: &Path) -> Result<Vec<PathBuf>, Error> {
+    match std::fs::read_dir(path) {
+        Ok(entries) => Ok(entries
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .collect()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(error) => Err(io(path, "be read", &error)),
+    }
+}
+
+/// A file or directory the pass could not use, as it is reported.
 #[must_use]
-pub fn launched_text(launched: &Launched) -> String {
-    launched.render()
+pub fn io(path: &Path, could_not: &str, error: &dyn std::fmt::Display) -> Error {
+    Error::Failed(format!(
+        "{}: could not {could_not}: {error}",
+        path.display()
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_launchable_span_is_a_whole_number_of_one_unit() {
+        assert_eq!(span("90s"), chrono::TimeDelta::try_seconds(90));
+        assert_eq!(span("5m"), chrono::TimeDelta::try_minutes(5));
+        assert_eq!(span("24h"), chrono::TimeDelta::try_hours(24));
+        assert_eq!(span("2d"), chrono::TimeDelta::try_days(2));
+        assert_eq!(span("2w"), None);
+        assert_eq!(span("h"), None);
+        assert_eq!(span(""), None);
+    }
+
+    #[test]
+    fn instants_read_and_spell_at_the_precision_each_record_keeps() {
+        let at = instant("2026-11-01T12:00:00.123456Z").expect("an instant");
+        assert_eq!(spelled(&at), "2026-11-01T12:00:00Z");
+        assert_eq!(precise(&at), "2026-11-01T12:00:00.123456Z");
+        assert_eq!(instant("yesterday"), None);
+    }
+
+    #[test]
+    fn an_items_last_written_file_is_named_by_its_id_alone() {
+        assert_eq!(
+            last_written_file("followups:item 42/a"),
+            "last-written/followups-item-42-a.md"
+        );
+    }
+
+    #[test]
+    fn a_missing_directory_has_no_entries_and_a_file_is_not_a_directory() {
+        let held = tempfile::tempdir().expect("a directory");
+        let directory = held.path();
+        assert!(entries(&directory.join("absent")).expect("none").is_empty());
+        let file = directory.join("file");
+        std::fs::write(&file, "x").expect("written");
+        assert!(entries(&file).is_err());
+        assert!(write_once(&directory.join("once"), "a").expect("written"));
+        assert!(!write_once(&directory.join("once"), "b").expect("refused"));
+        assert_eq!(
+            std::fs::read_to_string(directory.join("once")).expect("read"),
+            "a"
+        );
+    }
 }

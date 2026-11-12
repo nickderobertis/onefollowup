@@ -29,16 +29,16 @@ library is the `onefollowup` crate.
 | Command | What it does |
 |---|---|
 | `draft --batch <ID> --title <T> --repository <ORIGIN> [--path <P>]... [--author <LABEL>] [--stamp <KEY=VALUE>]...` | Record one draft; its body is read from stdin. |
-| `prepare --batch <ID> [--alias <ID>]... [--unanswered]` | Snapshot the batch's inputs (its drafts and the `batch_preparing` hook's inputs), make its destination reads in one batched search and one comments read, and write the verifying agent's task. Prints `{"schema_version": 1, "batch", "drafts", "inputs", "answers", "task_template"}`. |
-| `ticket validate --batch <ID> <TICKET>` | Hold one ticket to the rules. |
+| `prepare --batch <ID> [--alias <ID>]... [--unanswered]` | Snapshot the batch's inputs (its drafts and the `batch_preparing` hook's inputs), make its destination reads in one batched search and one comments read — under relations, also one `task relations` read of the tickets found and one read of the tickets at their edges' other ends — and write the verifying agent's task. Prints `{"schema_version": 1, "batch", "drafts", "inputs", "answers", "task_template"}`, with `absent_targets` and `missing_links` when there are any (Relations, below). |
+| `ticket validate --batch <ID> <TICKET>` | Hold one ticket to the rules; `absent_targets` names each edge its fields derive whose target does not exist. |
 | `ticket board-status --batch <ID> <ITEM>` | Read one destination item's state and comments from the batch's prepared reads. |
 | `ticket search --batch <ID> --ticket <TICKET> <QUERY>` | Search the destination for a ticket's duplicates. |
 | `ticket copy --batch <ID> <TICKET>` | **Stage** a ticket's copy to its destination. |
-| `ticket comment --batch <ID> --item <ITEM> --root-cause <RC>` | **Stage** the batch's evidence comment (read from stdin) on an item. |
+| `ticket comment --batch <ID> (--item <ITEM> \| --field <NAME=VALUE>...) [--root-cause <RC>]` | **Stage** the batch's evidence comment (read from stdin) on an item; given the declared fields observed, on the most specific existing ticket they name. The root cause defaults to the item's own. |
 | `ticket re-estimate --batch <ID> <ITEM>` | **Stage** an item's re-estimate. |
-| `ticket relate --batch <ID> --relation <NAME> --from <TICKET> --to <TICKET>` | **Stage** an edge of a configured relation. |
-| `check --batch <ID>` | Hold the batch's dispositions, tickets and staged writes to the rules before anything is written; exit 0 when sound. |
-| `publish --batch <ID>` | Send the staged writes in batched store calls and receipt every outcome. |
+| `ticket relate --batch <ID> --relation <NAME> --from <TICKET> --to <TICKET>` | **Stage** an edge of a relation the agent decides; a ticket is its root cause, its file, or an item the batch read. |
+| `check --batch <ID>` | Hold the batch's dispositions, tickets, edges and staged writes to the rules before anything is written; exit 0 when sound. |
+| `publish --batch <ID>` | Send the staged writes in batched store calls — under relations, the batch's edges in one `task parent set-many` and one `task link add-many` — and receipt every outcome. |
 | `settle --batch <ID>` | Read back only the writes no answer confirmed, run the `batch_settled` hook, retire the batch's working files. |
 | `comments gather [--batch <ID> \| --item <ID>] [--dry-run]` | Gather people's comments to answer into a snapshot. |
 | `comments launches --snapshot <S>` | Plan the answering dispatches a snapshot launches. |
@@ -460,12 +460,47 @@ to the more general:
 
 `decided_by: {match}` is deterministic and allowed only between two kinds that both find
 duplicates by `same`, its fields exactly the `to` kind's `same` fields and all among the
-`from` kind's: the related ticket is the `to` ticket whose values of those fields equal the
-`from` ticket's. `agent` is the verifying agent asserting edges as judgment. `rollup` feeds
-the `to` ticket's priority estimate over direct edges: `occurrences` adds each related
-ticket's occurrence count, `max` keeps the estimate no lower than the highest among its
-related tickets. Closing a ticket closes no related ticket. Refused: `store: parent` with
-`many-to-many`; `match` with `many-to-many`; a `rollup` into a kind of fixed priority.
+`from` kind's: the related ticket is the `to` ticket — staged in the batch, or an open item of
+its destination — whose values of those fields equal the `from` ticket's, compared as `same`
+compares (trimmed, case-folded, an empty value matching nothing). Such an edge is **derived,
+never asserted**: `ticket relate` and `check` refuse one staged by hand. No stub is generated:
+`prepare` and `ticket validate` report each derived edge whose target does not exist as
+`absent_targets` (`{"ticket", "relation", "kind", "fields"}`), the agent writes and stages that
+ticket under its kind's template, and `check` refuses a staged `from` ticket whose target
+neither exists nor is staged, naming the kind and fields. `agent` is the verifying agent
+asserting edges as judgment, each with `ticket relate`.
+
+Every proposed ticket and edge is held to this schema, at `ticket relate` and again at `check`:
+a known kind and relation; ends of the relation's `from` and `to` kinds; at most one edge of a
+`many-to-one` relation from one `from` ticket, counting the edges the store already holds; and
+a `store: parent` edge joining two tickets of one source (a `link` may cross sources). An
+edge's identity is its relation and its two ends, so a retry writes nothing for an edge that
+exists and receipts it `exists`. `publish` copies a ticket after each new ticket its edges
+point to, so its record's `edges` (`[{"relation", "to"}]`) names that ticket's item, then
+writes the batch's edges in one `task parent set-many` and one `task link add-many` — a link's
+`type` being the relation's name — receipting each. `prepare` reads the edges the tickets it
+found already hold in one `task relations`; an item a staged edge names is read too, and
+`check` asks for another `prepare` when an edge's item end was found after it. A link
+`task relations` reports with `other_end: missing` — one end lost it, as a whole-body rewrite
+of a local-md item does — is reported as `missing_links` (`{"item", "relation", "other"}`) and
+restored when the batch states that edge again. A configuration with no relations makes none
+of these calls.
+
+`rollup` feeds the `to` ticket's priority estimate over its direct edges, staged ones counted:
+`occurrences` adds each related ticket's occurrence count to the count the estimate raises on;
+`max` keeps the estimate no lower than the highest of its related tickets' own estimates. A
+related ticket's own estimate takes nothing of its own related tickets, so a rollup is one
+hop. The result is written as any re-estimate is, guarded by the priority onefollowup last
+wrote, so a person's priority stands; an existing item the batch's edges reach is re-estimated
+in the batch's `update-many`. Closing a ticket closes no related ticket. Refused: `store:
+parent` with `many-to-many`; `match` with `many-to-many`; a `rollup` into a kind of fixed
+priority.
+
+New evidence goes on the most specific ticket observed: `ticket comment` given the declared
+fields observed (`--field`) resolves, of the `same` kinds whose listed fields they fill, the
+existing ticket of the most specific — a kind being more specific than the `to` of a
+match-decided relation from it — and refuses a comment naming a less specific ticket while
+the more specific one exists.
 
 **`dispositions`** — the catalogue every input is given exactly one of, carrying what its
 `requires` names:
@@ -505,8 +540,21 @@ match wins:
 `{"schema_version": 1, "ticket": <record>, "kind", "severity", "repository", "paths", "route"}`
 on stdin; its stdout is empty or a JSON object of `status_role`, `priority`, `labels` and
 `assignee` overriding `set`, and a non-zero exit withholds that ticket's write, receipted
-as `route-command-failed`. A ticket has one assignee; a person's own assignment always
-stands.
+as `route-command-failed`. `relations` counts a relation's edges at either end of the ticket,
+staged ones included. An existing item the batch re-estimates is matched too, its route's
+`priority` and `assignee` applied (its `command` runs only before a ticket's copy).
+
+A ticket has **one assignee**, as a Linear issue does, written only to a source whose store
+configuration sets `config.assignees: true` — the destination, and the drafts source the copy
+carries it from; `check` refuses a route assigning on a kind where either does not, naming the
+route, the source and the setting. A new ticket's assignee lands with the copy that creates it;
+an existing ticket's is written in the batch's `update-many`, held with `when_assignees` to
+exactly the person its record's `board_assignee` names (none: unassigned), so it lands only
+while the item holds exactly what onefollowup last wrote. A write that lands records the person
+in `board_assignee`; one the guard holds keeps the person's assignment — a second assignee a
+person added included — and is receipted `assignee-held`. The assignee travels in calls the
+batch already sends; a configuration that assigns nobody writes no assignee and records no
+`board_assignee`.
 
 **`hooks`** — a map from the moment a hook fires to its argv. Two moments exist; any other
 key is refused:
@@ -518,6 +566,68 @@ key is refused:
   non-zero exit or any other stdout fails `prepare`, naming the hook, with nothing
   snapshotted.
 - `batch_settled`: `settle` runs it with the settled batch's summary on stdin.
+
+## Examples
+
+[`examples/`](examples) holds four worked configurations, each directory an
+`onefollowup.yaml`, the `onetaskgraph.yaml` it relies on, and the templates and scripts it
+names. `crates/onefollowup-e2e/tests/e2e/examples.rs` runs one batch of each through the built
+binary, its sources replaced by local-md sources of the same names, to the outcome stated here.
+
+**[`single-root-cause`](examples/single-root-cause)** — one root-cause kind and no relations:
+the configuration an orchestrator repository uses to keep today's behaviour, every input given
+the `root-cause` kind. Batch: two drafts name the root cause `stale-cache-lease`, a third names
+one already on the board, and the `batch_preparing` hook
+([`scripts/follow-up-budget-inputs.sh`](examples/single-root-cause/scripts/follow-up-budget-inputs.sh))
+adds one over-budget change the agent cannot reproduce. Filed: one new `root-cause` ticket
+naming both drafts, at Proposal, its priority estimated; one evidence comment on the existing
+ticket; the input disposed `not-reproducible`. Linked: nothing. Where: every ticket on
+`followups`, or wherever that source's own routes send it. The `batch_settled` hook raises the
+batch's human items through `onepipeline`.
+
+**[`symptoms-and-root-causes`](examples/symptoms-and-root-causes)** — a team on Linear:
+symptom tickets, one sub-issue per client decided by match, and root causes linked to symptoms
+many-to-many by the agent, with rollups. Batch: drafts report `TIMEOUT-42` for clients `acme`
+and `globex`, and `PAY-7` for `acme`; the agent judges that the same stale cache lease causes
+both. `prepare` tells the agent the two symptom targets are absent, and it writes and stages
+them. Filed: the root cause `stale-cache-lease`, symptoms `TIMEOUT-42` and `PAY-7`, and
+client-symptoms `TIMEOUT-42/acme`, `TIMEOUT-42/globex` and `PAY-7/acme`. Linked: each
+client-symptom a sub-issue of its symptom (derived from the `same` field `error_signature`,
+never asserted, while the root cause, whose duplicates the agent judges, is only ever linked by
+the agent); each symptom `caused-by` the root cause, as two edges the agent asserted, each also
+shown as a Linear `related` relation through the source's `link_types`. Rollups: each symptom
+counts its client-symptoms' occurrences; the root cause's estimate is no lower than its highest
+symptom's. A later draft for `TIMEOUT-42` and `acme` adds evidence to that client-symptom, the
+most specific ticket observed (`ticket comment --field error_signature=TIMEOUT-42 --field
+client=acme`). When a third symptom is linked, the root cause matches `widespread-root-cause`.
+Where: everything on the Linear team `ENG`. A GitHub variant needs `sub_issues: parent` on a
+board of its own, since a parent there is a sub-issue.
+
+**[`typed-destinations`](examples/typed-destinations)** — bugs, improvements and security
+findings on different destinations, critical bugs escalated by a notify command. Batch: a
+critical bug, a high-severity bug, an improvement and a security finding; `check` would refuse
+the security input disposed `too-low-impact`, which its kind does not allow. Filed: the critical
+bug on `bug-tracker` at urgent, labelled `escalated`, after
+[`scripts/notify-oncall.sh`](examples/typed-destinations/scripts/notify-oncall.sh) received it
+on stdin, paged through the team's `oncall` CLI and printed `{"assignee": "<this week's on-call
+display name>"}`, so it is assigned to that person; the high bug on `bug-tracker`, labelled
+`bug`, at its estimate, assigned to the person `jane.doe` (a Linear display name); a later batch
+that finds a person reassigned either ticket leaves that person's choice; the improvement on
+`product-triage` at low; the security finding on `security-tracker`, merged with any open ticket
+of the same `error_signature` (the bug and improvement duplicates being the agent's judgment).
+If the notify command exits non-zero only that ticket's write is withheld, receipted
+`route-command-failed`, and `settle` records it pending so a retry stays visible. Linked:
+nothing. The assignee travels from the drafts source to `bug-tracker`, so both set
+`config.assignees: true` — the drafts source too, or `check` refuses the routes that assign.
+
+**[`inline-fixes`](examples/inline-fixes)** — small certain fixes land as `fixed-inline`,
+allowed only for the kind this repository's own change can fix; everything else is proposed
+under a fixed low priority. Batch: one `root-cause` draft fixed in the run's own change, one
+other `root-cause` draft and one `external-defect` draft. `external-defect` lists no
+`dispositions`, so it inherits `default_dispositions`, which omit `fixed-inline`. Filed: nothing
+for the first, disposed `fixed-inline` naming its change (and `check` refuses that disposition
+with no change named, and on an `external-defect` input); one ticket for each of the others on
+`backlog`, at Proposal, priority low. Linked: nothing.
 
 ## Record formats
 
@@ -532,7 +642,7 @@ the batch id stands where they say `run`.
 | Ticket record | 14 | The ticket's `<namespace>.follow-up` metadata. Optional keys onefollowup adds within 14: `kind`, `fields`, `edges` (`[{"relation", "to"}]`) and `board_assignee`, each omitted when empty. |
 | Draft record | 1 | A draft's `<namespace>.follow-up-draft` metadata. |
 | Comment markers | — | `<!-- <namespace>:follow-up-comment run="…" root_cause="…" -->` closing an evidence comment or (with `kind="reply" answers="…" verdict="…"`) a reply; the quoted-comment and feedback anchors. |
-| Receipt journal | 3 | `receipts/<batch>.jsonl`, one line per write outcome. |
+| Receipt journal | 3 | `receipts/<batch>.jsonl`, one line per write outcome. Two line kinds onefollowup adds within 3, written only under relations or an assignee: `relate` (an edge's `relation`, `store`, `from`, `to`, `to_card`, `derived`, `action` of `written`, `exists` or `failed`, and its `error`) and `assign` (the `assignee`, the `when` it was held to, `action` of `written`, `held` or `failed`, and its `error`, `assignee-held` when a person's assignment stood). |
 | Dispositions | 1 | `dispositions/<batch>.json`; each entry may carry `kind`, which `check` requires. |
 | Carried dispositions | 1 | `dispositions/<batch>.carried.json`. |
 | Responses | 3 | `feedback/<batch>/<stamp>.responses.json`. |

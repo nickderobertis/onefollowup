@@ -562,7 +562,25 @@ fn render_task(batch: &Batch<'_>, drafts: &[Value], inputs: &[Value]) -> Result<
     let relations: Vec<Value> = config
         .relations
         .iter()
-        .map(|relation| json!({"name": relation.name, "description": ""}))
+        .map(|relation| {
+            let description = match &relation.decided_by {
+                DecidedBy::Match(fields) => format!(
+                    "a `{}` to the `{}` carrying its {}: derived from those fields, never staged by hand",
+                    relation.from,
+                    relation.to,
+                    fields
+                        .iter()
+                        .map(|field| format!("`{field}`"))
+                        .collect::<Vec<_>>()
+                        .join(" and ")
+                ),
+                DecidedBy::Agent => format!(
+                    "a `{}` to a `{}`, as you judge it: stage each edge with `onefollowup ticket relate --relation {}`",
+                    relation.from, relation.to, relation.name
+                ),
+            };
+            json!({"name": relation.name, "description": description})
+        })
         .collect();
     Ok(template::render(
         &batch.task_template(),

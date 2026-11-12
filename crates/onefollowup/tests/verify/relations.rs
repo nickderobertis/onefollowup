@@ -145,6 +145,13 @@ fn every_edge_is_held_to_the_configured_kinds_and_relations() {
         json!([{"ticket": "timeout-42-acme", "relation": "occurs-for", "kind": "symptom", "fields": {"error_signature": "TIMEOUT-42"}}]),
         "{prepared}"
     );
+    let task = std::fs::read_to_string(prepared["task_template"].as_str().expect("a path"))
+        .expect("the task");
+    assert!(
+        task.contains("`occurs-for` (a `client-symptom` to the `symptom` carrying its `error_signature`: derived from those fields, never staged by hand)")
+            && task.contains("`caused-by` (a `symptom` to a `root-cause`, as you judge it: stage each edge with `onefollowup ticket relate --relation caused-by`)"),
+        "the task states each relation: {task}"
+    );
     let validated = world.ok(
         "agent",
         &["ticket", "validate", "--batch", BATCH, "timeout-42-acme"],

@@ -4,6 +4,7 @@
 //! - [`config`] — the configuration, its defaults and its layered resolution.
 //! - [`formats`] — the record formats, each with its parse and render.
 //! - [`store`] — the one module that calls onetaskgraph.
+//! - [`comments`] — the comment-answering pass the `comments` verbs run.
 //! - [`verify`] — the verify loop the batch verbs run: tickets, templates, routes, commands.
 //! - [`work`] — where a batch's working files live.
 //! - [`cli`] — the command line, a thin layer over [`api`].
@@ -12,6 +13,7 @@
 
 pub mod api;
 pub mod cli;
+pub mod comments;
 pub mod config;
 pub mod error;
 pub mod formats;

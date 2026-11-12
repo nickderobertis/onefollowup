@@ -91,7 +91,7 @@ fn sources(name: &str) -> Vec<(String, bool)> {
 }
 
 /// A world running `name`'s configuration, its templates and scripts copied beside it.
-fn world_of(name: &str) -> World {
+pub fn world_of(name: &str) -> World {
     let declared = sources(name);
     let destinations: Vec<&str> = declared
         .iter()
@@ -134,7 +134,7 @@ fn record(text: &str) -> Value {
 }
 
 /// The filed item of `destination` whose record names `root_cause`, with its id.
-fn filed(world: &World, destination: &str, root_cause: &str) -> (String, String) {
+pub fn filed(world: &World, destination: &str, root_cause: &str) -> (String, String) {
     world
         .filed(destination)
         .into_iter()
@@ -326,7 +326,7 @@ fn single_root_cause() {
     );
 }
 
-fn symptom_ticket(slug: &str, drafts: &[&str], kind: &str, fields: &[(&str, &str)]) -> Ticket {
+pub fn symptom_ticket(slug: &str, drafts: &[&str], kind: &str, fields: &[(&str, &str)]) -> Ticket {
     let mut ticket = Ticket::new(slug, &format!("{slug} fails"), drafts);
     ticket.kind = Some(kind.to_owned());
     ticket.fields = fields

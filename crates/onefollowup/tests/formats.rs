@@ -5,12 +5,14 @@
 //! values), and committed: nothing here reads or runs anything of that repository. Each is
 //! read and re-rendered byte for byte; a record one schema above — and, where one exists,
 //! one below — the version read is refused naming the format, the schema found and the
-//! schema read.
+//! schema read. The gathering (`gathering/`) and the outbox are onefollowup's own formats,
+//! with no earlier writer; their fixtures were written for these tests.
 
 use onefollowup::formats::batch::BatchState;
 use onefollowup::formats::dispositions::{CarriedDispositions, Dispositions};
 use onefollowup::formats::draft::{DraftRecord, DraftsProjectRecord};
 use onefollowup::formats::existing_tickets::ExistingTickets;
+use onefollowup::formats::gathering::Gathering;
 use onefollowup::formats::markers::{
     CommentMarker, EvidenceComment, FeedbackBoundary, FeedbackSnapshot, IssueLine, QuotedAnchor,
     Reply, ReplyTo, evidence_opening, reply_opening,
@@ -486,6 +488,10 @@ fn snapshots_and_their_launch_round_trip() {
     refused::<Snapshot>("snapshot/snapshot-schema1.json", "snapshot", "1", 2);
     refused::<Snapshot>("snapshot/snapshot-schema3.json", "snapshot", "3", 2);
     round_trips::<Launched>("snapshot/launched.json");
+    let gathering = round_trips::<Gathering>("gathering/gathering.json");
+    assert_eq!(gathering.listings["followups"].comments.len(), 2);
+    assert_eq!(gathering.last_written[0].item, "followups:item-42");
+    refused::<Gathering>("gathering/gathering-schema2.json", "gathering", "2", 1);
     refused::<Launched>("snapshot/launched-schema2.json", "launched record", "2", 1);
 }
 

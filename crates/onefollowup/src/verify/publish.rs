@@ -1092,7 +1092,10 @@ fn updates(
                 .get(&item)
                 .cloned()
                 .or_else(|| read.item.version.clone()),
+            title: None,
             body: Some(body),
+            status: None,
+            repositories: None,
             priority: following.then(|| level_word(written).to_owned()),
             when_priority: if following {
                 vec![read.item.priority.clone()]
@@ -1282,7 +1285,10 @@ fn assign_entry(batch: &Batch<'_>, assignment: Assignment) -> Entry {
         HeldUpdate {
             item: assignment.item.clone(),
             if_version: None,
+            title: None,
             body: None,
+            status: None,
+            repositories: None,
             priority: None,
             when_priority: Vec::new(),
             metadata: BTreeMap::from([(batch.record_key(), ticket::record_value(&record))]),

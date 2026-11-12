@@ -13,6 +13,8 @@ publish = false
 
 [dev-dependencies]
 assert_cmd.workspace = true
+# A reply the scripted answering agent posts is stamped with the time it is posted.
+chrono.workspace = true
 gethostname.workspace = true
 onebudgetspec-core.workspace = true
 regex.workspace = true

@@ -8,9 +8,9 @@ destination is any source onetaskgraph serves (a local Markdown folder, GitHub P
 Linear) and onefollowup holds no client of its own.
 
 It ships as a CLI and a Rust library with the same surface. **v1 lands the contract**: every
-verb, the configuration file and the record formats. `config show` and `kinds` are
-implemented; every other verb parses its arguments and refuses with exit 2 and
-`not implemented in this release` until the release that implements it.
+verb, the configuration file and the record formats. The verify loop, the comment pass,
+`config show` and `kinds` are implemented; `statuses` parses its arguments and refuses with
+exit 2 and `not implemented in this release` until the release that implements it.
 
 ## Install
 
@@ -40,10 +40,10 @@ library is the `onefollowup` crate.
 | `check --batch <ID>` | Hold the batch's dispositions, tickets, edges and staged writes to the rules before anything is written; exit 0 when sound. |
 | `publish --batch <ID>` | Send the staged writes in batched store calls — under relations, the batch's edges in one `task parent set-many` and one `task link add-many` — and receipt every outcome. |
 | `settle --batch <ID>` | Read back only the writes no answer confirmed, run the `batch_settled` hook, retire the batch's working files. |
-| `comments gather [--batch <ID> \| --item <ID>] [--dry-run]` | Gather people's comments to answer into a snapshot. |
-| `comments launches --snapshot <S>` | Plan the answering dispatches a snapshot launches. |
-| `comments check --feedback <F>` | Hold a gathering's responses to the rules. |
-| `comments settle --snapshot <S> [--launched <BATCH>=<FEEDBACK>]...` | Settle a snapshot's answers. |
+| `comments gather [--batch <ID> \| --item <ID>] [--dry-run]` | List each destination's comments since its watermark in one comments-since listing — or every comment of the one item, or every item the batch filed — select each one to answer for the batch owning its item, and write the snapshot every later step reads (The comment pass, below). A dry run's result carries the `launch_command` that launches exactly that snapshot. |
+| `comments launches --snapshot <S>` | Claim the snapshot once and write one feedback file per batch it selected comments for, reading no destination; refused for a snapshot already launched, a dry run's older than `snapshot.launchable_for`, or one gathered before another sharing a comment was launched. |
+| `comments check --feedback <F>` | Hold a feedback dispatch's response account to its snapshot, and its batch's tickets to changing only quoted issues' tickets; `sound` says whether it breaks no rule. |
+| `comments settle --snapshot <S> [--launched <BATCH>=<FEEDBACK>]...` | Verify every reply in one batched read, send every ticket change in one `update-many`, record what did not certainly land in `pending.json`, and move the watermark when it may. Without `--launched`, every batch the snapshot launched. |
 | `statuses` | Read the destination's statuses against the configured status roles. |
 | `kinds` | Print the effective kinds, relations, dispositions and routes, as the verifying agent reads them. |
 | `config show [--sources]` | Print the effective configuration as JSON; `--sources` names the layer each key came from. |
@@ -60,7 +60,7 @@ in this release.
 Each verb's result is one typed document of the library (`onefollowup::api`), stated here
 once by example; `tests/contract.rs` holds every example to the library's type, so the two
 cannot drift. A field shown `null`-able in the type (`status`, `version`, `url`, `author`,
-`item`, `hook`, a dry run's `snapshot`) is `null` when there is none. Every document carries
+`item`, `hook`) is `null` when there is none. Every document carries
 `schema_version` 1. The nodes that implement a verb may add optional fields; changing a
 field declared here is a contract change agreed with the manager first. `kinds` and
 `config show` print the documents the configuration section describes.
@@ -133,9 +133,11 @@ field declared here is a contract change agreed with the manager first. `kinds` 
       "batch": "nightly-2026-11-01",
       "feedback": "feedback/nightly-2026-11-01/20261101T120000Z.md",
       "writes": 2,
-      "pending": 0
+      "pending": 0,
+      "verified": 2
     }
-  ]
+  ],
+  "watermark": "2026-11-01T12:00:00Z"
 }
 ```
 
@@ -392,7 +394,7 @@ key, the layer its value came from.
 | `namespace` | `orchestrator` | Prefix of the comment markers (`orchestrator:follow-up-comment`) and the record's metadata key (`orchestrator.follow-up`). |
 | `host_label` | the machine's hostname | The host a ticket records as having verified it. |
 | `batch_id_pattern` | word characters, `.`, `@`, `+`, `-`, not dots alone | A batch id, matched in full. |
-| `statuses` | proposal → `backlog`, accepted → `todo`, deferred → `draft`, queued → `queued`, in-progress → `in-progress`, done → `done`, cancelled → `cancelled` | Each status role mapped to a store status category, with `description`, `protected` (no batch withdraws an item at this role) and `selected` (an agent picking up accepted work selects it). |
+| `statuses` | proposal → `backlog`, accepted → `todo`, deferred → `draft`, queued → `queued`, in-progress → `in-progress`, done → `done`, cancelled → `cancelled` | Each status role mapped to a store status category, with `description`, `protected` (no batch withdraws an item at this role), `selected` (an agent picking up accepted work selects it) and `answered` (people's comments on an item at this role are answered by its batch; proposal and deferred by default). |
 | `rubric` | four severity levels, critical → low | Severity `levels` (each with the priority it estimates at and its meaning for users, development and resources), `areas`, `guidance`, `impact_lines`, `no_workaround`, `impact_parts`, `workaround_costs`. |
 | `estimate` | `raise_at: 3`, `raise_cap: high` | An estimate is raised one level, capped at `raise_cap`, when a root cause fires consistently or has `raise_at` or more occurrences. |
 | `task_template` | `builtin:task-template.md.j2` | The verifying agent's task template; a path, or `builtin:` for a shipped file. |
@@ -405,7 +407,7 @@ key, the layer its value came from.
 | `default_dispositions` | none | The dispositions every kind allows unless it lists its own; none allows the whole catalogue. |
 | `routes` | `[]` | Ordered routes (below). |
 | `hooks` | none | Commands run at named moments (below). |
-| `snapshot` | `launchable_for: 24h` | How long a comment snapshot stays launchable. |
+| `snapshot` | `launchable_for: 24h` | How long a dry run's comment snapshot stays launchable. |
 
 No key says *when* the loop runs; that is the host's schedule.
 
@@ -638,6 +640,60 @@ for the first, disposed `fixed-inline` naming its change (and `check` refuses th
 with no change named, and on an `external-defect` input); one ticket for each of the others on
 `backlog`, at Proposal, priority low. Linked: nothing.
 
+## The comment pass
+
+People answer follow-up tickets on the destination — a question, a correction, a reason a
+ticket is wrong — and each comment is answered once, by the batch that owns the ticket, with any
+change it calls for made without overwriting what a person edited meanwhile. The pass is four
+verbs, its destination work three store calls:
+
+1. **`comments gather`** makes one comments-since listing of each destination, narrowed to this
+   host's items (`<namespace>.follow-up/host` is `host_label`) at a status whose role is
+   `answered`, from the destination's watermark (none: every comment). Who owns each item, and
+   what onefollowup last wrote to it, come from this host's own records — each batch's receipts
+   and its tickets in the drafts source — never another destination read. Each comment is
+   selected for its owning batch or left out for one reason, tried in order: no batch here filed
+   the item; its batch is no batch id; the comment is marked as any batch's own; a bot wrote it;
+   a reply of any batch answers it as it now stands (a reply answers the version its gathering
+   quoted, so a comment edited after it is answered again). Under a relation with a `rollup`,
+   gathering also reads the selected items' relations in one `task relations` and their related
+   tickets in one read; a configuration with no rollup makes neither call. The snapshot,
+   `feedback/.snapshots/<stamp>/`, holds `snapshot.json` (what was selected and left out, and
+   why), `gathering.json` (the listing, what onefollowup last wrote to each selected item, the
+   rollup reads) and `last-written/`, one readable file per selected item, labelled as what
+   onefollowup last wrote and not the destination's current text.
+2. **`comments launches`** claims the snapshot once (`launched.json`) and writes each selected
+   batch's feedback file, `feedback/<batch>/<stamp>.md`: the task template rendered with `mode`
+   `feedback` (the shipped one's `task-template/feedback.md.j2`), quoting each comment under its
+   anchor with the reply opening and markers its reply carries. The answering agent changes the
+   quoted issues' tickets in the batch's tickets directory — `status: cancelled` withdraws one —
+   posts one reply per comment through the store, and writes its account,
+   `feedback/<batch>/<stamp>.responses.json`. Each batch's tickets are kept as they stood at the
+   launch, under the snapshot's `tickets/`, so what the agent changed is known.
+3. **`comments check`** holds the account to the snapshot: one response per quoted comment, in
+   order, each on the issue it was quoted on and owned by the batch, with its reply's id; and
+   the batch's tickets to changing only quoted issues' tickets, each still sound.
+4. **`comments settle`** makes one batched read of every item a sound account quotes and every
+   item `pending.json` names, with their comments, verifying each reply there. It then sends, in
+   one `update-many`, every change: a changed ticket's title, content, record and repositories,
+   the re-estimate its comments and confirming replies give (a rollup's related tickets
+   included), guarded by the priority onefollowup last wrote, and a withdrawal's status while
+   the item is at a status that is not `protected` — each item's write held to the version the
+   read returned. A write is **withheld** into `pending.json` where the read shows the item
+   differs from what onefollowup last wrote to it (its title, its content less the estimate
+   line, or its record less what onefollowup's own writes move), so a person's edit — before
+   the gathering or after it — stands. An entry `pending.json` already held is cleared once the
+   read shows it landed, retried in the same `update-many` once the item again holds what
+   onefollowup last wrote, and otherwise kept. A reply the read does not show is recorded there
+   too. A settle with anything pending, or an unsound account, says `needs_attention`. Landed
+   writes are kept in step in the drafts source.
+
+**The watermark moves only in settle**, to the listing's own watermark — the source's time set
+back by its consistency window — and only for an unscoped snapshot whose every selected batch
+settled a sound account and whose every reply was verified. So a comment no verified reply
+answers is listed again by the next pass, and one a verified reply answers is left as answered.
+A pass scoped by `--item` or `--batch` reads every comment of its items and moves nothing.
+
 ## Record formats
 
 Every record is declared once as a Rust type in `onefollowup::formats` with its parse and
@@ -655,7 +711,8 @@ the batch id stands where they say `run`.
 | Dispositions | 1 | `dispositions/<batch>.json`; each entry may carry `kind`, which `check` requires. |
 | Carried dispositions | 1 | `dispositions/<batch>.carried.json`. |
 | Responses | 3 | `feedback/<batch>/<stamp>.responses.json`. |
-| Snapshot | 2 | `feedback/.snapshots/<stamp>/snapshot.json`, with its `launched.json` (1). |
+| Snapshot | 2 | `feedback/.snapshots/<stamp>/snapshot.json`, with its `launched.json` (1). An item's `snapshot_id` names its file under the snapshot's `last-written/`, and its `version` the version its batch's receipts last recorded. |
+| Gathering | 1 | `feedback/.snapshots/<stamp>/gathering.json`, new in onefollowup: each destination's comments-since listing, what onefollowup last wrote to each selected item, and — under a rollup — the relations and related tickets read. |
 | Watermark | 1 | `feedback/.watermark-<board>.json`. |
 | Pending writes | 1 | `feedback/pending.json`. |
 | Existing tickets | 1 | `existing-tickets.json`. |

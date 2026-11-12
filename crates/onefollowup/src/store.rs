@@ -17,14 +17,15 @@ use std::path::{Path, PathBuf};
 
 use onetaskgraph_core::config::{self, Layer};
 use onetaskgraph_core::{
-    BATCH_SCHEMA_VERSION, Body, CommentBatch, CommentBatchItem, CopyAction, CopyConditions,
-    CopyItems, CopyRequest, CopyScope, Engine, Environment, FindIn, FindQuery, FindRequest,
-    GlobalId, LinkBatch, LinkItem, OtherEnd, ParentBatch, ParentEdge, ProjectCreate, Qualified,
-    RELATIONS_SCHEMA_VERSION, SourceState, StatusPolicy, TaskCreate, UpdateBatch, UpdateBatchItem,
+    BATCH_SCHEMA_VERSION, Body, CommentBatch, CommentBatchItem, CommentsSinceRequest, CopyAction,
+    CopyConditions, CopyItems, CopyRequest, CopyScope, Engine, Environment, FindIn, FindQuery,
+    FindRequest, GlobalId, LinkBatch, LinkItem, OtherEnd, ParentBatch, ParentEdge, ProjectCreate,
+    Qualified, RELATIONS_SCHEMA_VERSION, SourceState, StatusPolicy, TaskCreate, UpdateBatch,
+    UpdateBatchItem,
 };
 use onetaskgraph_plugin_api::{
-    Classification, LinkDirection, Location, MetadataKey, NativeId, Priority, Repository,
-    SourceName, Status, StatusCategory, Task, TaskUpdate,
+    AuthorKind, Classification, LinkDirection, Location, MetadataKey, MetadataMatch, NativeId,
+    Priority, Repository, SourceName, Status, StatusCategory, Task, TaskUpdate,
 };
 use serde::Serialize;
 use serde_json::Value;
@@ -40,6 +41,10 @@ pub const STATUS_CATEGORIES: &[&str] = &[
     "done",
     "cancelled",
 ];
+
+/// The store a snapshot records it was gathered through: onetaskgraph at the version this
+/// crate pins. `tests/store.rs` holds it to the workspace's pin.
+pub const STORE_LINE: &str = "onetaskgraph 0.14.14";
 
 /// The name of the onetaskgraph configuration document a `store` directory holds.
 pub const STORE_DOCUMENT: &str = "onetaskgraph.yaml";
@@ -110,7 +115,8 @@ pub struct Source {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, serde::Deserialize)]
 pub struct StoreOperation {
     /// The call: `find`, `read`, `copy`, `comment-add-many`, `update-many`, `create-task`,
-    /// `update-task`, `create-project`, `relations`, `parent-set-many` or `link-add-many`.
+    /// `update-task`, `create-project`, `relations`, `parent-set-many`, `link-add-many` or
+    /// `comments-since`.
     pub op: String,
     /// The source it reached; for a call over several, their names joined by `,`.
     pub source: String,
@@ -365,8 +371,14 @@ pub struct HeldUpdate {
     pub item: String,
     /// The version it must be at.
     pub if_version: Option<String>,
+    /// Its title.
+    pub title: Option<String>,
     /// Its content, replaced whole.
     pub body: Option<String>,
+    /// Its status category.
+    pub status: Option<String>,
+    /// Its repositories, replaced whole.
+    pub repositories: Option<Vec<String>>,
     /// Its priority.
     pub priority: Option<String>,
     /// Write only while it holds one of these priorities.
@@ -390,6 +402,61 @@ pub struct ItemRelations {
     pub children: Vec<String>,
     /// Every link it holds.
     pub links: Vec<HeldLink>,
+}
+
+/// Who wrote a comment, as its source tells.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Author {
+    /// A person.
+    Person,
+    /// A bot, an integration or an app.
+    Bot,
+    /// The source cannot say.
+    Unknown,
+}
+
+/// One comment of a comments-since listing.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ListedComment {
+    /// The task it is on, qualified.
+    pub item: String,
+    /// Its id, as its source issued it.
+    pub id: String,
+    /// Where a person opens it.
+    pub url: Option<String>,
+    /// Who wrote it, in the source's spelling.
+    pub author: Option<String>,
+    /// Whether that is a person, a bot, or neither the source can tell.
+    pub author_kind: Author,
+    /// When it last changed, RFC 3339.
+    pub updated_at: String,
+    /// Its version: when it last changed, at the backend's own precision.
+    pub version: String,
+    /// Its text.
+    pub body: String,
+}
+
+/// Every comment one source's tasks hold since an instant, and where a later read starts.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Listing {
+    /// The instant a later read may start from, set back by the source's consistency window.
+    pub watermark: String,
+    /// Every comment made or edited since, oldest first.
+    pub comments: Vec<ListedComment>,
+}
+
+/// What a comments-since listing keeps.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Narrowing {
+    /// Metadata values each task holds, each at `<KEY>[/<SEGMENT>…]`.
+    pub metadata: Vec<(String, String)>,
+    /// The status categories kept; empty keeps every one.
+    pub statuses: Vec<String>,
+    /// The tasks kept, qualified; empty keeps every one.
+    pub items: Vec<String>,
 }
 
 /// One link as one endpoint holds it.
@@ -722,6 +789,82 @@ impl Store {
             .collect())
     }
 
+    /// Every comment made or edited at or after `since` on the tasks of `source` that
+    /// `narrowing` keeps, every page of each, in one listing, with the watermark a later
+    /// listing may start from.
+    ///
+    /// # Errors
+    ///
+    /// A value the store does not take, or its refusal of the listing.
+    pub fn comments_since(
+        &self,
+        source: &str,
+        since: &chrono::DateTime<chrono::Utc>,
+        narrowing: &Narrowing,
+    ) -> Result<Listing, StoreError> {
+        let metadata = narrowing
+            .metadata
+            .iter()
+            .map(|(location, value)| {
+                let mut segments = location.split('/').map(str::to_owned);
+                let key = segments.next().unwrap_or_default();
+                MetadataMatch::new(key, segments.collect(), value.clone())
+                    .map_err(StoreError::Invalid)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let request = CommentsSinceRequest {
+            source: source_name(source)?,
+            since: *since,
+            metadata,
+            statuses: narrowing
+                .statuses
+                .iter()
+                .map(|word| status_category(word))
+                .collect::<Result<_, _>>()?,
+            items: narrowing
+                .items
+                .iter()
+                .map(|id| global(id))
+                .collect::<Result<_, _>>()?,
+            page_size: NonZeroU32::new(PAGE_SIZE).unwrap_or(NonZeroU32::MIN),
+        };
+        let answered = self.runtime.block_on(self.engine.comments_since(&request));
+        let listed = answered.map_err(|error| Self::failed("a comments listing", source, error))?;
+        let mut items: Vec<String> = listed
+            .comments
+            .iter()
+            .map(|comment| comment.item.to_string())
+            .collect();
+        items.sort_unstable();
+        items.dedup();
+        self.count("comments-since", source, items.len());
+        Ok(Listing {
+            watermark: listed
+                .watermark
+                .to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true),
+            comments: listed
+                .comments
+                .into_iter()
+                .map(|comment| ListedComment {
+                    item: comment.item.to_string(),
+                    id: comment.id.to_string(),
+                    url: comment.url,
+                    author: comment.author,
+                    author_kind: match comment.author_kind {
+                        AuthorKind::Person => Author::Person,
+                        AuthorKind::Bot => Author::Bot,
+                        AuthorKind::Unknown => Author::Unknown,
+                    },
+                    updated_at: comment
+                        .updated_at
+                        .to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true),
+                    version: comment.version,
+                    body: comment.body,
+                })
+                .collect(),
+        })
+    }
+
     /// Write the project `id` of `source`, creating it or keeping the one there.
     ///
     /// # Errors
@@ -990,7 +1133,14 @@ impl Store {
                     Ok(UpdateBatchItem {
                         item: update.item.clone(),
                         if_version: update.if_version.clone(),
+                        title: update.title.clone(),
                         body: update.body.clone(),
+                        status: update.status.as_deref().map(status_category).transpose()?,
+                        repositories: update
+                            .repositories
+                            .as_deref()
+                            .map(repositories)
+                            .transpose()?,
                         priority: update.priority.as_deref().map(priority).transpose()?,
                         when_priority: update
                             .when_priority

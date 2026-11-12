@@ -232,6 +232,8 @@ fn examples() -> BTreeMap<&'static str, Value> {
                 items: 3,
                 selected: IndexMap::from([(BATCH.to_owned(), 2)]),
                 left: 1,
+                launch_command: None,
+                store_operations: Vec::new(),
             })),
         ),
         (
@@ -264,7 +266,14 @@ fn examples() -> BTreeMap<&'static str, Value> {
                     feedback,
                     writes: 2,
                     pending: 0,
+                    verified: 2,
+                    outstanding: 0,
+                    problems: Vec::new(),
                 }],
+                pending: 0,
+                needs_attention: false,
+                watermark: Some("2026-11-01T12:00:00Z".to_owned()),
+                store_operations: Vec::new(),
             })),
         ),
         (

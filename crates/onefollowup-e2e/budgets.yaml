@@ -26,3 +26,52 @@ budgets:
     unit: operations
     direction: max
     threshold: 8
+  # The comment pass, counted by tests/e2e/comment_budgets.rs. Basis, by arithmetic over the
+  # batched design: one gathering listing, one batched settle read verifying the 40 replies, and
+  # one `update-many` carrying the 10 changed tickets' writes, re-estimates included — 3, against
+  # 22 in the loop this replaces (one gathering copy, one settle read and two held writes for each
+  # of 10 tickets). No headroom: no step of the pass may add a destination call. The reporter runs
+  # after this crate's `test` target built its test binary, so cargo only checks freshness and
+  # one test reads one telemetry file: about 60 seconds on a loaded shared host.
+  # llmlint: ignore[budgets_track_product_owner_outcomes] The user set separate targets for store operations per comment pass and per ticket's life, and each is held at its own workload: a 40-comment pass over 6 batches grows with comments gathered, while one ticket's life does not. Folding one into the other's breakdown would drop a target the user ruled.
+  - id: comment-pass-store-operations
+    description: >-
+      Store operations one comment-answering pass makes: the plan-store operations onefollowup
+      itself makes in one realistic pass from `comments gather` to `comments settle`, counted at
+      its store boundary — 40 comments on 20 proposals owned by 6 batches, beside 60 other items
+      of this host, gathered once, answered by one feedback dispatch per owning batch, 10 tickets
+      changed by the answers, settled once. The detail gives the gather, the settle's read and its
+      writes apart, with the items each touched. An inner measure: it leaves out the reply writes
+      the dispatched answering agents make, one per comment answered, fixed by the comments people
+      wrote rather than by anything onefollowup's code can change, while its own reads,
+      verifications and settles are the part its code moves and a regression would grow. It
+      protects a destination's shared allowance at realistic comment volume; each operation's
+      cost to GitHub or Linear is held by onetaskgraph's own budgets.
+    measure: reported
+    command: ["cargo", "test", "--quiet", "-p", "onefollowup-e2e", "--locked", "--test", "e2e", "--", "budget_runner::report", "--exact", "--nocapture", "../../target/debug/telemetry/onefollowup-e2e"]
+    unit: operations
+    direction: max
+    threshold: 3
+  # One ticket's whole life, counted by tests/e2e/comment_budgets.rs. Basis, by arithmetic over
+  # the batched design: filing makes one batched search and one copy, its answer verifying it;
+  # the re-copy one copy held to the receipted version with no read first; the answer one
+  # gathering listing, one settle read verifying the reply and one held update carrying the
+  # ticket change and the withdrawal — 6, against 9 in the loop this replaces. 6 was approved
+  # over a target of about 5, keeping both safeguards: reaching 5 would drop the search before
+  # filing or the reply's verification. About 60 seconds to report, as above.
+  # llmlint: ignore[budgets_track_product_owner_outcomes] The user set separate targets for store operations per comment pass and per ticket's life, and each is held at its own workload: a 40-comment pass over 6 batches grows with comments gathered, while one ticket's life does not. Folding one into the other's breakdown would drop a target the user ruled.
+  - id: ticket-lifecycle-store-operations
+    description: >-
+      Store operations one ticket's whole life makes: the destination store operations one
+      follow-up ticket makes from being filed by one batch, through being re-copied by a
+      re-dispatch of that batch, to being answered once by a comment pass whose answer withdraws
+      it, on a destination holding 60 other items, counted at onefollowup's store boundary. The
+      detail gives each step's operations. An inner measure: it leaves out the reply write the
+      dispatched answering agent makes, fixed by the comment a person wrote rather than by
+      onefollowup's code, and calls to the local drafts source, which spend no destination's
+      shared allowance. It protects that shared allowance over a ticket's life.
+    measure: reported
+    command: ["cargo", "test", "--quiet", "-p", "onefollowup-e2e", "--locked", "--test", "e2e", "--", "budget_runner::report", "--exact", "--nocapture", "../../target/debug/telemetry/onefollowup-e2e"]
+    unit: operations
+    direction: max
+    threshold: 6

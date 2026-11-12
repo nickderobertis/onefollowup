@@ -1313,6 +1313,7 @@ name = "onefollowup-e2e"
 version = "0.3.0"
 dependencies = [
  "assert_cmd",
+ "chrono",
  "gethostname",
  "onebudgetspec-core",
  "onefollowup",

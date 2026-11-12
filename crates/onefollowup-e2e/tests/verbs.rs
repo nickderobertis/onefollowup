@@ -1,14 +1,14 @@
 //! Every verb of the v1 surface but `config show` and `kinds`, driven through the built
 //! binary: each parses its arguments — a malformed invocation is a usage error. A verb the
-//! verify loop implements then needs its store, and fails naming the onetaskgraph
-//! configuration it did not find; every other verb refuses with exit 2 and `not implemented in
-//! this release`.
+//! verify loop or the comment pass implements then needs its store, and fails naming the
+//! onetaskgraph configuration it did not find; every other verb refuses with exit 2 and `not
+//! implemented in this release`.
 
 mod support;
 
 use support::onefollowup;
 
-/// The verbs the verify loop implements.
+/// The verbs the verify loop and the comment pass implement.
 const IMPLEMENTED: &[&str] = &[
     "draft",
     "prepare",
@@ -22,6 +22,10 @@ const IMPLEMENTED: &[&str] = &[
     "check",
     "publish",
     "settle",
+    "comments gather",
+    "comments launches",
+    "comments check",
+    "comments settle",
 ];
 
 /// Each verb: a well-formed invocation, and a malformed one.

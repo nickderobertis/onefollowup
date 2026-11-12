@@ -22,6 +22,7 @@ statuses:
       it here; a person moving it to accepted is what accepts it.
     protected: false
     selected: false
+    answered: true
   accepted:
     category: todo
     description: >-
@@ -29,6 +30,7 @@ statuses:
       accepting a ticket is.
     protected: true
     selected: true
+    answered: false
   deferred:
     category: draft
     description: >-
@@ -36,6 +38,7 @@ statuses:
       new evidence. Only a person moves an item here.
     protected: true
     selected: false
+    answered: true
   queued:
     category: queued
     description: >-
@@ -44,6 +47,7 @@ statuses:
       does.
     protected: true
     selected: false
+    answered: false
   in-progress:
     category: in-progress
     description: >-
@@ -51,6 +55,7 @@ statuses:
       to.
     protected: true
     selected: false
+    answered: false
   done:
     category: done
     description: >-
@@ -58,6 +63,7 @@ statuses:
       or the tooling that lands the fix moves an item here, whatever status it held.
     protected: true
     selected: false
+    answered: false
   cancelled:
     category: cancelled
     description: >-
@@ -65,6 +71,7 @@ statuses:
       withdrawing its own ticket that nobody accepted or deferred.
     protected: false
     selected: false
+    answered: false
 
 rubric:
   # Most severe first. `priority` is the estimate each severity with the workaround gives

@@ -21,13 +21,7 @@ fn dispatched(arguments: &[&str]) -> Result<String, Error> {
 
 #[test]
 fn every_stubbed_verb_reaches_its_function_and_refuses() {
-    let verbs: &[&[&str]] = &[
-        &["comments", "gather", "--dry-run"],
-        &["comments", "launches", "--snapshot", "s"],
-        &["comments", "check", "--feedback", "f"],
-        &["comments", "settle", "--snapshot", "s", "--launched", "b=f"],
-        &["statuses"],
-    ];
+    let verbs: &[&[&str]] = &[&["statuses"]];
     for arguments in verbs {
         let error = dispatched(arguments).expect_err("not implemented");
         let verb = arguments

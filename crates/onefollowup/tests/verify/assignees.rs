@@ -441,3 +441,100 @@ fn an_assignee_costs_no_store_operation_and_a_configuration_assigning_nobody_wri
             .any(|receipt| receipt["command"] == "assign")
     );
 }
+
+#[test]
+fn a_bound_ticket_whose_route_now_names_another_person_is_reassigned_with_the_batchs_updates() {
+    let mut world = World::assigning(
+        &["followups"],
+        &["drafts", "followups"],
+        &assigning("alice"),
+    );
+    let root = world.root.display().to_string();
+    world.script(
+        "rotation-today",
+        &format!("cat >/dev/null\necho \"{{\\\"assignee\\\": \\\"$(cat {root}/on-call)\\\"}}\""),
+    );
+    std::fs::write(world.root.join("on-call"), "bob").expect("written");
+    three_tickets(&mut world, BATCH);
+    let (card, _) = item(&world, "checkout-crashes");
+    // The rotation moves on; the batch re-stages its critical ticket with more evidence.
+    std::fs::write(world.root.join("on-call"), "carol").expect("written");
+    world.ok("prepare", &["prepare", "--batch", BATCH], "");
+    let draft = std::fs::read_to_string(world.work().join(format!("dispositions/{BATCH}.json")))
+        .expect("the answers");
+    let draft: Value = serde_json::from_str(&draft).expect("JSON");
+    let first = draft["drafts"][0].as_str().expect("a draft").to_owned();
+    let mut ticket = Ticket::new("checkout-crashes", "checkout crashes", &[&first])
+        .severities("critical", "critical", "none");
+    ticket.evidence.push_str(" Seen again.");
+    world.ticket(BATCH, &ticket);
+    world.ok(
+        "agent",
+        &["ticket", "copy", "--batch", BATCH, "checkout-crashes"],
+        "",
+    );
+    let checked = world.ok("check", &["check", "--batch", BATCH], "");
+    assert_eq!(checked["sound"], true, "{checked}");
+    let published = world.ok("publish", &["publish", "--batch", BATCH], "");
+    let text = world.read_item("followups", &card);
+    assert_eq!(assignees(&text), ["carol"], "{published}\n{text}");
+    assert_eq!(record(&text)["board_assignee"], "carol");
+    let assigned = world
+        .receipts(BATCH)
+        .into_iter()
+        .rfind(|receipt| receipt["command"] == "assign")
+        .expect("an assignee's receipt");
+    assert_eq!(assigned["outcome"]["when"], json!(["bob"]), "{assigned}");
+    assert_eq!(assigned["outcome"]["action"], "written");
+    assert!(
+        assigned["ticket"]
+            .as_str()
+            .is_some_and(|ticket| ticket.starts_with("drafts:")),
+        "{assigned}"
+    );
+}
+
+#[test]
+fn a_route_command_assigning_where_the_destination_holds_no_assignee_withholds_that_write() {
+    let mut world = World::new(
+        &["followups"],
+        "host_label: build-host-1\nroutes:\n  - {name: rotation, match: {severity: [critical]}, command: [rotation-today]}\n",
+    );
+    world.script(
+        "rotation-today",
+        "cat >/dev/null\necho '{\"assignee\": \"bob\"}'",
+    );
+    let draft = world.draft(BATCH, "checkout crashes", &[], "Crash.\n");
+    world.ok("prepare", &["prepare", "--batch", BATCH], "");
+    world.ticket(
+        BATCH,
+        &Ticket::new("checkout-crashes", "checkout crashes", &[&draft])
+            .severities("critical", "critical", "none"),
+    );
+    world.ok(
+        "agent",
+        &["ticket", "copy", "--batch", BATCH, "checkout-crashes"],
+        "",
+    );
+    world.answer(
+        BATCH,
+        &[answer(
+            &draft,
+            "root-cause",
+            "filed",
+            &["checkout-crashes"],
+            "Verified.",
+        )],
+    );
+    let checked = world.ok("check", &["check", "--batch", BATCH], "");
+    assert_eq!(checked["sound"], true, "{checked}");
+    let published = world.ok("publish", &["publish", "--batch", BATCH], "");
+    assert_eq!(published["outcomes"][0]["outcome"], "route-command-failed");
+    assert!(
+        published["outcomes"][0]["error"]
+            .as_str()
+            .is_some_and(|error| error.contains("the route `rotation` command assigned `bob`, and the source `followups` does not set `config.assignees: true`")),
+        "{published}"
+    );
+    assert!(world.filed("followups").is_empty());
+}

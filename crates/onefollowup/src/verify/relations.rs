@@ -723,7 +723,7 @@ pub fn end_of(
             End::Ticket(merged.into.clone())
         });
     }
-    if files.iter().any(|file| file.slug == slug) || batch.ticket(&slug).is_ok() {
+    if files.iter().any(|file| file.slug == slug) {
         Ok(End::Ticket(slug))
     } else {
         Err(format!(
@@ -745,13 +745,7 @@ pub fn kind_of(
         End::Ticket(slug) => files
             .iter()
             .find(|file| file.slug == *slug)
-            .map(|file| file.kind_name(batch.config).to_owned())
-            .or_else(|| {
-                batch
-                    .ticket(slug)
-                    .ok()
-                    .map(|file| file.kind_name(batch.config).to_owned())
-            }),
+            .map(|file| file.kind_name(batch.config).to_owned()),
         End::Item(item) => {
             let read = decide::read_of(state, item)?;
             let record = decide::item_record(batch, read)?;

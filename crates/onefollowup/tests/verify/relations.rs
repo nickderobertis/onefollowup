@@ -1237,3 +1237,247 @@ fn a_parent_across_sources_is_refused_while_a_link_across_them_is_written() {
     assert_eq!(edge["outcome"], "written", "{published}");
     assert_eq!(edge["item"], task_id);
 }
+
+#[test]
+fn an_edge_whose_end_was_withheld_is_receipted_and_left_pending() {
+    let mut world = example_world();
+    let config = std::fs::read_to_string(world.root.join("onefollowup.yaml")).expect("read");
+    // A root cause also pages its owner, who is not answering.
+    let config = config.replace(
+        "host_label: build-host-1\n",
+        "  - name: page-owner\n    match: {kind: [root-cause]}\n    command: [page-owner]\nhost_label: build-host-1\n",
+    );
+    std::fs::write(world.root.join("onefollowup.yaml"), config).expect("written");
+    world.script(
+        "page-owner",
+        "cat >/dev/null\necho 'the pager is down' >&2\nexit 3",
+    );
+    let d1 = world.draft(BATCH, "timeout-42 fails", &[], "TIMEOUT-42.\n");
+    world.ok("prepare", &["prepare", "--batch", BATCH], "");
+    for ticket in [
+        kinded(
+            "timeout-42",
+            &[&d1],
+            "symptom",
+            &[("error_signature", "TIMEOUT-42")],
+        ),
+        kinded("stale-cache-lease", &[&d1], "root-cause", &[]),
+    ] {
+        world.ticket(BATCH, &ticket);
+        world.ok(
+            "agent",
+            &["ticket", "copy", "--batch", BATCH, &ticket.slug],
+            "",
+        );
+    }
+    world.ok(
+        "agent",
+        &[
+            "ticket",
+            "relate",
+            "--batch",
+            BATCH,
+            "--relation",
+            "caused-by",
+            "--from",
+            "timeout-42",
+            "--to",
+            "stale-cache-lease",
+        ],
+        "",
+    );
+    world.answer(
+        BATCH,
+        &[answer(
+            &d1,
+            "symptom",
+            "filed",
+            &["timeout-42", "stale-cache-lease"],
+            "Verified.",
+        )],
+    );
+    let checked = world.ok("check", &["check", "--batch", BATCH], "");
+    assert_eq!(checked["sound"], true, "{checked}");
+    let published = world.ok("publish", &["publish", "--batch", BATCH], "");
+    let outcomes: Vec<(String, String)> = published["outcomes"]
+        .as_array()
+        .expect("outcomes")
+        .iter()
+        .map(|one| {
+            (
+                one["op"].as_str().unwrap_or_default().to_owned(),
+                one["outcome"].as_str().unwrap_or_default().to_owned(),
+            )
+        })
+        .collect();
+    assert!(
+        outcomes.contains(&("copy".to_owned(), "route-command-failed".to_owned()))
+            && outcomes.contains(&("relate".to_owned(), "endpoint-not-written".to_owned())),
+        "{published}"
+    );
+    assert_eq!(world.filed("eng").len(), 1, "only the symptom landed");
+    let (_, symptom) = filed_as(&world, "eng", "timeout-42");
+    assert!(
+        record(&symptom).get("edges").is_none(),
+        "no edge is recorded to a ticket with no item: {symptom}"
+    );
+    let settled = world.ok("settle", &["settle", "--batch", BATCH], "");
+    assert_eq!(settled["pending"], 2, "{settled}");
+    let pending = std::fs::read_to_string(world.work().join("feedback/pending.json"))
+        .expect("the pending writes");
+    assert!(
+        pending.contains("endpoint-not-written") && pending.contains("route-command-failed"),
+        "{pending}"
+    );
+}
+
+#[test]
+fn an_edge_from_a_ticket_found_to_be_an_existing_one_starts_at_that_item() {
+    let mut world = example_world();
+    seed(
+        &world,
+        "symptom-timeout",
+        "timeout-42",
+        "symptom",
+        &json!({"error_signature": "TIMEOUT-42"}),
+        "medium",
+    );
+    let d1 = world.draft(BATCH, "TIMEOUT-42 again", &[], "TIMEOUT-42.\n");
+    world.ok("prepare", &["prepare", "--batch", BATCH], "");
+    world.ticket(
+        BATCH,
+        &kinded(
+            "timeout-again",
+            &[&d1],
+            "symptom",
+            &[("error_signature", "TIMEOUT-42")],
+        ),
+    );
+    world.ticket(
+        BATCH,
+        &kinded("stale-cache-lease", &[&d1], "root-cause", &[]),
+    );
+    for slug in ["timeout-again", "stale-cache-lease"] {
+        world.ok("agent", &["ticket", "copy", "--batch", BATCH, slug], "");
+    }
+    let staged = world.ok(
+        "agent",
+        &[
+            "ticket",
+            "relate",
+            "--batch",
+            BATCH,
+            "--relation",
+            "caused-by",
+            "--from",
+            "timeout-again",
+            "--to",
+            "stale-cache-lease",
+        ],
+        "",
+    );
+    assert_eq!(staged["write"]["from"], "eng:symptom-timeout", "{staged}");
+    world.ok("prepare", &["prepare", "--batch", BATCH], "");
+    world.ok(
+        "agent",
+        &["ticket", "copy", "--batch", BATCH, "timeout-again"],
+        "",
+    );
+    world.answer(
+        BATCH,
+        &[answer(
+            &d1,
+            "symptom",
+            "filed",
+            &["timeout-again", "stale-cache-lease"],
+            "Evidence.",
+        )],
+    );
+    let checked = world.ok("check", &["check", "--batch", BATCH], "");
+    assert_eq!(checked["sound"], true, "{checked}");
+    world.ok("publish", &["publish", "--batch", BATCH], "");
+    let (cause, _) = filed_as(&world, "eng", "stale-cache-lease");
+    let symptom = world.read_item("eng", "symptom-timeout");
+    assert_eq!(
+        record(&symptom)["edges"],
+        json!([{"relation": "caused-by", "to": cause}]),
+        "the existing symptom records its new edge: {symptom}"
+    );
+    assert!(
+        front(&symptom)["metadata"]["onetaskgraph.links"]
+            .to_string()
+            .contains(&cause),
+        "{symptom}"
+    );
+}
+
+const ALERTS: &str = r"host_label: build-host-1
+destination: teams
+default_kind: alert
+fields:
+  code: {description: The alert's code}
+  team: {description: The team it paged}
+kinds:
+  - {name: alert, description: One team's alert, duplicates: {same: [code, team]}, destination: teams}
+  - {name: incident, description: The incident across teams, duplicates: {same: [code]}, destination: incidents}
+relations:
+  - {name: raised-for, from: alert, to: incident, cardinality: many-to-one, decided_by: {match: [code]}, store: link}
+";
+
+#[test]
+fn a_derived_link_across_two_destinations_finds_its_target_on_the_other_one() {
+    let mut world = World::new(&["teams", "incidents"], ALERTS);
+    let d1 = world.draft(BATCH, "disk full on the payments team", &[], "DISK-9.\n");
+    world.ok("prepare", &["prepare", "--batch", BATCH], "");
+    let mut alert = kinded(
+        "disk-9-payments",
+        &[&d1],
+        "alert",
+        &[("code", "DISK-9"), ("team", "payments")],
+    );
+    alert.kind = Some("alert".to_owned());
+    world.ticket(BATCH, &alert);
+    let prepared = world.ok("prepare", &["prepare", "--batch", BATCH], "");
+    assert_eq!(
+        prepared["absent_targets"][0]["kind"], "incident",
+        "{prepared}"
+    );
+    let searched: Vec<&Value> = prepared["store_operations"]
+        .as_array()
+        .expect("operations")
+        .iter()
+        .filter(|operation| operation["op"] == "find" && operation["source"] == "incidents")
+        .collect();
+    assert_eq!(
+        searched.len(),
+        1,
+        "the target is looked for on its own destination: {prepared}"
+    );
+    world.ticket(
+        BATCH,
+        &kinded("disk-9", &[&d1], "incident", &[("code", "DISK-9")]),
+    );
+    for slug in ["disk-9-payments", "disk-9"] {
+        world.ok("agent", &["ticket", "copy", "--batch", BATCH, slug], "");
+    }
+    world.answer(
+        BATCH,
+        &[answer(
+            &d1,
+            "alert",
+            "filed",
+            &["disk-9-payments"],
+            "Verified.",
+        )],
+    );
+    let checked = world.ok("check", &["check", "--batch", BATCH], "");
+    assert_eq!(checked["sound"], true, "{checked}");
+    world.ok("publish", &["publish", "--batch", BATCH], "");
+    let (incident, _) = filed_as(&world, "incidents", "disk-9");
+    let (_, alert) = filed_as(&world, "teams", "disk-9-payments");
+    assert_eq!(
+        record(&alert)["edges"],
+        json!([{"relation": "raised-for", "to": incident}]),
+        "{alert}"
+    );
+}

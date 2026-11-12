@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0](https://github.com/nickderobertis/onefollowup/compare/v0.2.0...v0.3.0) - 2026-11-12
+
+### Added
+
+- relate and assign follow-up tickets and prove the worked configurations ([#9](https://github.com/nickderobertis/onefollowup/pull/9))
+
 ## [0.2.0](https://github.com/nickderobertis/onefollowup/compare/v0.1.0...v0.2.0) - 2026-11-11
 
 ### Added

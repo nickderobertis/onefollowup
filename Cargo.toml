@@ -15,9 +15,9 @@ authors = ["Nick DeRobertis"]
 # Every store access: the engine and, through its features, every destination plugin
 # (local-md built in, GitHub Projects and Linear switched on). onetaskgraph's pre-1.0
 # crates release in lock step and are not compatible across patches, so the pin is exact.
-onetaskgraph-core = { version = "=0.14.14", features = ["github-projects", "linear"] }
+onetaskgraph-core = { version = "=0.14.16", features = ["github-projects", "linear"] }
 # The contract crate, for the status vocabulary a status role maps to.
-onetaskgraph-plugin-api = "=0.14.14"
+onetaskgraph-plugin-api = "=0.14.16"
 clap = { version = "4.6.6", features = ["derive"] }
 # Timestamps a draft, a ticket and a receipt record.
 chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
@@ -44,6 +44,9 @@ assert_cmd = "2.2.2"
 onebudgetspec-core = "0.2.0"
 # Tests read onetaskgraph's status vocabulary off its own JSON schema.
 schemars = "1.2.2"
+# Tests hold a hook's context file to the JSON Schema the repository declares for it; the
+# release and features onetaskgraph-core already resolves, so nothing new is built.
+jsonschema = { version = "0.50.1", default-features = false }
 tempfile = "3.24.0"
 
 [profile.release]

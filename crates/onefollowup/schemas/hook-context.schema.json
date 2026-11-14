@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/nickderobertis/onefollowup/blob/main/crates/onefollowup/schemas/hook-context.schema.json",
+  "title": "HookContext",
+  "description": "The file onefollowup writes for one run of a hook whose argv names `{context_file}`, and removes once the hook exits. It is an instance of onepipeline 0.110.2's `PhaseContext` (`schemas/human-items.schema.json`, read by `human-items raise --phase P --context FILE`), whose reader refuses any member it does not know: `owner` is that release's `HumanItemOwner` and each ticket its `Ticket` as `{id, url, priority}`, both copied as it states them.",
+  "type": "object",
+  "properties": {
+    "owner": {
+      "description": "Who owns what the hook raises: `hooks.owner`, each `${NAME}` read from the verb's environment.",
+      "$ref": "#/$defs/HumanItemOwner"
+    },
+    "dedup_key": {
+      "description": "`<namespace>.follow-up/<batch>/<hook>`: the same every time the batch runs the hook.",
+      "type": "string",
+      "minLength": 1
+    },
+    "tickets": {
+      "description": "One per ticket the batch's receipts say it created or updated, in the order the journal first names each.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Ticket"
+      }
+    },
+    "vars": {
+      "description": "The hook's stdin document but for its `schema_version`, each member as text: a string as itself, any other scalar as its JSON spelling, a list or mapping as compact JSON.",
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    }
+  },
+  "additionalProperties": false,
+  "required": ["owner", "dedup_key", "tickets", "vars"],
+  "$defs": {
+    "HumanItemOwner": {
+      "description": "The originating session and optional run and plan.",
+      "type": "object",
+      "properties": {
+        "session": {
+          "description": "Session.",
+          "type": "string"
+        },
+        "run": {
+          "description": "Run.",
+          "type": ["string", "null"]
+        },
+        "plan": {
+          "description": "Plan.",
+          "type": ["string", "null"]
+        }
+      },
+      "additionalProperties": false,
+      "required": ["session", "run", "plan"]
+    },
+    "Ticket": {
+      "description": "One ticket a review phase aggregates.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "The ticket's id, qualified (`<source>:<native>`).",
+          "type": "string",
+          "minLength": 1
+        },
+        "url": {
+          "description": "Where a person opens it: the URL its source states, else a `file://` URL of the file a source keeps it in, else its id.",
+          "type": "string",
+          "minLength": 1
+        },
+        "priority": {
+          "description": "Its priority as the store holds it, `none` when it has no usable one.",
+          "type": "string",
+          "enum": ["none", "urgent", "high", "medium", "low"]
+        }
+      },
+      "additionalProperties": false,
+      "required": ["id", "url", "priority"]
+    }
+  }
+}

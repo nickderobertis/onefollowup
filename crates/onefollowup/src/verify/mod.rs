@@ -13,6 +13,7 @@ pub mod command;
 pub mod context;
 pub mod decide;
 pub mod draft;
+pub mod hook;
 pub mod journal;
 pub mod prepare;
 pub mod publish;

@@ -15,13 +15,13 @@ use std::collections::{BTreeMap, HashMap};
 use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 
-use onetaskgraph_core::config::{self, Layer};
+use onetaskgraph_core::config::{self, Layer, SourceVisibility};
 use onetaskgraph_core::{
     BATCH_SCHEMA_VERSION, Body, CommentBatch, CommentBatchItem, CommentsSinceRequest, CopyAction,
-    CopyConditions, CopyItems, CopyRequest, CopyScope, Engine, Environment, FindIn, FindQuery,
-    FindRequest, GlobalId, LinkBatch, LinkItem, OtherEnd, ParentBatch, ParentEdge, ProjectCreate,
-    Qualified, RELATIONS_SCHEMA_VERSION, SourceState, StatusPolicy, TaskCreate, UpdateBatch,
-    UpdateBatchItem,
+    CopyConditions, CopyItems, CopyRequest, CopyScope, Engine, EngineError, Environment, FindIn,
+    FindQuery, FindRequest, GlobalId, LinkBatch, LinkItem, OtherEnd, ParentBatch, ParentEdge,
+    ProjectCreate, Qualified, RELATIONS_SCHEMA_VERSION, SourceState, StatusPolicy, TaskCreate,
+    UpdateBatch, UpdateBatchItem,
 };
 use onetaskgraph_plugin_api::{
     AuthorKind, Classification, LinkDirection, Location, MetadataKey, MetadataMatch, NativeId,
@@ -44,7 +44,7 @@ pub const STATUS_CATEGORIES: &[&str] = &[
 
 /// The store a snapshot records it was gathered through: onetaskgraph at the version this
 /// crate pins. `tests/store.rs` holds it to the workspace's pin.
-pub const STORE_LINE: &str = "onetaskgraph 0.14.14";
+pub const STORE_LINE: &str = "onetaskgraph 0.14.16";
 
 /// The name of the onetaskgraph configuration document a `store` directory holds.
 pub const STORE_DOCUMENT: &str = "onetaskgraph.yaml";
@@ -99,6 +99,40 @@ pub enum StoreError {
         /// What the store said.
         message: String,
     },
+    /// The store refused an operation because the item is private and where it would land is
+    /// not: a source not declared private, or a project held public.
+    #[error("the store refused {operation} on {source_name}: {message}")]
+    Private {
+        /// The operation.
+        operation: &'static str,
+        /// The source it reached.
+        source_name: String,
+        /// What the store said.
+        message: String,
+    },
+}
+
+/// Who a source's configuration declares can read it: its `visibility` key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Visibility {
+    /// Declared `public`.
+    Public,
+    /// Declared `private`: the one visibility onetaskgraph writes a private item to.
+    Private,
+    /// The key left off, which onetaskgraph never treats as private.
+    Unknown,
+}
+
+impl Visibility {
+    /// The value as the store's configuration spells it.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Public => "public",
+            Self::Private => "private",
+            Self::Unknown => "unknown",
+        }
+    }
 }
 
 /// One source the store offers.
@@ -509,6 +543,7 @@ pub struct EdgeAnswer {
 pub struct Store {
     engine: Engine,
     settings: BTreeMap<String, Value>,
+    visibilities: BTreeMap<String, Visibility>,
     runtime: tokio::runtime::Runtime,
     local: Option<String>,
     log: RefCell<Vec<StoreOperation>>,
@@ -615,9 +650,23 @@ impl Store {
             .iter()
             .map(|(name, source)| (name.to_string(), source.config().clone()))
             .collect();
+        let visibilities = loaded
+            .config
+            .sources()
+            .iter()
+            .map(|(name, source)| {
+                let declared = match source.visibility() {
+                    SourceVisibility::Public => Visibility::Public,
+                    SourceVisibility::Private => Visibility::Private,
+                    SourceVisibility::Unknown => Visibility::Unknown,
+                };
+                (name.to_string(), declared)
+            })
+            .collect();
         Ok(Self {
             engine: Engine::build(&loaded.config, &loaded.secrets),
             settings,
+            visibilities,
             runtime,
             local: None,
             log: RefCell::new(Vec::new()),
@@ -649,6 +698,13 @@ impl Store {
     #[must_use]
     pub fn source_setting(&self, name: &str, key: &str) -> Option<Value> {
         self.settings.get(name)?.get(key).cloned()
+    }
+
+    /// Who the store's configuration declares can read the source `name`, as declared, asking
+    /// the source nothing. `None` for a source it does not declare.
+    #[must_use]
+    pub fn declared_visibility(&self, name: &str) -> Option<Visibility> {
+        self.visibilities.get(name).copied()
     }
 
     /// Whether the store's configuration declares the source `name`.
@@ -865,7 +921,11 @@ impl Store {
         })
     }
 
-    /// Write the project `id` of `source`, creating it or keeping the one there.
+    /// Write the project `id` of `source`, creating it or keeping the one there. A `private`
+    /// project is created private, or tightened to private when it is held public, so a task
+    /// of either classification can be filed under it while each task keeps its own; otherwise
+    /// a new project is public and a held one keeps its classification. onetaskgraph writes a
+    /// private project only to a source declared private.
     ///
     /// # Errors
     ///
@@ -876,6 +936,7 @@ impl Store {
         id: &str,
         title: &str,
         metadata: &BTreeMap<String, Value>,
+        private: bool,
     ) -> Result<String, StoreError> {
         let request = ProjectCreate {
             source: source_name(source)?,
@@ -886,7 +947,7 @@ impl Store {
             labels: None,
             repositories: None,
             metadata: metadata_keys(metadata)?,
-            classification: None,
+            classification: private.then_some(Classification::Private),
         };
         let created = self
             .runtime
@@ -900,7 +961,8 @@ impl Store {
     ///
     /// # Errors
     ///
-    /// The store's refusal.
+    /// The store's refusal: [`StoreError::Private`] for a task classified private that the
+    /// source or its project would not keep private.
     pub fn create_task(&self, task: &NewTask) -> Result<StoreItem, StoreError> {
         let request = TaskCreate {
             source: source_name(&task.source)?,
@@ -920,7 +982,15 @@ impl Store {
         let created = self
             .runtime
             .block_on(self.engine.create_task(&request))
-            .map_err(|error| Self::failed("a task create", &task.source, error))?;
+            .map_err(|error| match error {
+                EngineError::PrivateMemberOfPublicProject { .. }
+                | EngineError::NotPrivateDestination { .. } => StoreError::Private {
+                    operation: "a task create",
+                    source_name: task.source.clone(),
+                    message: error.to_string(),
+                },
+                other => Self::failed("a task create", &task.source, other),
+            })?;
         self.count("create-task", &task.source, 1);
         let mut item = StoreItem::of(created.task);
         if task.priority != "none" && item.priority == "none" {

@@ -16,6 +16,7 @@ assert_cmd.workspace = true
 # A reply the scripted answering agent posts is stamped with the time it is posted.
 chrono.workspace = true
 gethostname.workspace = true
+jsonschema.workspace = true
 onebudgetspec-core.workspace = true
 regex.workspace = true
 # The configuration's key list, which the precedence cases are parameterized over.

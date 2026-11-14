@@ -28,7 +28,7 @@ library is the `onefollowup` crate.
 
 | Command | What it does |
 |---|---|
-| `draft --batch <ID> --title <T> --repository <ORIGIN> [--path <P>]... [--author <LABEL>] [--stamp <KEY=VALUE>]...` | Record one draft; its body is read from stdin. |
+| `draft --batch <ID> --title <T> --repository <ORIGIN> [--path <P>]... [--author <LABEL>] [--stamp <KEY=VALUE>]...` | Record one draft; its body is read from stdin. Filed under the batch's drafts project, `<drafts_source>:<batch>`; see Private drafts, below. |
 | `prepare --batch <ID> [--alias <ID>]... [--unanswered]` | Snapshot the batch's inputs (its drafts and the `batch_preparing` hook's inputs), make its destination reads in one batched search and one comments read — under relations, also one `task relations` read of the tickets found and one read of the tickets at their edges' other ends — and write the verifying agent's task. Prints `{"schema_version": 1, "batch", "drafts", "inputs", "answers", "task_template"}`, with `absent_targets` and `missing_links` when there are any (Relations, below). |
 | `ticket validate --batch <ID> <TICKET>` | Hold one ticket to the rules; `absent_targets` names each edge its fields derive whose target does not exist. |
 | `ticket board-status --batch <ID> <ITEM>` | Read one destination item's state and comments from the batch's prepared reads. |
@@ -54,6 +54,20 @@ stage into the batch's outbox, refusing what the rules refuse, and `publish` sen
 Every verb prints a JSON document on success. Exit codes: **0** success; **1** failed while
 running; **2** refused — a usage error, a refused configuration, or a verb not implemented
 in this release.
+
+### Private drafts
+
+onetaskgraph decides who may read each draft: a draft about a repository the store's
+`write_policy.visibility_command` does not answer `public` for — one it cannot classify
+included — is private, and onetaskgraph writes a private item only to a source declared
+`visibility: private` whose backend agrees. So the batch's drafts project is created private
+when the drafts source is declared private, and holds drafts of either classification, each
+keeping its own: a public draft under it stays public, the verify loop reads both, and a
+ticket copied onto a destination keeps its own classification (a public draft's ticket lands
+public). A drafts source declared public, or declaring nothing, keeps a public drafts
+project, and `draft` refuses a private draft there (exit 2) naming the visibility the source
+declares, with nothing written. onefollowup never declares or overrides a source's
+visibility; that is the store's configuration.
 
 ### Results
 
@@ -389,7 +403,7 @@ key, the layer its value came from.
 | Key | Default | Meaning |
 |---|---|---|
 | `store` | the store's own discovery | The onetaskgraph configuration: an `onetaskgraph.yaml`, or the directory holding one. |
-| `drafts_source` | `drafts` | The source drafts are recorded in. |
+| `drafts_source` | `drafts` | The source drafts are recorded in; declare it `visibility: private` in the store to record drafts about private repositories (Private drafts, below). |
 | `destination` | `followups` | The source every ticket is copied to unless its kind names another; the store's own routes on that source still apply. |
 | `namespace` | `orchestrator` | Prefix of the comment markers (`orchestrator:follow-up-comment`) and the record's metadata key (`orchestrator.follow-up`). |
 | `host_label` | the machine's hostname | The host a ticket records as having verified it. |
@@ -406,7 +420,7 @@ key, the layer its value came from.
 | `dispositions` | `filed`, `not-reproducible`, `already-fixed`, `too-low-impact` | The disposition catalogue (below). |
 | `default_dispositions` | none | The dispositions every kind allows unless it lists its own; none allows the whole catalogue. |
 | `routes` | `[]` | Ordered routes (below). |
-| `hooks` | none | Commands run at named moments (below). |
+| `hooks` | none | Commands run at named moments, and the `owner` a context file names (below). |
 | `snapshot` | `launchable_for: 24h` | How long a dry run's comment snapshot stays launchable. |
 
 No key says *when* the loop runs; that is the host's schedule.
@@ -565,8 +579,8 @@ person added included — and is receipted `assignee-held`. The assignee travels
 batch already sends; a configuration that assigns nobody writes no assignee and records no
 `board_assignee`.
 
-**`hooks`** — a map from the moment a hook fires to its argv. Two moments exist; any other
-key is refused:
+**`hooks`** — a map from the moment a hook fires to its argv, and the `owner` a context
+file names. Two moments exist; any other key is refused:
 
 - `batch_preparing`: `prepare` runs it before it snapshots, with
   `{"schema_version": 1, "batch": "<id>"}` on stdin. Its stdout is the additional inputs
@@ -574,7 +588,88 @@ key is refused:
   "detail"}]}`, `source` saying where the input came from (such as `budget-overrun`). A
   non-zero exit or any other stdout fails `prepare`, naming the hook, with nothing
   snapshotted.
-- `batch_settled`: `settle` runs it with the settled batch's summary on stdin.
+- `batch_settled`: `settle` runs it with the settled batch's summary on stdin,
+  `{"schema_version": 1, "batch", "writes", "read_back", "confirmed", "pending",
+  "needs_attention", "receipts"}`.
+
+A hook runs in the verb's working directory and environment, its argv exactly as configured —
+unless an argument holds the placeholder **`{context_file}`**. Then onefollowup writes a
+JSON **context file** for that one call, replaces the placeholder with the file's path
+wherever it appears, and removes the file once the hook exits; stdin is unchanged. The file is
+an instance of an engine's human-item phase context — onepipeline 0.110.2's `PhaseContext`
+(its `schemas/human-items.schema.json`), read by `onepipeline human-items raise --phase <P>
+--context <FILE>`, which refuses any member it does not know — and
+[`crates/onefollowup/schemas/hook-context.schema.json`](crates/onefollowup/schemas/hook-context.schema.json)
+declares it:
+
+- `owner`: `{"session", "run", "plan"}`, that release's `HumanItemOwner`, from `hooks.owner`
+  (`run` and `plan` `null` when not given);
+- `dedup_key`: `<namespace>.follow-up/<batch>/<hook>`, the same every time the batch runs the
+  hook, so settling a batch again names the same item;
+- `tickets`: one `{"id", "url", "priority"}` — that release's `Ticket`, in the store's
+  priority vocabulary — per ticket the batch's receipts say it created or updated, in the order
+  the journal first names each, read in one store read: `url` is the URL the destination states,
+  else a `file://` URL of the file a source keeps it in, else its id;
+- `vars`: the hook's stdin document but for its `schema_version`, each member as text (a
+  string as itself, any other scalar as its JSON spelling, a list or mapping as compact JSON),
+  which an engine's title and body templates expand as `{{ batch }}`.
+
+**`hooks.owner`** — `{session, run, plan}`, `session` required and the others optional; each
+value is a literal, or one whole `${NAME}` read from the verb's environment when it runs. A hook
+naming `{context_file}` without `hooks.owner` is refused when the configuration loads; a
+variable that is unset or empty refuses the verb before it changes anything, naming the
+variable (exit 2). A hook naming no placeholder is handed exactly what it was before, and no
+file is written.
+
+A worked example: the configuration below has an engine raise its `follow-up-review` phase —
+a `ticket_review` hook of its `human_items` configuration — after every settle:
+
+```yaml
+host_label: build-host-1
+hooks:
+  batch_settled: [onepipeline, human-items, raise, --phase, follow-up-review, --context, '{context_file}']
+  owner:
+    session: follow-ups@build-host-1
+    run: ${FOLLOW_UP_RUN}
+```
+
+A worked example: the context file a settle of a batch that updated one ticket and created
+another hands it, its store at `/srv/follow-ups`:
+
+```json
+{
+  "owner": {
+    "session": "follow-ups@build-host-1",
+    "run": "run-2026-11-08",
+    "plan": null
+  },
+  "dedup_key": "orchestrator.follow-up/nightly-2026-11-08/batch_settled",
+  "tickets": [
+    {
+      "id": "followups:widgets-the-theme-resets-after-an-update",
+      "url": "https://tracker.example/widgets/issues/7",
+      "priority": "medium"
+    },
+    {
+      "id": "followups:widgets-a-resize-flickers-the-toolbar",
+      "url": "file:///srv/follow-ups/followups-root/tasks/widgets-a-resize-flickers-the-toolbar.md",
+      "priority": "medium"
+    }
+  ],
+  "vars": {
+    "batch": "nightly-2026-11-08",
+    "writes": "2",
+    "read_back": "0",
+    "confirmed": "0",
+    "pending": "0",
+    "needs_attention": "false",
+    "receipts": "/srv/follow-ups/.onefollowup/receipts/nightly-2026-11-08.jsonl"
+  }
+}
+```
+
+`crates/onefollowup-e2e/tests/e2e/hook_context.rs` runs this configuration and holds the file its
+settle writes to this example.
 
 ## Examples
 
@@ -592,7 +687,8 @@ adds one over-budget change the agent cannot reproduce. Filed: one new `root-cau
 naming both drafts, at Proposal, its priority estimated; one evidence comment on the existing
 ticket; the input disposed `not-reproducible`. Linked: nothing. Where: every ticket on
 `followups`, or wherever that source's own routes send it. The `batch_settled` hook raises the
-batch's human items through `onepipeline`.
+batch's follow-up review through `onepipeline`, handing it the context file (`hooks`, above)
+owned by the session `${FOLLOW_UP_SESSION}` names.
 
 **[`symptoms-and-root-causes`](examples/symptoms-and-root-causes)** — a team on Linear:
 symptom tickets, one sub-issue per client decided by match, and root causes linked to symptoms

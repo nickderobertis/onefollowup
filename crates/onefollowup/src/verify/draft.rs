@@ -11,7 +11,7 @@ use crate::config::Settings;
 use crate::error::Error;
 use crate::formats::Versioned;
 use crate::formats::draft::{Author, AuthorKind, Dispatch, DraftRecord, DraftsProjectRecord};
-use crate::store::NewTask;
+use crate::store::{NewTask, Store, StoreError, Visibility};
 use crate::verify::context::Batch;
 use crate::verify::ticket::{ORIGIN, TITLE_LIMIT};
 
@@ -72,6 +72,33 @@ fn author(label: Option<&str>, stamps: &BTreeMap<String, String>) -> Result<Auth
         },
         _ => return Err(refused()),
     })
+}
+
+/// Whether a batch's drafts project in `source` is created private: when the drafts source is
+/// declared private, so a draft about a private repository — or one the store cannot classify,
+/// which it treats as private — can be filed under it beside a public one, each draft keeping
+/// its own classification. onetaskgraph is the one authority on visibility, and writes a
+/// private item only to a source declared private, so a source declared public or declaring
+/// nothing keeps a public drafts project and refuses a private draft.
+#[must_use]
+pub fn drafts_project_private(store: &Store, source: &str) -> bool {
+    store.declared_visibility(source) == Some(Visibility::Private)
+}
+
+/// A private draft the drafts source would not keep private, named with the source's declared
+/// visibility and what records it.
+fn private_draft(error: StoreError, store: &Store, source: &str) -> Error {
+    match error {
+        StoreError::Private { message, .. } => Error::Refused(format!(
+            "the draft is private and was not recorded: the drafts source `{source}` is declared `{declared}`, so a batch's drafts project there is public and holds no private draft; nothing was written\nthe store said: {said}\nnext: declare `visibility: private` on the drafts source `{source}` in its onetaskgraph configuration (`onetaskgraph.yaml`), whose backend must agree, then draft again",
+            declared = store
+                .declared_visibility(source)
+                .map_or("unknown", Visibility::as_str),
+            // The store's own next step names a project write onefollowup makes, not the host.
+            said = message.lines().next().unwrap_or_default(),
+        )),
+        other => Error::Store(other),
+    }
 }
 
 /// Record one draft.
@@ -160,19 +187,22 @@ pub fn run(settings: &Settings, args: DraftArgs) -> Result<Drafted, Error> {
             format!("{}.follow-up-drafts", settings.config().namespace),
             json(&project_record.render()),
         )]),
+        drafts_project_private(&store, source),
     )?;
-    let created = store.create_task(&NewTask {
-        source: source.clone(),
-        project,
-        title,
-        body: body.trim().to_owned() + "\n",
-        status: "todo".to_owned(),
-        priority: "none".to_owned(),
-        labels: Vec::new(),
-        repositories: vec![args.repository],
-        metadata: BTreeMap::from([(batch.draft_key(), json(&record.render()))]),
-        assignee: None,
-    })?;
+    let created = store
+        .create_task(&NewTask {
+            source: source.clone(),
+            project,
+            title,
+            body: body.trim().to_owned() + "\n",
+            status: "todo".to_owned(),
+            priority: "none".to_owned(),
+            labels: Vec::new(),
+            repositories: vec![args.repository],
+            metadata: BTreeMap::from([(batch.draft_key(), json(&record.render()))]),
+            assignee: None,
+        })
+        .map_err(|error| private_draft(error, &store, source))?;
     Ok(Drafted {
         schema_version: SCHEMA_VERSION,
         batch: batch.batch,

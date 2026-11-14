@@ -7,6 +7,7 @@ use indexmap::IndexMap;
 use serde_json::{Value, json};
 
 use crate::api::{BatchArgs, HookRun, SCHEMA_VERSION, Settled};
+use crate::config::CONTEXT_FILE;
 use crate::config::Settings;
 use crate::error::Error;
 use crate::formats::Versioned;
@@ -16,8 +17,8 @@ use crate::formats::pending::{Pending, PendingEntry, PendingState, PendingWrite}
 use crate::formats::receipts::{AssignAction, Outcome, Receipt};
 use crate::formats::ticket::TicketRecord;
 use crate::store::Search;
-use crate::verify::command;
 use crate::verify::context::Batch;
+use crate::verify::hook;
 use crate::verify::journal;
 use crate::verify::ticket;
 use crate::work;
@@ -206,6 +207,7 @@ fn write_item(write: &StagedWrite) -> Option<String> {
 )]
 pub fn run(settings: &Settings, args: BatchArgs) -> Result<Settled, Error> {
     let batch = Batch::new(settings, &args.batch)?;
+    hook::check_owner(&batch, batch.config.hooks.batch_settled.as_ref())?;
     let mut state = batch.state()?;
     let journal = journal::read(&batch)?;
     let mut sent: Vec<Sent> = Vec::new();
@@ -257,7 +259,7 @@ pub fn run(settings: &Settings, args: BatchArgs) -> Result<Settled, Error> {
     let store_needed = sent
         .iter()
         .any(|one| matches!(standing(one), Standing::Unconfirmed));
-    let store = if store_needed {
+    let mut store = if store_needed {
         Some(batch.store()?)
     } else {
         None
@@ -447,20 +449,13 @@ pub fn run(settings: &Settings, args: BatchArgs) -> Result<Settled, Error> {
                 "pending": pending_count,
                 "needs_attention": needs_attention,
                 "receipts": batch.work.receipts(&batch.batch),
-            })
-            .to_string();
-            let ran = command::run(
-                argv,
-                &summary,
-                settings.working_directory(),
-                settings.environment(),
-            )
-            .map_err(|error| {
-                Error::Failed(format!(
-                    "the `hooks.batch_settled` command `{}` could not run: {error}",
-                    argv.join(" ")
-                ))
-            })?;
+            });
+            // A context file reads the batch's tickets: through the store the read-back
+            // opened, or one opened for it, so the read is counted with the verb's own.
+            if store.is_none() && argv.iter().any(|one| one.contains(CONTEXT_FILE)) {
+                store = Some(batch.store()?);
+            }
+            let ran = hook::run(&batch, store.as_ref(), "batch_settled", argv, &summary)?;
             Some(HookRun {
                 argv: argv.clone(),
                 exit: ran.exit,

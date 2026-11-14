@@ -167,8 +167,14 @@ fn single_root_cause() {
     let root = world.root.display().to_string();
     world.script(
         "onepipeline",
-        &format!("echo \"$*\" >> {root}/onepipeline.log\ncat >> {root}/onepipeline.log"),
+        &format!(
+            "echo \"$*\" >> {root}/onepipeline.log\ncat >> {root}/onepipeline.log\ncat \"$6\" >> {root}/onepipeline.log"
+        ),
     );
+    world.variables.push((
+        "FOLLOW_UP_SESSION".to_owned(),
+        "follow-ups@build-host-1".to_owned(),
+    ));
     std::fs::create_dir_all(world.root.join("target/budget-results")).expect("a directory");
     std::fs::write(
         world.root.join("target/budget-results/overruns.json"),
@@ -317,8 +323,12 @@ fn single_root_cause() {
     let settled =
         std::fs::read_to_string(world.root.join("onepipeline.log")).expect("the settled hook ran");
     assert!(
-        settled.starts_with("human-items raise --phase follow-up-review\n"),
+        settled.starts_with("human-items raise --phase follow-up-review --context /"),
         "{settled}"
+    );
+    assert!(
+        settled.contains("\"session\": \"follow-ups@build-host-1\""),
+        "the context file names the owner: {settled}"
     );
     assert!(
         settled.contains(&format!("\"batch\":\"{BATCH}\"")),

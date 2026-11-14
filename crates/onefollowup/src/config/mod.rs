@@ -11,3 +11,4 @@ pub use resolve::{
     resolve,
 };
 pub use types::*;
+pub(crate) use validate::variable;

@@ -570,6 +570,40 @@ pub struct Hooks {
     /// Run by `settle` with the settled batch's summary on stdin.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub batch_settled: Option<Vec<String>>,
+    /// Who owns what a hook naming [`CONTEXT_FILE`] raises: the context file's `owner`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner: Option<HookOwner>,
+}
+
+/// The argv placeholder a hook names to be handed a context file: onefollowup replaces it,
+/// wherever an argument holds it, with the path of a JSON file it writes for that one call
+/// and removes once the hook exits.
+pub const CONTEXT_FILE: &str = "{context_file}";
+
+impl Hooks {
+    /// Every configured hook, by name, with its argv.
+    #[must_use]
+    pub fn named(&self) -> [(&'static str, Option<&Vec<String>>); 2] {
+        [
+            ("batch_preparing", self.batch_preparing.as_ref()),
+            ("batch_settled", self.batch_settled.as_ref()),
+        ]
+    }
+}
+
+/// The owner a hook's context file names, as an engine's human-item owner spells it: each
+/// value a literal, or a whole `${NAME}` read from the verb's environment when the hook runs.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HookOwner {
+    /// The session that owns it.
+    pub session: String,
+    /// The run, when one owns it; `null` in the file when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run: Option<String>,
+    /// The plan, when one owns it; `null` in the file when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan: Option<String>,
 }
 
 /// The comment snapshot's settings.

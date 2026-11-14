@@ -24,6 +24,8 @@ pub struct World {
     pub root: PathBuf,
     /// The phases run so far, each with the store operations it printed.
     pub phases: Vec<(String, Vec<Value>)>,
+    /// Variables every verb's environment holds beyond the world's own.
+    pub variables: Vec<(String, String)>,
 }
 
 impl World {
@@ -59,6 +61,7 @@ impl World {
             _directory: directory,
             root,
             phases: Vec::new(),
+            variables: Vec::new(),
         }
     }
 
@@ -151,7 +154,8 @@ impl World {
             .env(
                 "PATH",
                 format!("{}:/usr/bin:/bin", self.root.join("bin").display()),
-            );
+            )
+            .envs(self.variables.iter().map(|(name, value)| (name, value)));
         command
     }
 

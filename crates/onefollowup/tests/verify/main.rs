@@ -13,6 +13,7 @@ mod comments;
 mod configuration;
 mod duplicates;
 mod edges;
+mod hook_context;
 mod journey;
 mod outstanding;
 mod pending_recovery;

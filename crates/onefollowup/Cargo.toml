@@ -10,8 +10,9 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
-# The shipped defaults are embedded into the binary; README.md is the crate's readme.
-include = ["src/**/*", "defaults/**/*", "Cargo.toml", "README.md"]
+# The shipped defaults are embedded into the binary; README.md is the crate's readme;
+# schemas/ holds the JSON Schema of what onefollowup hands a hook.
+include = ["src/**/*", "defaults/**/*", "schemas/**/*", "Cargo.toml", "README.md"]
 
 [lib]
 name = "onefollowup"
@@ -39,6 +40,7 @@ thiserror.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]
+jsonschema.workspace = true
 regex.workspace = true
 onetaskgraph-plugin-api.workspace = true
 schemars.workspace = true

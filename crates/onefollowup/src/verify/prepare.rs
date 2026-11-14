@@ -16,8 +16,8 @@ use crate::formats::dispositions::{CarriedDispositions, DispositionEntry, Dispos
 use crate::formats::draft::DraftRecord;
 use crate::formats::existing_tickets::ExistingTickets;
 use crate::store::{Search, SearchIn, Store};
-use crate::verify::command;
 use crate::verify::context::Batch;
+use crate::verify::hook;
 use crate::verify::relations::{self, Graph, Scope};
 use crate::verify::template;
 use crate::work;
@@ -40,23 +40,21 @@ struct HookInput {
 }
 
 /// Run the `batch_preparing` hook and read the inputs it prints.
-fn hook_inputs(batch: &Batch<'_>) -> Result<Vec<Input>, Error> {
+fn hook_inputs(batch: &Batch<'_>, store: &Store) -> Result<Vec<Input>, Error> {
     let Some(argv) = &batch.config.hooks.batch_preparing else {
         return Ok(Vec::new());
     };
     let named = format!("the `hooks.batch_preparing` command `{}`", argv.join(" "));
-    let stdin = json!({"schema_version": 1, "batch": batch.batch}).to_string();
-    let ran = command::run(
-        argv,
-        &stdin,
-        batch.settings.working_directory(),
-        batch.settings.environment(),
-    )
-    .map_err(|error| {
-        Error::Failed(format!(
-            "{named} could not run: {error}; nothing was snapshotted"
-        ))
-    })?;
+    let document = json!({"schema_version": 1, "batch": batch.batch});
+    let ran =
+        hook::run(batch, Some(store), "batch_preparing", argv, &document).map_err(|error| {
+            match error {
+                Error::Failed(message) => {
+                    Error::Failed(format!("{message}; nothing was snapshotted"))
+                }
+                other => other,
+            }
+        })?;
     if ran.exit != 0 {
         return Err(Error::Failed(format!(
             "{named} exited {}: {}; nothing was snapshotted",
@@ -178,12 +176,12 @@ pub fn run(settings: &Settings, args: PrepareArgs) -> Result<Prepared, Error> {
     let continuing = existing.as_ref().is_some_and(|state| {
         state.publishes.is_empty() || state.publishes.iter().any(|publish| !publish.settled)
     });
+    let store = batch.store()?;
     let hooked = if continuing {
         Vec::new()
     } else {
-        hook_inputs(&batch)?
+        hook_inputs(&batch, &store)?
     };
-    let store = batch.store()?;
     let mut state = match existing {
         Some(state) if continuing => state,
         earlier => {

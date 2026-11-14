@@ -8,7 +8,7 @@ use std::collections::HashSet;
 use serde_json::Value;
 
 use super::types::{
-    Cardinality, Config, DecidedBy, Duplicates, PriorityModel, RelationStore, Rollup,
+    CONTEXT_FILE, Cardinality, Config, DecidedBy, Duplicates, PriorityModel, RelationStore, Rollup,
 };
 use crate::store;
 
@@ -296,15 +296,54 @@ pub fn validate(config: &Config) -> Result<(), Refusal> {
             );
         }
     }
-    for (name, argv) in [
-        ("batch_preparing", &config.hooks.batch_preparing),
-        ("batch_settled", &config.hooks.batch_settled),
-    ] {
-        if argv.as_ref().is_some_and(Vec::is_empty) {
+    for (name, argv) in config.hooks.named() {
+        if argv.is_some_and(Vec::is_empty) {
             return refuse(format!("hooks.{name}"), "is an empty argv".to_owned());
+        }
+        if argv.is_some_and(|argv| argv.iter().any(|one| one.contains(CONTEXT_FILE)))
+            && config.hooks.owner.is_none()
+        {
+            return refuse(
+                format!("hooks.{name}"),
+                format!(
+                    "names `{CONTEXT_FILE}`, whose file names an owner; set `hooks.owner.session`"
+                ),
+            );
+        }
+    }
+    if let Some(owner) = &config.hooks.owner {
+        for (part, value) in [
+            ("session", Some(&owner.session)),
+            ("run", owner.run.as_ref()),
+            ("plan", owner.plan.as_ref()),
+        ] {
+            let Some(value) = value else { continue };
+            if value.trim().is_empty() {
+                return refuse(format!("hooks.owner.{part}"), "is blank".to_owned());
+            }
+            if value.contains("${") && variable(value).is_none() {
+                return refuse(
+                    format!("hooks.owner.{part}"),
+                    format!(
+                        "`{value}` is neither a literal nor one whole `${{NAME}}` reference to an environment variable"
+                    ),
+                );
+            }
         }
     }
     Ok(())
+}
+
+/// The environment variable a `hooks.owner` value names as one whole `${NAME}`, if it does.
+#[must_use]
+pub(crate) fn variable(value: &str) -> Option<&str> {
+    let name = value.strip_prefix("${")?.strip_suffix('}')?;
+    let mut chars = name.chars();
+    (chars
+        .next()
+        .is_some_and(|first| first == '_' || first.is_ascii_alphabetic())
+        && chars.all(|one| one == '_' || one.is_ascii_alphanumeric()))
+    .then_some(name)
 }
 
 fn refuse<T>(key: String, message: String) -> Result<T, Refusal> {

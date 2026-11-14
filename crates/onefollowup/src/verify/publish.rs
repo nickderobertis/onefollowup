@@ -493,7 +493,13 @@ pub fn run(settings: &Settings, args: BatchArgs) -> Result<Published, Error> {
                 .iter()
                 .any(|at| !state.tickets.contains_key(&planned[*at].decision.slug))
         {
-            store.ensure_project(&drafts, &state.project, &state.project, &BTreeMap::new())?;
+            store.ensure_project(
+                &drafts,
+                &state.project,
+                &state.project,
+                &BTreeMap::new(),
+                crate::verify::draft::drafts_project_private(&store, &drafts),
+            )?;
             project_written = true;
         }
         for &at in &sending {

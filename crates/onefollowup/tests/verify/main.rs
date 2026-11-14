@@ -16,6 +16,7 @@ mod edges;
 mod journey;
 mod outstanding;
 mod pending_recovery;
+mod private_drafts;
 mod refusals;
 mod refused_accounts;
 mod relations;

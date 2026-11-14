@@ -28,7 +28,7 @@ library is the `onefollowup` crate.
 
 | Command | What it does |
 |---|---|
-| `draft --batch <ID> --title <T> --repository <ORIGIN> [--path <P>]... [--author <LABEL>] [--stamp <KEY=VALUE>]...` | Record one draft; its body is read from stdin. |
+| `draft --batch <ID> --title <T> --repository <ORIGIN> [--path <P>]... [--author <LABEL>] [--stamp <KEY=VALUE>]...` | Record one draft; its body is read from stdin. Filed under the batch's drafts project, `<drafts_source>:<batch>`; see Private drafts, below. |
 | `prepare --batch <ID> [--alias <ID>]... [--unanswered]` | Snapshot the batch's inputs (its drafts and the `batch_preparing` hook's inputs), make its destination reads in one batched search and one comments read — under relations, also one `task relations` read of the tickets found and one read of the tickets at their edges' other ends — and write the verifying agent's task. Prints `{"schema_version": 1, "batch", "drafts", "inputs", "answers", "task_template"}`, with `absent_targets` and `missing_links` when there are any (Relations, below). |
 | `ticket validate --batch <ID> <TICKET>` | Hold one ticket to the rules; `absent_targets` names each edge its fields derive whose target does not exist. |
 | `ticket board-status --batch <ID> <ITEM>` | Read one destination item's state and comments from the batch's prepared reads. |
@@ -54,6 +54,20 @@ stage into the batch's outbox, refusing what the rules refuse, and `publish` sen
 Every verb prints a JSON document on success. Exit codes: **0** success; **1** failed while
 running; **2** refused — a usage error, a refused configuration, or a verb not implemented
 in this release.
+
+### Private drafts
+
+onetaskgraph decides who may read each draft: a draft about a repository the store's
+`write_policy.visibility_command` does not answer `public` for — one it cannot classify
+included — is private, and onetaskgraph writes a private item only to a source declared
+`visibility: private` whose backend agrees. So the batch's drafts project is created private
+when the drafts source is declared private, and holds drafts of either classification, each
+keeping its own: a public draft under it stays public, the verify loop reads both, and a
+ticket copied onto a destination keeps its own classification (a public draft's ticket lands
+public). A drafts source declared public, or declaring nothing, keeps a public drafts
+project, and `draft` refuses a private draft there (exit 2) naming the visibility the source
+declares, with nothing written. onefollowup never declares or overrides a source's
+visibility; that is the store's configuration.
 
 ### Results
 
@@ -389,7 +403,7 @@ key, the layer its value came from.
 | Key | Default | Meaning |
 |---|---|---|
 | `store` | the store's own discovery | The onetaskgraph configuration: an `onetaskgraph.yaml`, or the directory holding one. |
-| `drafts_source` | `drafts` | The source drafts are recorded in. |
+| `drafts_source` | `drafts` | The source drafts are recorded in; declare it `visibility: private` in the store to record drafts about private repositories (Private drafts, below). |
 | `destination` | `followups` | The source every ticket is copied to unless its kind names another; the store's own routes on that source still apply. |
 | `namespace` | `orchestrator` | Prefix of the comment markers (`orchestrator:follow-up-comment`) and the record's metadata key (`orchestrator.follow-up`). |
 | `host_label` | the machine's hostname | The host a ticket records as having verified it. |

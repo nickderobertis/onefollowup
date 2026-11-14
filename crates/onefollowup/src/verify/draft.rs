@@ -11,7 +11,7 @@ use crate::config::Settings;
 use crate::error::Error;
 use crate::formats::Versioned;
 use crate::formats::draft::{Author, AuthorKind, Dispatch, DraftRecord, DraftsProjectRecord};
-use crate::store::{NewTask, Store, StoreError};
+use crate::store::{NewTask, Store, StoreError, Visibility};
 use crate::verify::context::Batch;
 use crate::verify::ticket::{ORIGIN, TITLE_LIMIT};
 
@@ -82,7 +82,7 @@ fn author(label: Option<&str>, stamps: &BTreeMap<String, String>) -> Result<Auth
 /// nothing keeps a public drafts project and refuses a private draft.
 #[must_use]
 pub fn drafts_project_private(store: &Store, source: &str) -> bool {
-    store.declared_visibility(source) == Some("private")
+    store.declared_visibility(source) == Some(Visibility::Private)
 }
 
 /// A private draft the drafts source would not keep private, named with the source's declared
@@ -91,7 +91,9 @@ fn private_draft(error: StoreError, store: &Store, source: &str) -> Error {
     match error {
         StoreError::Private { message, .. } => Error::Refused(format!(
             "the draft is private and was not recorded: the drafts source `{source}` is declared `{declared}`, so a batch's drafts project there is public and holds no private draft; nothing was written\nthe store said: {said}\nnext: declare `visibility: private` on the source `{source}` in the store's configuration, whose backend must agree, then draft again",
-            declared = store.declared_visibility(source).unwrap_or("unknown"),
+            declared = store
+                .declared_visibility(source)
+                .map_or("unknown", Visibility::as_str),
             // The store's own next step names a project write onefollowup makes, not the host.
             said = message.lines().next().unwrap_or_default(),
         )),

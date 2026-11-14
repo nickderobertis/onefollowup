@@ -15,7 +15,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 
-use onetaskgraph_core::config::{self, Layer};
+use onetaskgraph_core::config::{self, Layer, SourceVisibility};
 use onetaskgraph_core::{
     BATCH_SCHEMA_VERSION, Body, CommentBatch, CommentBatchItem, CommentsSinceRequest, CopyAction,
     CopyConditions, CopyItems, CopyRequest, CopyScope, Engine, EngineError, Environment, FindIn,
@@ -110,6 +110,29 @@ pub enum StoreError {
         /// What the store said.
         message: String,
     },
+}
+
+/// Who a source's configuration declares can read it: its `visibility` key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Visibility {
+    /// Declared `public`.
+    Public,
+    /// Declared `private`: the one visibility onetaskgraph writes a private item to.
+    Private,
+    /// The key left off, which onetaskgraph never treats as private.
+    Unknown,
+}
+
+impl Visibility {
+    /// The value as the store's configuration spells it.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Public => "public",
+            Self::Private => "private",
+            Self::Unknown => "unknown",
+        }
+    }
 }
 
 /// One source the store offers.
@@ -520,7 +543,7 @@ pub struct EdgeAnswer {
 pub struct Store {
     engine: Engine,
     settings: BTreeMap<String, Value>,
-    visibilities: BTreeMap<String, &'static str>,
+    visibilities: BTreeMap<String, Visibility>,
     runtime: tokio::runtime::Runtime,
     local: Option<String>,
     log: RefCell<Vec<StoreOperation>>,
@@ -631,7 +654,14 @@ impl Store {
             .config
             .sources()
             .iter()
-            .map(|(name, source)| (name.to_string(), source.visibility().as_str()))
+            .map(|(name, source)| {
+                let declared = match source.visibility() {
+                    SourceVisibility::Public => Visibility::Public,
+                    SourceVisibility::Private => Visibility::Private,
+                    SourceVisibility::Unknown => Visibility::Unknown,
+                };
+                (name.to_string(), declared)
+            })
             .collect();
         Ok(Self {
             engine: Engine::build(&loaded.config, &loaded.secrets),
@@ -670,11 +700,10 @@ impl Store {
         self.settings.get(name)?.get(key).cloned()
     }
 
-    /// Who the store's configuration declares can read the source `name` — `public`,
-    /// `private`, or `unknown` for a source that leaves `visibility` off — as declared, asking
+    /// Who the store's configuration declares can read the source `name`, as declared, asking
     /// the source nothing. `None` for a source it does not declare.
     #[must_use]
-    pub fn declared_visibility(&self, name: &str) -> Option<&'static str> {
+    pub fn declared_visibility(&self, name: &str) -> Option<Visibility> {
         self.visibilities.get(name).copied()
     }
 

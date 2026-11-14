@@ -90,7 +90,7 @@ pub fn drafts_project_private(store: &Store, source: &str) -> bool {
 fn private_draft(error: StoreError, store: &Store, source: &str) -> Error {
     match error {
         StoreError::Private { message, .. } => Error::Refused(format!(
-            "the draft is private and was not recorded: the drafts source `{source}` is declared `{declared}`, so a batch's drafts project there is public and holds no private draft; nothing was written\nthe store said: {said}\nnext: declare `visibility: private` on the source `{source}` in the store's configuration, whose backend must agree, then draft again",
+            "the draft is private and was not recorded: the drafts source `{source}` is declared `{declared}`, so a batch's drafts project there is public and holds no private draft; nothing was written\nthe store said: {said}\nnext: declare `visibility: private` on the drafts source `{source}` in its onetaskgraph configuration (`onetaskgraph.yaml`), whose backend must agree, then draft again",
             declared = store
                 .declared_visibility(source)
                 .map_or("unknown", Visibility::as_str),

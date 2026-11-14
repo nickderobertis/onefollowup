@@ -173,7 +173,9 @@ fn a_drafts_source_not_declared_private_refuses_a_private_draft_naming_its_decla
             "{stderr}"
         );
         assert!(
-            stderr.contains("declare `visibility: private` on the source `drafts`"),
+            stderr.contains(
+                "declare `visibility: private` on the drafts source `drafts` in its onetaskgraph configuration"
+            ),
             "{stderr}"
         );
         assert!(stderr.contains("nothing was written"), "{stderr}");

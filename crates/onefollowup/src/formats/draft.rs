@@ -126,3 +126,40 @@ impl Versioned for DraftsProjectRecord {
     const STYLE: Style = Style::LINE;
     const TRAILING_NEWLINE: bool = false;
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{Author, AuthorKind};
+
+    #[test]
+    fn a_drafts_source_names_its_kind_then_its_node_and_member() {
+        for (kind, node, member, source) in [
+            (
+                AuthorKind::Node,
+                Some("verify-cursor"),
+                None,
+                "author node; node verify-cursor",
+            ),
+            (
+                AuthorKind::Monitor,
+                None,
+                Some("m-1"),
+                "author monitor; member m-1",
+            ),
+            (
+                AuthorKind::Pacemaker,
+                Some("n"),
+                Some("p-2"),
+                "author pacemaker; node n; member p-2",
+            ),
+            (AuthorKind::Manager, None, None, "author manager"),
+        ] {
+            let author = Author {
+                kind,
+                node: node.map(str::to_owned),
+                member: member.map(str::to_owned),
+            };
+            assert_eq!(author.source(), source);
+        }
+    }
+}

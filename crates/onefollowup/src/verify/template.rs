@@ -158,7 +158,7 @@ pub fn render_text(name: &str, source: &str, context: Jinja) -> Result<String, T
     });
     let failed = |error: minijinja::Error| TemplateError {
         template: name.to_owned(),
-        message: format!("{error:#}"),
+        message: message(&error),
     };
     environment
         .add_template_owned("(projection)", source.to_owned())
@@ -167,6 +167,18 @@ pub fn render_text(name: &str, source: &str, context: Jinja) -> Result<String, T
         .get_template("(projection)")
         .and_then(|template| template.render(context))
         .map_err(failed)
+}
+
+/// What went wrong, and where: the error and each error it was caused by, without the debug
+/// dump of every variable the template referenced, which for a ticket is the whole ticket.
+fn message(error: &minijinja::Error) -> String {
+    let mut message = error.to_string();
+    let mut cause = std::error::Error::source(error);
+    while let Some(inner) = cause {
+        message.push_str(&format!(": {inner}"));
+        cause = inner.source();
+    }
+    message
 }
 
 fn environment() -> Environment<'static> {
@@ -210,7 +222,7 @@ pub fn render_value(located: &Located, context: Jinja) -> Result<String, Templat
     });
     let failed = |error: minijinja::Error| TemplateError {
         template: located.name(),
-        message: format!("{error:#}"),
+        message: message(&error),
     };
     environment
         .add_template_owned("(root)", root)
@@ -219,4 +231,35 @@ pub fn render_value(located: &Located, context: Jinja) -> Result<String, Templat
         .get_template("(root)")
         .and_then(|template| template.render(context))
         .map_err(failed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Located, collapsed, exists, render_text};
+
+    #[test]
+    fn a_projection_renders_with_collapsed_and_may_include_a_shipped_template() {
+        let rendered = render_text(
+            "projection",
+            "{{ collapsed(' Why ', '\n because \n') }}|{% include 'builtin:comment-reply.md.j2' %}",
+            minijinja::Value::from_serialize(serde_json::json!({
+                "comment": {"batch": "b", "url": "u", "author": null, "response": "r"}
+            })),
+        )
+        .expect("it renders");
+        assert!(
+            rendered.starts_with(&format!("{}|", collapsed("Why", "because"))),
+            "{rendered}"
+        );
+        assert!(rendered.contains("Reply from follow-up run `b` to the comment: u"));
+        let refused = render_text(
+            "p",
+            "{% include 'nothing.j2' %}",
+            minijinja::Value::UNDEFINED,
+        )
+        .expect_err("nothing is named so");
+        assert_eq!(refused.template, "p");
+        assert!(!exists(&Located::Shipped("nothing.j2".to_owned())));
+        assert!(exists(&Located::Shipped("comment-reply.md.j2".to_owned())));
+    }
 }

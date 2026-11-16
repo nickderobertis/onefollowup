@@ -41,6 +41,7 @@ const RENDER: &str = r#"{%- set impact = ticket.section("Impact") -%}
 VAR rubric: {{ rubric.levels | map(attribute="name") | join(",") }}
 VAR estimate: {{ estimate.raise_at }}/{{ estimate.raise_cap }}
 VAR fields: {{ fields | tojson }}
+VAR declared_fields: {{ declared_fields | tojson }}
 VAR kind: {{ kind.name }}
 VAR batch: {{ batch }}
 VAR destination: {{ destination }}
@@ -85,6 +86,7 @@ VAR comment.sources.transcripts: {{ comment.sources.transcripts | tojson }}
 VAR comment.kind: {{ kind.name }}
 VAR comment.destination: {{ destination }}
 VAR comment.fields: {{ fields | tojson }}
+VAR comment.declared_fields: {{ declared_fields | tojson }}
 ";
 
 /// Each reply variable.
@@ -256,6 +258,7 @@ fn every_documented_variable_reaches_its_template_populated() {
             "rubric",
             "estimate",
             "fields",
+            "declared_fields",
             "kind",
             "batch",
             "destination",
@@ -285,6 +288,10 @@ fn every_documented_variable_reaches_its_template_populated() {
     );
     assert_eq!(found["kind"], "symptom");
     assert_eq!(found["fields"], r#"{"client":"acme"}"#);
+    assert_eq!(
+        found["declared_fields"],
+        r#"{"client":{"description":"The client that saw it."}}"#
+    );
     assert_eq!(found["batch"], BATCH);
     assert_eq!(found["destination"], "followups");
     assert_eq!(found["namespace"], "orchestrator");
@@ -408,6 +415,7 @@ fn every_documented_variable_reaches_its_template_populated() {
             "comment.kind",
             "comment.destination",
             "comment.fields",
+            "comment.declared_fields",
         ],
         &commented,
     );

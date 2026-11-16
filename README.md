@@ -701,6 +701,7 @@ is a Jinja template (minijinja) given the same data:
 | `rubric` | The configured rubric (`levels`, `areas`, `guidance`, `impact_lines`, `no_workaround`, `impact_parts`, `workaround_costs`). |
 | `estimate` | The configured `estimate` (`raise_at`, `raise_cap`). |
 | `fields` | For a ticket, each declared field it records mapped to its value; otherwise each declared field mapped to `{description}`. |
+| `declared_fields` | Every declared field mapped to `{description}`, with or without a ticket. |
 | `kind` | The ticket's kind as configured (`name`, `description`, …); for a comment, the kind of the ticket it is on. |
 | `batch` | The batch rendering. |
 | `destination` | The source the ticket is copied to, or the comment's item is on. |

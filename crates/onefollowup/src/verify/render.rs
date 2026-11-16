@@ -4,7 +4,8 @@
 //!
 //! Every template — a kind's `ticket_template` and `render_template`, both comment templates,
 //! each projection and the task template's ticket example — sees the same data (README.md,
-//! "Templates"): `rubric`, `estimate`, `fields`, `kind`, `batch`, `destination` and `namespace`;
+//! "Templates"): `rubric`, `estimate`, `fields`, `declared_fields`, `kind`, `batch`, `destination`
+//! and `namespace`;
 //! for a ticket `ticket`, `record` and `estimate_line`; for a comment `comment`.
 
 use std::sync::{Arc, LazyLock};
@@ -275,13 +276,14 @@ pub struct Common<'a> {
 }
 
 impl Common<'_> {
-    /// `rubric`, `estimate`, `fields`, `kind`, `batch`, `destination` and `namespace`, with
-    /// `fields` as given.
+    /// `rubric`, `estimate`, `fields`, `declared_fields`, `kind`, `batch`, `destination` and
+    /// `namespace`, with `fields` as given.
     fn data(&self, fields: Value) -> Map<String, Value> {
         let mut data = Map::new();
         data.insert("rubric".to_owned(), json!(self.config.rubric));
         data.insert("estimate".to_owned(), json!(self.config.estimate));
         data.insert("fields".to_owned(), fields);
+        data.insert("declared_fields".to_owned(), self.declarations());
         data.insert("kind".to_owned(), json!(self.kind));
         data.insert("batch".to_owned(), Value::from(self.batch));
         data.insert("destination".to_owned(), Value::from(self.destination));

@@ -1,10 +1,16 @@
-//! The Jinja templates the loop renders: the verifying agent's task and each kind's ticket
-//! shape. A template is a `builtin:<name>` shipped in the binary, or a path; a template
-//! includes others by name, resolved beside it (a shipped one's beside the shipped files).
+//! The Jinja templates the loop renders: the verifying agent's task, each kind's ticket shape,
+//! destination body and projections, and the comments a batch writes. A template is a
+//! `builtin:<name>` shipped in the binary, or a path; a template includes others by name,
+//! resolved beside it (a shipped one's beside the shipped files).
+//!
+//! Every template may call `collapsed(summary, content)`, which writes one expandable block in
+//! the authored form onetaskgraph's README states (its "Expandable blocks"): `<details>` alone,
+//! `<summary>…</summary>`, a blank line, the content, a blank line, `</details>`. The store
+//! writes that form as each destination's own.
 
 use std::path::{Path, PathBuf};
 
-use minijinja::{Environment, UndefinedBehavior};
+use minijinja::{Environment, UndefinedBehavior, Value as Jinja};
 use serde::Serialize;
 
 /// The prefix naming a shipped file.
@@ -29,7 +35,26 @@ const SHIPPED: &[(&str, &str)] = &[
         include_str!("../../defaults/ticket-template.md.j2"),
     ),
     ("persona.yaml", include_str!("../../defaults/persona.yaml")),
+    (
+        "comment-evidence.md.j2",
+        include_str!("../../defaults/comment-evidence.md.j2"),
+    ),
+    (
+        "comment-reply.md.j2",
+        include_str!("../../defaults/comment-reply.md.j2"),
+    ),
 ];
+
+/// One expandable block in the authored form: `<details>` alone, `<summary>…</summary>`, a blank
+/// line, `content` trimmed, a blank line, `</details>`.
+#[must_use]
+pub fn collapsed(summary: &str, content: &str) -> String {
+    format!(
+        "<details>\n<summary>{}</summary>\n\n{}\n\n</details>",
+        summary.trim(),
+        content.trim()
+    )
+}
 
 /// A template that could not be read or rendered.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -102,20 +127,71 @@ pub fn text(located: &Located) -> Result<String, TemplateError> {
     }
 }
 
+/// Whether the template at `located` can be read: a shipped name something ships, or a file.
+#[must_use]
+pub fn exists(located: &Located) -> bool {
+    match located {
+        Located::Shipped(name) => shipped(name).is_some(),
+        Located::File(path) => path.is_file(),
+    }
+}
+
 /// Render the template at `located` with `context`.
 ///
 /// # Errors
 ///
 /// A template that cannot be read, parsed or rendered, or that names an undefined variable.
 pub fn render<C: Serialize>(located: &Located, context: &C) -> Result<String, TemplateError> {
+    render_value(located, Jinja::from_serialize(context))
+}
+
+/// Render the template text `source`, named `name` in an error, with `context`: a projection,
+/// which is a template string rather than a file.
+///
+/// # Errors
+///
+/// A template that cannot be parsed or rendered.
+pub fn render_text(name: &str, source: &str, context: Jinja) -> Result<String, TemplateError> {
+    let mut environment = environment();
+    environment.set_loader(|name| {
+        Ok(shipped(name.strip_prefix(BUILTIN).unwrap_or(name)).map(str::to_owned))
+    });
+    let failed = |error: minijinja::Error| TemplateError {
+        template: name.to_owned(),
+        message: format!("{error:#}"),
+    };
+    environment
+        .add_template_owned("(projection)", source.to_owned())
+        .map_err(failed)?;
+    environment
+        .get_template("(projection)")
+        .and_then(|template| template.render(context))
+        .map_err(failed)
+}
+
+fn environment() -> Environment<'static> {
+    let mut environment = Environment::new();
+    environment.set_undefined_behavior(UndefinedBehavior::Chainable);
+    environment.set_keep_trailing_newline(true);
+    environment.add_function("collapsed", |summary: String, content: String| {
+        collapsed(&summary, &content)
+    });
+    environment
+}
+
+/// Render the template at `located` with a context already made a template value — one that
+/// may hold objects, as a ticket's `section(name)` is.
+///
+/// # Errors
+///
+/// A template that cannot be read, parsed or rendered, or that names an undefined variable.
+pub fn render_value(located: &Located, context: Jinja) -> Result<String, TemplateError> {
     let root = text(located)?;
     let directory: Option<PathBuf> = match located {
         Located::File(path) => path.parent().map(Path::to_path_buf),
         Located::Shipped(_) => None,
     };
-    let mut environment = Environment::new();
-    environment.set_undefined_behavior(UndefinedBehavior::Chainable);
-    environment.set_keep_trailing_newline(true);
+    let mut environment = environment();
     environment.set_loader(move |name| {
         if let Some(name) = name.strip_prefix(BUILTIN) {
             return Ok(shipped(name).map(str::to_owned));

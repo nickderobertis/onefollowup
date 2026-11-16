@@ -14,6 +14,7 @@ use serde_json::{Map, Value};
 
 use super::types::{Config, KEYS};
 use super::validate;
+use crate::verify::template::{self, Located};
 
 /// The configuration file's name, looked for in the working directory.
 pub const FILE_NAME: &str = "onefollowup.yaml";
@@ -138,12 +139,68 @@ impl Settings {
             message,
         })?;
         let process = Inputs::from_process()?;
-        Ok(Self {
+        let settings = Self {
             config,
             sources,
             working_directory: process.working_directory,
             environment: process.environment,
-        })
+        };
+        settings
+            .templates_exist()
+            .map_err(|(key, message)| ConfigError {
+                key,
+                origin: Origin::Default,
+                message,
+            })?;
+        Ok(settings)
+    }
+
+    /// Refuse a `render_template` or comment template that names no shipped file and no file
+    /// on disk, naming its key.
+    fn templates_exist(&self) -> Result<(), (String, String)> {
+        let mut named: Vec<(String, &str, String)> = self
+            .config
+            .kinds
+            .iter()
+            .enumerate()
+            .filter_map(|(index, kind)| {
+                kind.render_template.as_ref().map(|configured| {
+                    (
+                        format!("kinds[{index}].render_template"),
+                        "kinds",
+                        configured.clone(),
+                    )
+                })
+            })
+            .collect();
+        for (part, configured) in [
+            ("evidence", &self.config.comment_templates.evidence),
+            ("reply", &self.config.comment_templates.reply),
+        ] {
+            named.push((
+                format!("comment_templates.{part}"),
+                "comment_templates",
+                configured.clone(),
+            ));
+        }
+        for (key, top, configured) in named {
+            let located = Located::of(&configured, |path| self.path(top, path));
+            if !template::exists(&located) {
+                return Err((
+                    key,
+                    match located {
+                        Located::Shipped(name) => {
+                            format!("`{configured}` names no shipped template (`{name}`)")
+                        }
+                        Located::File(path) => format!(
+                            "`{configured}` names {}, which does not exist; name an existing template, or `builtin:` for a shipped one",
+                            path.display()
+                        ),
+                    },
+                ));
+            }
+        }
+        Ok(())
     }
 
     /// The directory the verb runs in.
@@ -320,12 +377,20 @@ pub fn resolve(inputs: &Inputs) -> Result<Settings, ConfigError> {
         .iter()
         .map(|key| ((*key).to_owned(), highest(&merged, key)))
         .collect();
-    Ok(Settings {
+    let settings = Settings {
         config,
         sources,
         working_directory: inputs.working_directory.clone(),
         environment: inputs.environment.clone(),
-    })
+    };
+    settings
+        .templates_exist()
+        .map_err(|(key, message)| ConfigError {
+            origin: origin_of(&merged, &key),
+            key,
+            message,
+        })?;
+    Ok(settings)
 }
 
 /// The configuration file to read, if any: `--config`, then `ONEFOLLOWUP_CONFIG`, then the

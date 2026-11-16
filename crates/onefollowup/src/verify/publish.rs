@@ -429,6 +429,18 @@ pub fn run(settings: &Settings, args: BatchArgs) -> Result<Published, Error> {
     for level in 0..=top {
         for plan in planned.iter_mut().filter(|plan| plan.level == level) {
             record_edges(&batch, &state, &bound, &cards, plan);
+            // The record is final now — its edges, priority and assignee decided — so the
+            // projections and the body every template sees it in are rendered from it.
+            let file = batch.ticket(&plan.decision.slug)?;
+            plan.decision.body = decide::rendered(
+                &batch,
+                &file,
+                &plan.decision.kind,
+                &plan.decision.destination,
+                &mut plan.decision.record,
+                &plan.decision.estimate,
+            )
+            .map_err(Error::Failed)?;
             plan.record = ticket::record_value(&plan.decision.record);
             plan.digest = ticket::digest(&plan.title, &plan.decision.body, &plan.record);
             digests.insert(plan.index.to_string(), plan.digest.clone());

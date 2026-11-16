@@ -113,147 +113,33 @@ impl CommentMarker {
     }
 }
 
-/// A batch's evidence comment on an item: its opening, the evidence, and its marker.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct EvidenceComment {
-    /// The batch.
-    pub batch: String,
-    /// The root cause.
-    pub root_cause: String,
-    /// The evidence, as written.
-    pub evidence: String,
+/// What owns a comment: the marker its last non-blank line is, or `None` when that line is no
+/// batch's marker. Ownership is read from the marker alone, so 0.5.0's comments (an opening
+/// line, the text, the marker), those opening with a collapsed block, and those any configured
+/// template rendered are each owned by the batch and root cause their marker names.
+#[must_use]
+pub fn owner(body: &str, namespace: &str) -> Option<CommentMarker> {
+    let last = body
+        .lines()
+        .rev()
+        .map(str::trim)
+        .find(|line| !line.is_empty())?;
+    CommentMarker::parse(last, namespace).ok()
 }
 
-/// The line an evidence comment opens with.
+/// The line 0.5.0's evidence comment opens with, which the shipped evidence template writes.
 #[must_use]
 pub fn evidence_opening(batch: &str) -> String {
     format!("Additional evidence from follow-up run `{batch}`.")
 }
 
-/// The line a reply opens with: attributed when the destination named the author.
+/// The line 0.5.0's reply opens with, which the shipped reply template writes: attributed
+/// when the destination named the author.
 #[must_use]
 pub fn reply_opening(batch: &str, url: &str, author: Option<&str>) -> String {
     match author {
         Some(author) => format!("Reply from follow-up run `{batch}` to @{author}'s comment: {url}"),
         None => format!("Reply from follow-up run `{batch}` to the comment: {url}"),
-    }
-}
-
-fn split_comment(text: &str) -> Result<(&str, &str, &str), FormatError> {
-    let body = text
-        .strip_suffix('\n')
-        .ok_or_else(|| malformed("a comment ends with a newline".to_owned()))?;
-    let (opening, rest) = body
-        .split_once("\n\n")
-        .ok_or_else(|| malformed("a comment opens with one line".to_owned()))?;
-    let (middle, marker) = rest
-        .rsplit_once("\n\n")
-        .ok_or_else(|| malformed("a comment closes with its marker".to_owned()))?;
-    Ok((opening, middle, marker))
-}
-
-impl EvidenceComment {
-    /// The comment's whole body.
-    #[must_use]
-    pub fn render(&self, namespace: &str) -> String {
-        let marker = CommentMarker {
-            batch: self.batch.clone(),
-            root_cause: self.root_cause.clone(),
-            reply: None,
-        };
-        format!(
-            "{}\n\n{}\n\n{}\n",
-            evidence_opening(&self.batch),
-            self.evidence.trim(),
-            marker.render(namespace)
-        )
-    }
-
-    /// Read an evidence comment.
-    ///
-    /// # Errors
-    ///
-    /// [`FormatError::Malformed`] for a body that is not a batch's evidence comment.
-    pub fn parse(text: &str, namespace: &str) -> Result<Self, FormatError> {
-        let (opening, evidence, marker) = split_comment(text)?;
-        let marker = CommentMarker::parse(marker, namespace)?;
-        if marker.reply.is_some() || opening != evidence_opening(&marker.batch) {
-            return Err(malformed("it is not an evidence comment".to_owned()));
-        }
-        Ok(Self {
-            batch: marker.batch,
-            root_cause: marker.root_cause,
-            evidence: evidence.to_owned(),
-        })
-    }
-}
-
-/// A batch's reply to a person's comment.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Reply {
-    /// The batch.
-    pub batch: String,
-    /// The root cause.
-    pub root_cause: String,
-    /// What it answers.
-    pub to: ReplyTo,
-    /// The answered comment's URL.
-    pub url: String,
-    /// The answered comment's author, when the destination named one.
-    pub author: Option<String>,
-    /// The response, as written.
-    pub response: String,
-}
-
-impl Reply {
-    /// The reply's whole body.
-    #[must_use]
-    pub fn render(&self, namespace: &str) -> String {
-        let marker = CommentMarker {
-            batch: self.batch.clone(),
-            root_cause: self.root_cause.clone(),
-            reply: Some(self.to.clone()),
-        };
-        format!(
-            "{}\n\n{}\n\n{}\n",
-            reply_opening(&self.batch, &self.url, self.author.as_deref()),
-            self.response.trim(),
-            marker.render(namespace)
-        )
-    }
-
-    /// Read a reply.
-    ///
-    /// # Errors
-    ///
-    /// [`FormatError::Malformed`] for a body that is not a batch's reply.
-    pub fn parse(text: &str, namespace: &str) -> Result<Self, FormatError> {
-        let (opening, response, marker) = split_comment(text)?;
-        let marker = CommentMarker::parse(marker, namespace)?;
-        let to = marker
-            .reply
-            .ok_or_else(|| malformed("it is not a reply".to_owned()))?;
-        let prefix = format!("Reply from follow-up run `{}` to ", marker.batch);
-        let rest = opening
-            .strip_prefix(&prefix)
-            .ok_or_else(|| malformed("its opening names another batch".to_owned()))?;
-        let (author, url) = if let Some(url) = rest.strip_prefix("the comment: ") {
-            (None, url)
-        } else {
-            let attributed = rest
-                .strip_prefix('@')
-                .and_then(|rest| rest.split_once("'s comment: "))
-                .ok_or_else(|| malformed("its opening names no comment".to_owned()))?;
-            (Some(attributed.0.to_owned()), attributed.1)
-        };
-        Ok(Self {
-            batch: marker.batch,
-            root_cause: marker.root_cause,
-            to,
-            url: url.to_owned(),
-            author,
-            response: response.to_owned(),
-        })
     }
 }
 

@@ -18,6 +18,7 @@ pub mod journal;
 pub mod prepare;
 pub mod publish;
 pub mod relations;
+pub mod render;
 pub mod routes;
 pub mod settle;
 pub mod template;

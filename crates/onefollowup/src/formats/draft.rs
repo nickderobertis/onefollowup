@@ -42,6 +42,22 @@ pub struct Author {
     pub member: Option<String>,
 }
 
+impl Author {
+    /// Where the draft came from, as a ticket record's `draft_sources` holds it: `author
+    /// <kind>`, then `; node <node>` and `; member <member>` where it names them.
+    #[must_use]
+    pub fn source(&self) -> String {
+        let mut line = format!("author {}", self.kind.as_str());
+        if let Some(node) = &self.node {
+            line.push_str(&format!("; node {node}"));
+        }
+        if let Some(member) = &self.member {
+            line.push_str(&format!("; member {member}"));
+        }
+        line
+    }
+}
+
 /// What kind of author drafted a draft.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -54,6 +70,19 @@ pub enum AuthorKind {
     Pacemaker,
     /// The manager.
     Manager,
+}
+
+impl AuthorKind {
+    /// The kind as a record spells it.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Node => "node",
+            Self::Monitor => "monitor",
+            Self::Pacemaker => "pacemaker",
+            Self::Manager => "manager",
+        }
+    }
 }
 
 /// Where a draft was drafted from.

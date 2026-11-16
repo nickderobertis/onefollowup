@@ -97,6 +97,8 @@ fn hook_inputs(batch: &Batch<'_>, store: &Store) -> Result<Vec<Input>, Error> {
             repository: None,
             paths: Vec::new(),
             body: input.detail,
+            author: None,
+            transcript: None,
         });
     }
     Ok(inputs)
@@ -136,6 +138,8 @@ fn drafts(
             source: "draft".to_owned(),
             title: item.title.clone(),
             repository: record.as_ref().map(|record| record.repository.clone()),
+            author: record.as_ref().map(|record| record.author.source()),
+            transcript: record.as_ref().and_then(|record| record.transcript.clone()),
             paths: record.map(|record| record.paths).unwrap_or_default(),
             body: item.content.clone(),
         });
@@ -552,10 +556,18 @@ fn render_task(batch: &Batch<'_>, drafts: &[Value], inputs: &[Value]) -> Result<
         .iter()
         .map(|(name, field)| (name.clone(), json!({"description": field.description})))
         .collect();
-    let default_kind = batch.kind(&config.default_kind);
-    let example = template::render(
-        &batch.ticket_template(default_kind),
-        &json!({"rubric": config.rubric, "fields": fields}),
+    let default_kind = batch
+        .kind(&config.default_kind)
+        .ok_or_else(|| Error::Refused("the default kind is not configured".to_owned()))?;
+    let example = template::render_value(
+        &batch.ticket_template(Some(default_kind)),
+        crate::verify::render::Common {
+            config,
+            kind: default_kind,
+            batch: &batch.batch,
+            destination: &batch.destination_of(default_kind),
+        }
+        .example(),
     )?;
     let relations: Vec<Value> = config
         .relations

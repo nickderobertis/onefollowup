@@ -171,6 +171,23 @@ pub fn validate(config: &Config) -> Result<(), Refusal> {
         if let Some(own) = &kind.dispositions {
             subset(own, &catalogue, &format!("kinds[{index}].dispositions"))?;
         }
+        if kind.evidence_section.trim().is_empty() {
+            return refuse(
+                format!("kinds[{index}].evidence_section"),
+                "is empty: name the section a `same` duplicate's evidence comment carries"
+                    .to_owned(),
+            );
+        }
+        for name in kind.projections.iter().flat_map(|map| map.keys()) {
+            if name.trim().is_empty() || name.chars().any(char::is_whitespace) {
+                return refuse(
+                    format!("kinds[{index}].projections"),
+                    format!(
+                        "`{name}` is not a projection name: a destination reads it at `[projected, <name>]`, so it is one word"
+                    ),
+                );
+            }
+        }
     }
 
     unique(

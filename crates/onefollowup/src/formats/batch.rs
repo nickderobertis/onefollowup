@@ -64,6 +64,13 @@ pub struct Input {
     pub paths: Vec<String>,
     /// Its body or detail.
     pub body: String,
+    /// Where a draft came from, as a ticket record's `draft_sources` value holds it; absent for
+    /// a hook's input.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub author: Option<String>,
+    /// The command that reads a draft's turns, when its record names one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transcript: Option<String>,
 }
 
 /// One destination item read, with its comments when they were read.

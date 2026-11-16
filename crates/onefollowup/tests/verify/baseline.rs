@@ -2,7 +2,9 @@
 //! tickets, a bound ticket re-copied, and evidence with its re-estimate on another batch's item
 //! — writes ticket records, receipt journal lines and comment markers byte-identical to the
 //! baselines committed under `tests/fixtures/baseline/`, which were taken from this journey at
-//! the base of the relations change (the formats as `ofu-verify-loop` left them). Nothing of a
+//! the base of the relations change (the formats as `ofu-verify-loop` left them), and re-taken
+//! once when records gained `draft_sources`: each record since carries its drafts' authors, and
+//! each copy receipt's digest covers that, while every comment stayed byte for byte. Nothing of a
 //! relation — no `task relations`, `task parent set-many` or `task link add-many` — is asked of
 //! the store.
 //!

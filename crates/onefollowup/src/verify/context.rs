@@ -202,6 +202,30 @@ impl<'a> Batch<'a> {
         Located::of(&configured, |path| self.settings.path("kinds", path))
     }
 
+    /// The kind's render template, when it names one.
+    #[must_use]
+    pub fn render_template(&self, kind: &Kind) -> Option<Located> {
+        kind.render_template
+            .as_ref()
+            .map(|configured| Located::of(configured, |path| self.settings.path("kinds", path)))
+    }
+
+    /// The evidence comment's template.
+    #[must_use]
+    pub fn evidence_template(&self) -> Located {
+        Located::of(&self.config.comment_templates.evidence, |path| {
+            self.settings.path("comment_templates", path)
+        })
+    }
+
+    /// The reply's template.
+    #[must_use]
+    pub fn reply_template(&self) -> Located {
+        Located::of(&self.config.comment_templates.reply, |path| {
+            self.settings.path("comment_templates", path)
+        })
+    }
+
     /// The verifying agent's task template.
     #[must_use]
     pub fn task_template(&self) -> Located {

@@ -30,7 +30,7 @@ use crate::config::{PriorityModel, RelationStore, Rollup, Settings, StatusRole};
 use crate::error::Error;
 use crate::formats::batch::Read;
 use crate::formats::gathering::LastWritten;
-use crate::formats::markers::Reply;
+use crate::formats::markers;
 use crate::formats::outbox::Outbox;
 use crate::formats::pending::{Pending, PendingEntry, PendingState, PendingWrite, WritePart};
 use crate::formats::ticket::TicketRecord;
@@ -523,10 +523,10 @@ fn replied(
         .flatten()
         .filter(|one| id.is_none_or(|id| one.id == id))
         .any(|one| {
-            // A source may hand a body back without the newline it was written with.
-            let body = format!("{}\n", one.body.trim_end());
-            Reply::parse(&body, namespace)
-                .is_ok_and(|reply| reply.batch == batch.batch && reply.to.answers == comment)
+            markers::owner(&one.body, namespace).is_some_and(|marker| {
+                marker.batch == batch.batch
+                    && marker.reply.is_some_and(|reply| reply.answers == comment)
+            })
         })
 }
 
@@ -619,9 +619,6 @@ fn plan(
             ));
         }
     };
-    let body = estimated.line.as_ref().map_or(body.clone(), |line| {
-        ticket::with_estimate_line(&body, line, &batch.config.rubric)
-    });
     let mut record = record;
     record.priority_estimate = estimated.level;
     // The item's priority follows the estimate only while it holds what onefollowup last
@@ -632,6 +629,45 @@ fn plan(
         Some(estimated.level)
     } else {
         owned_estimate(pass, &item)
+    };
+    let body = match changed {
+        // A changed ticket is rendered as `publish` renders one: its drafts' sources kept from
+        // what the item records, its projections and body from its kind's templates.
+        Some(ticket) => {
+            let held = decide::item_record(
+                batch,
+                &Read {
+                    item: item.clone(),
+                    comments: None,
+                    found_by: Vec::new(),
+                },
+            );
+            let (sources, transcripts) = crate::verify::tools::draft_fields(
+                &[],
+                &record.drafts,
+                held.as_ref().and_then(|held| held.draft_sources.as_ref()),
+                held.as_ref().and_then(|held| held.transcripts.as_ref()),
+            );
+            record.draft_sources = (!sources.is_empty()).then_some(sources);
+            record.transcripts = (!transcripts.is_empty()).then_some(transcripts);
+            let destination = issue
+                .split_once(':')
+                .map_or(batch.config.destination.as_str(), |(source, _)| source);
+            match decide::rendered(batch, ticket, kind, destination, &mut record, &estimated) {
+                Ok(body) => body,
+                Err(message) => {
+                    return Err(refuse(
+                        PendingState::Failed,
+                        PendingWrite::TicketCopy,
+                        item.version.clone(),
+                        format!("{issue}'s ticket could not be rendered: {message}"),
+                    ));
+                }
+            }
+        }
+        None => estimated.line.as_ref().map_or(body.clone(), |line| {
+            ticket::with_estimate_line(&body, line, &batch.config.rubric)
+        }),
     };
     let withdraw = changed.is_some_and(crate::verify::ticket::TicketFile::withdrawn);
     let mut status = None;

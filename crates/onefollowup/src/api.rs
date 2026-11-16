@@ -623,6 +623,17 @@ pub struct TicketCommentArgs {
     /// A declared field the evidence observed, and its value; repeat for each.
     #[arg(long = "field", value_name = "NAME=VALUE", value_parser = key_value)]
     pub fields: Vec<String>,
+    /// A JSON file of the comment's sources: one object of exactly `host`, `basis`, `drafts`
+    /// and `witnesses`, validated as a ticket record's are; each draft's source and transcript
+    /// are read from the draft.
+    #[arg(long, value_name = "FILE")]
+    pub sources_file: Option<PathBuf>,
+    /// A file holding the paragraph saying what the evidence bears on in the ticket.
+    #[arg(long, value_name = "FILE")]
+    pub bears_on_file: Option<PathBuf>,
+    /// A file holding the question the comment asks.
+    #[arg(long, value_name = "FILE")]
+    pub question_file: Option<PathBuf>,
     /// The evidence; `None` reads it from stdin.
     #[arg(skip)]
     pub evidence: Option<String>,

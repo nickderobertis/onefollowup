@@ -13,7 +13,9 @@
     boundary         from when the gathering read, or `none`.
     comments         list, in the order they are answered, of {issue, comment, url, author,
                      version, body, anchor, issue_line, last_written, ticket, item_version,
-                     reply_opening, marker_confirms, marker_does_not_confirm}.
+                     reply_opening, reply, marker_confirms, marker_does_not_confirm}; `reply`
+                     is `comment_templates.reply` rendered, its response the placeholder
+                     `<your reply, in your words>`.
     response_example the example response account, as JSON.
 -#}
 ## What
@@ -94,9 +96,8 @@ and the estimate is the severity with the workaround, raised one level, capped a
 One reply per comment, on the issue the comment sits on, its text exactly:
 
 ```text
-<the comment's reply opening, as quoted under it below>
-
-<your reply, in your words>
+<the comment's reply shape, as quoted under it below, with your reply, in your words, in
+place of `<your reply, in your words>`>
 
 <the marker of your verdict, as quoted under it below>
 ```
@@ -143,6 +144,11 @@ Whether each reply is on the destination is settle's to verify, in the one read 
 - Reply opening: `{{ quoted.reply_opening }}`
 - Marker if it confirms: `{{ quoted.marker_confirms }}`
 - Marker if it does not: `{{ quoted.marker_does_not_confirm }}`
+- Reply shape:
+
+````text
+{{ quoted.reply }}
+````
 
 {{ quoted.body }}
 {% else %}

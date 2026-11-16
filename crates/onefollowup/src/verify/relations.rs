@@ -561,6 +561,12 @@ impl Graph {
                     ticket::level_word(level)
                 )
             });
+            estimated.raise = estimated.raise.map(|raise| {
+                format!(
+                    "{raise}; held at {}, its related tickets' highest",
+                    ticket::level_word(level)
+                )
+            });
             estimated.level = level;
         }
         Ok((estimated, count))

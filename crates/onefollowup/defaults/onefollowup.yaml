@@ -14,6 +14,11 @@ namespace: orchestrator
 batch_id_pattern: '[\w.@+-]*[\w@+-][\w.@+-]*'
 task_template: builtin:task-template.md.j2
 persona: builtin:persona.yaml
+# The visible part of each comment a batch writes, rendered with the data every template sees
+# (README.md, "Templates"); onefollowup appends the comment's marker line after it.
+comment_templates:
+  evidence: builtin:comment-evidence.md.j2
+  reply: builtin:comment-reply.md.j2
 statuses:
   proposal:
     category: backlog
@@ -218,6 +223,9 @@ kinds:
     duplicates: agent
     priority: {model: estimate}
     initial_status: proposal
+    # No `render_template`: the destination body is the authored body with its estimate
+    # line. No `projections`: no `projected` is written.
+    evidence_section: Evidence
 
 default_kind: root-cause
 

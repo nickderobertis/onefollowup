@@ -119,6 +119,41 @@ fn populated(found: &BTreeMap<String, String>, names: &[&str], text: &str) {
     }
 }
 
+/// Each variable README.md's "Templates" table names, in its order.
+fn documented() -> Vec<String> {
+    let readme = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../README.md"),
+    )
+    .expect("the README");
+    let table = readme
+        .split_once("### Templates\n")
+        .and_then(|(_, rest)| rest.split_once("\n\n| Variable | What it is |\n|---|---|\n"))
+        .map(|(_, rest)| rest.split("\n\n").next().unwrap_or_default().to_owned())
+        .expect("the Templates table");
+    table
+        .lines()
+        .filter_map(|row| row.strip_prefix("| `"))
+        .filter_map(|row| row.split_once('`'))
+        .map(|(name, _)| name.to_owned())
+        .collect()
+}
+
+#[test]
+fn every_variable_the_readme_documents_is_printed_here() {
+    let printed = variables(&format!("{RENDER}{EVIDENCE}{REPLY}"));
+    let documented = documented();
+    assert!(documented.len() >= 10, "{documented:?}");
+    for name in &documented {
+        assert!(
+            printed.keys().any(|key| key == name
+                || key.starts_with(&format!("{name}."))
+                || (name == "comment" && key.starts_with("reply."))
+                || (name == "ticket" && key.starts_with("section."))),
+            "README.md documents `{name}`, which no template here prints"
+        );
+    }
+}
+
 /// The fenced reply shape the feedback file quotes under `label`.
 fn shape(feedback: &str, label: &str) -> String {
     let opening = format!("- {label}:\n\n````text\n");

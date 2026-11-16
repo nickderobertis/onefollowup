@@ -216,7 +216,7 @@ pub fn hold(pass: &Pass<'_>, feedback: &Path) -> Result<Account, Error> {
             ));
             continue;
         }
-        for problem in tools::ticket_problems(&batch, None, &ticket) {
+        for problem in tools::filed_ticket_problems(&batch, &ticket) {
             problems.push(format!("ticket `{}`: {problem}", ticket.slug));
         }
         changed.push(ticket);

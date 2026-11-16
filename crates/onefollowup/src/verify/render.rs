@@ -467,7 +467,12 @@ pub fn destination(
     }
     let Some(located) = render_template else {
         return Ok(match &estimate.line {
-            Some(line) => ticket::with_estimate_line(authored, line, &common.config.rubric),
+            Some(line) => ticket::with_estimate_line(
+                authored,
+                line,
+                &common.config.estimate.line_label,
+                &common.config.rubric,
+            ),
             None => authored.to_owned(),
         });
     };

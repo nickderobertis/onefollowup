@@ -105,6 +105,14 @@ fn a_board_ticket_read_from_onetaskgraph_4039_survives_a_bound_re_copy_whole() {
     .expect("the draft");
 
     // The ticket file: the board's title and record, and the body its verifying agent authors.
+    // Its agent records the impact values its body's lines state, as this release's records
+    // carry them.
+    let mut authored_record = board_record.clone();
+    authored_record["impact"] = json!({
+        "Severity": "low",
+        "Workaround": "Keep source drafts available so transcript projections remain populated where a transcript exists.",
+        "Severity with the workaround": "low",
+    });
     let authored = read("onetaskgraph-4039.authored.md");
     let authored = authored
         .split_once("-->\n")
@@ -118,7 +126,7 @@ fn a_board_ticket_read_from_onetaskgraph_4039_survives_a_bound_re_copy_whole() {
     std::fs::write(
         &ticket_path,
         format!(
-            "---\ntitle: {}\nmetadata:\n  orchestrator.follow-up: {board_record}\n---\n{authored}",
+            "---\ntitle: {}\nmetadata:\n  orchestrator.follow-up: {authored_record}\n---\n{authored}",
             board_front["title"]
         ),
     )

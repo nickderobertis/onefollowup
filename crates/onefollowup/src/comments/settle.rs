@@ -39,7 +39,7 @@ use crate::formats::{Level, Versioned as _};
 use crate::store::{BatchAnswer, HeldUpdate, ReadItem, StoreItem};
 use crate::verify::context::Batch;
 use crate::verify::decide::{self, priority_of};
-use crate::verify::ticket::{self, ESTIMATE_LINE, Estimated, level_word};
+use crate::verify::ticket::{self, Estimated, level_word};
 use crate::work;
 
 /// The record keys other batches' and the store's own writes move, which a person's edit is
@@ -55,14 +55,8 @@ const MOVED_BY_ONEFOLLOWUP: &[&str] = &[
 
 /// An item as a person's edit is read from: its title, its content less the estimate line, and
 /// its record less what onefollowup's own writes move.
-fn normalized(title: &str, content: &str, record: &Value) -> (String, String, Value) {
-    let estimate = format!("- {ESTIMATE_LINE}:");
-    let starred = format!("* {ESTIMATE_LINE}:");
-    let content: Vec<&str> = content
-        .trim_end()
-        .split('\n')
-        .filter(|line| !line.starts_with(&estimate) && !line.starts_with(&starred))
-        .collect();
+fn normalized(title: &str, content: &str, record: &Value, label: &str) -> (String, String, Value) {
+    let content = ticket::without_estimate_line(content.trim_end(), label);
     let mut record = record.clone();
     if let Value::Object(map) = &mut record {
         for key in MOVED_BY_ONEFOLLOWUP {
@@ -71,7 +65,7 @@ fn normalized(title: &str, content: &str, record: &Value) -> (String, String, Va
     }
     (
         title.trim().to_owned(),
-        content.join("\n").trim_end().to_owned(),
+        content.trim_end().to_owned(),
         record,
     )
 }
@@ -83,8 +77,9 @@ fn departure(pass: &Pass<'_>, item: &StoreItem, written: &LastWritten) -> Option
         .get(&pass.record_key())
         .cloned()
         .unwrap_or(Value::Null);
-    let now = normalized(&item.title, &item.content, &record);
-    let then = normalized(&written.title, &written.content, &written.record);
+    let label = &pass.config.estimate.line_label;
+    let now = normalized(&item.title, &item.content, &record, label);
+    let then = normalized(&written.title, &written.content, &written.record, label);
     let mut parts = Vec::new();
     if now.0 != then.0 {
         parts.push("its title");
@@ -666,7 +661,8 @@ fn plan(
             }
         }
         None => estimated.line.as_ref().map_or(body.clone(), |line| {
-            ticket::with_estimate_line(&body, line, &batch.config.rubric)
+            ticket::replace_estimate_line(&body, line, &batch.config.estimate.line_label)
+                .unwrap_or_else(|| body.clone())
         }),
     };
     let withdraw = changed.is_some_and(crate::verify::ticket::TicketFile::withdrawn);
@@ -876,7 +872,9 @@ fn rolled(
                             .and_then(|kind| {
                                 ticket::estimate(
                                     config,
+                                    &batch.estimate_line(),
                                     kind,
+                                    their.impact.as_ref(),
                                     &read.item.content,
                                     their.frequency,
                                     occurrences,
@@ -892,24 +890,21 @@ fn rolled(
             }
         }
     }
-    let mut estimated = ticket::estimate(config, kind, body, record.frequency, count + added)?;
+    let line = batch.estimate_line();
+    let mut estimated = ticket::estimate(
+        config,
+        &line,
+        kind,
+        record.impact.as_ref(),
+        body,
+        record.frequency,
+        count + added,
+    )?;
     if let Some(level) = highest
         && rank(level) > rank(estimated.level)
         && matches!(kind.priority, PriorityModel::Estimate)
     {
-        estimated.line = estimated.line.map(|line| {
-            let inner = line
-                .split_once('(')
-                .and_then(|(_, rest)| rest.strip_suffix(')'))
-                .unwrap_or_default()
-                .to_owned();
-            format!(
-                "- {ESTIMATE_LINE}: {} ({inner}; held at {}, its related tickets' highest)",
-                level_word(level),
-                level_word(level)
-            )
-        });
-        estimated.level = level;
+        ticket::hold(&line, &mut estimated, level)?;
     }
     Ok(estimated)
 }

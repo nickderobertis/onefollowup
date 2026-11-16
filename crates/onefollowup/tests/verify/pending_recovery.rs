@@ -91,11 +91,11 @@ fn next_pass(world: &mut World) -> Value {
 fn a_priority_a_person_set_after_the_write_was_withheld_stands_over_its_retry() {
     let (mut world, a, _, _) = three_batches(4);
     withheld(&mut world, &a[0], &|ticket| {
-        edit_ticket(ticket, "- Severity: high\n", "- Severity: critical\n");
+        edit_ticket(ticket, "\"Severity\":\"high\"", "\"Severity\":\"critical\"");
         edit_ticket(
             ticket,
-            "Severity with the workaround: medium",
-            "Severity with the workaround: high",
+            "\"Severity with the workaround\":\"medium\"",
+            "\"Severity with the workaround\":\"high\"",
         );
     });
     let held = pending(&world);

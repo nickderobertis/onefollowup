@@ -26,6 +26,9 @@ pub struct World {
     pub phases: Vec<(String, Vec<Value>)>,
     /// Variables every verb's environment holds beyond the world's own.
     pub variables: Vec<(String, String)>,
+    /// The shape every ticket `ticket` writes is written in, over its own: a world whose
+    /// configuration names its own templates writes the shape they ask for.
+    pub shape: Option<Shape>,
 }
 
 impl World {
@@ -62,6 +65,7 @@ impl World {
             root,
             phases: Vec::new(),
             variables: Vec::new(),
+            shape: None,
         }
     }
 
@@ -266,6 +270,10 @@ impl World {
             .work()
             .join(format!("tasks/{batch}/tickets/{}.md", ticket.slug));
         std::fs::create_dir_all(path.parent().expect("a parent")).expect("the tickets directory");
+        let mut ticket = ticket.clone();
+        if let Some(shape) = self.shape {
+            ticket.shape = shape;
+        }
         std::fs::write(path, ticket.render(batch)).expect("the ticket");
     }
 
@@ -334,6 +342,23 @@ pub struct Ticket {
     pub without: Vec<String>,
     /// The repository it is filed in.
     pub repository: String,
+    /// The body's shape.
+    pub shape: Shape,
+    /// Whether its record carries `impact`, the values its priority is estimated from.
+    pub impact: bool,
+}
+
+/// The shape a ticket's body is written in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Shape {
+    /// The shipped default's: plain parts, `impact` in the record alone, a one-unit fix whose
+    /// contributing locations come first, and `## Evidence` of prose.
+    Plain,
+    /// 0.5.0's: the impact lines in the body, `## Owning batches`, and a fix of one paragraph
+    /// and its contributing locations — what a host's own 0.5.0-era templates ask for.
+    Lined,
+    /// 0.5.0's sections with the impact values in the record alone: no impact line in the body.
+    Owned,
 }
 
 impl Ticket {
@@ -354,9 +379,11 @@ impl Ticket {
             fields: Vec::new(),
             status: None,
             extra: Vec::new(),
-            evidence: format!("Host {HOST}: the run's log shows {title}."),
+            evidence: format!("The run's log shows {title}."),
             without: Vec::new(),
             repository: REPOSITORY.to_owned(),
+            shape: Shape::Plain,
+            impact: true,
         }
     }
 
@@ -387,6 +414,18 @@ impl Ticket {
         if let Some(frequency) = &self.frequency {
             record["frequency"] = json!(frequency);
         }
+        let (severity, mitigated, workaround) = &self.severity;
+        if self.impact {
+            record["impact"] = json!({
+                "Severity": severity,
+                "Workaround": workaround,
+                "Severity with the workaround": mitigated,
+            });
+        }
+        if self.shape == Shape::Plain {
+            record["witnesses"] =
+                json!([format!("{} src/layout.rs:42 at {COMMIT}", self.repository)]);
+        }
         if let Some(kind) = &self.kind {
             record["kind"] = json!(kind);
         }
@@ -406,22 +445,37 @@ impl Ticket {
             .as_ref()
             .map(|status| format!("status: {status}\n"))
             .unwrap_or_default();
-        let (severity, mitigated, workaround) = &self.severity;
-        let mut sections = vec![
-            ("Root cause".to_owned(), self.cause.clone()),
-            (
-                "Impact".to_owned(),
-                format!(
-                    "**Who is affected.** Users of widgets who save layouts.\n**What it costs them.** One lost layout per occurrence.\n**What it costs the product owner.** Some users lose a saved layout each week.\n**Cost of the workaround.**\n- Applying it: a moment per save, by the user\n- Side effects on the outcome: none\n- Discovery: the failure names it\n\n- Severity: {severity}\n- Workaround: {workaround}\n- Severity with the workaround: {mitigated}"
+        let parts = "**Who is affected.** Users of widgets who save layouts.\n**What it costs them.** One lost layout per occurrence.\n**What it costs the product owner.** Some users lose a saved layout each week.\n**Cost of the workaround.**\n- Applying it: a moment per save, by the user\n- Side effects on the outcome: none\n- Discovery: the failure names it";
+        let mut sections = match self.shape {
+            Shape::Plain => vec![
+                ("Root cause".to_owned(), self.cause.clone()),
+                ("Impact".to_owned(), parts.to_owned()),
+                ("Examples".to_owned(), format!("{}.", self.title)),
+                (
+                    "Suggested fix".to_owned(),
+                    "**Contributing locations.**\n- widgets `src/layout.rs`: reads the size twice\n\n### Layout save — `widgets`\n\nRead the window size once per save. A save then never mixes two window sizes.".to_owned(),
                 ),
-            ),
-            ("Examples".to_owned(), format!("{}.", self.title)),
-            (
-                "Suggested fix".to_owned(),
-                "Read the window size once per save.\n\n**Contributing locations.**\n- widgets `src/layout.rs`: reads the size twice".to_owned(),
-            ),
-            ("Owning batches".to_owned(), format!("- {batch}")),
-        ];
+            ],
+            Shape::Lined | Shape::Owned => vec![
+                ("Root cause".to_owned(), self.cause.clone()),
+                (
+                    "Impact".to_owned(),
+                    if self.shape == Shape::Lined {
+                        format!(
+                            "{parts}\n\n- Severity: {severity}\n- Workaround: {workaround}\n- Severity with the workaround: {mitigated}"
+                        )
+                    } else {
+                        parts.to_owned()
+                    },
+                ),
+                ("Examples".to_owned(), format!("{}.", self.title)),
+                (
+                    "Suggested fix".to_owned(),
+                    "Read the window size once per save.\n\n**Contributing locations.**\n- widgets `src/layout.rs`: reads the size twice".to_owned(),
+                ),
+                ("Owning batches".to_owned(), format!("- {batch}")),
+            ],
+        };
         if !self.fields.is_empty() {
             sections.push((
                 "Fields".to_owned(),

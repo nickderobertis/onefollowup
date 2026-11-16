@@ -27,14 +27,18 @@ use regex::Regex;
 use serde_json::{Map, Value};
 use sha2::{Digest as _, Sha256};
 
-use crate::config::{Config, Kind, Priority, PriorityModel, Rubric, StatusRole};
+use indexmap::IndexMap;
+
+use crate::config::{
+    Check, Config, Kind, Priority, PriorityModel, Rubric, StatusRole, TitlePrefix,
+};
 use crate::formats::markers::CommentMarker;
 use crate::formats::ticket::TicketRecord;
 use crate::formats::{Frequency, Level, Verdict, Versioned};
 use crate::verify::render::{self, Common, TicketData};
 use crate::verify::template::{self, Located};
 
-/// The longest title a ticket carries.
+/// The longest title a draft carries, and the `title` check's default limit.
 pub const TITLE_LIMIT: usize = 120;
 
 /// A root cause's slug, which names the ticket's file.
@@ -56,16 +60,38 @@ static HEADING: LazyLock<Regex> =
 /// A fence line.
 static FENCE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^ {0,3}(`{3,}|~{3,})").expect("valid"));
-/// A line of an `## Impact` section's tail.
-static IMPACT_LINE: LazyLock<Regex> =
+/// A labelled line, `- Label: value` or Linear's `* Label: value`.
+static LABELLED_LINE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^[-*] (?P<label>[^:\n]+):(?P<value>[^\n]*)$").expect("valid"));
+/// A level-3 heading, as a unit subsection opens.
+static SUBHEADING: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^###(?:[ \t][^\n]*)?$").expect("valid"));
+/// A unit subsection's heading: the unit, an em dash, its repository, and the package or path
+/// only when the unit is part of a repository.
+static UNIT_HEADING: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^### (?P<unit>\S[^\n]*?) — `(?P<repository>[^`\n]+)`(?: \(`[^`\n]+`\))?[ \t]*$")
+        .expect("valid")
+});
+/// One contributing location: its repository, its path in backticks, then what it does.
+static LOCATION: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^- [^`\n]*\S[ \t]+`[^`\n]+`:[ \t]*\S").expect("valid"));
+/// A `Host:` or `Basis:` line, which the record holds.
+static METADATA_LINE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^[ \t]*(?:[-*+][ \t]+)?(?:\*\*)?(?P<label>Host|Basis)(?:\*\*)?:").expect("valid")
+});
+/// A 40-character commit standing alone.
+static BARE_COMMIT: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?:^|[^0-9a-f])[0-9a-f]{40}(?:[^0-9a-f]|$)").expect("valid"));
 
-/// The label of the estimate line `publish` writes into an estimated ticket's `## Impact`.
-pub const ESTIMATE_LINE: &str = "Priority estimate";
-/// The section an estimate model's severity lines sit in.
-pub const IMPACT: &str = "Impact";
-/// The section a ticket's evidence is in.
-pub const EVIDENCE: &str = "Evidence";
+/// The section 0.5.0 placed the estimate line in, after its severity with the workaround: the
+/// one fixed place `publish` puts a line into an authored body that carries none, when no
+/// `render_template` renders the body.
+const LEGACY_IMPACT: &str = "Impact";
+/// How a location bullet reads, as every refusal names it.
+const LOCATION_SHAPE: &str =
+    "`- <repository> `<path>`: <what this location does that breaks the guarantee>`";
+/// How a unit subsection is headed, as every refusal names it.
+const UNIT_SHAPE: &str = "`### <unit> — `<repository>``, with `` (`<package or path>`)`` after it when the unit is part of a repository";
 
 /// One ticket file, read as far as it reads.
 #[derive(Debug, Clone, PartialEq)]
@@ -303,12 +329,17 @@ pub struct Context<'a> {
     pub batch: &'a str,
     /// The batch's input set, by id; `None` when it was not prepared.
     pub inputs: Option<&'a [String]>,
+    /// The transcript commands the batch's inputs name, which `## Evidence` never carries.
+    pub transcripts: &'a [String],
     /// The kind's ticket template, resolved.
     pub template: &'a Located,
     /// The configured namespace, whose marker lines a ticket never carries.
     pub namespace: &'a str,
     /// What every template sees besides the ticket: the batch's data.
     pub common: Option<Common<'a>>,
+    /// Whether the ticket was already copied to an item: a ticket 0.5.0 wrote may carry no
+    /// `impact`, its values read from its body's labelled lines.
+    pub filed: bool,
 }
 
 /// The template headings a ticket of the kind carries, each with whether it is optional.
@@ -332,7 +363,8 @@ pub fn template_headings(
         .collect())
 }
 
-/// Every rule `ticket` breaks; empty when it is sound.
+/// Every rule `ticket` breaks; empty when it is sound. A `{command: [...]}` check is not run
+/// here: it is given the rendered body, which the caller renders.
 #[must_use]
 pub fn problems(ticket: &TicketFile, config: &Config, context: &Context<'_>) -> Vec<String> {
     let mut problems = ticket.problems.clone();
@@ -345,9 +377,6 @@ pub fn problems(ticket: &TicketFile, config: &Config, context: &Context<'_>) -> 
     let title = ticket.title.trim();
     if title.is_empty() && ticket.problems.is_empty() {
         problems.push("the title is empty".to_owned());
-    }
-    if title.chars().count() > TITLE_LIMIT {
-        problems.push(format!("the title is longer than {TITLE_LIMIT} characters"));
     }
     if title.chars().any(char::is_control) {
         problems.push("the title carries a control character".to_owned());
@@ -371,18 +400,12 @@ pub fn problems(ticket: &TicketFile, config: &Config, context: &Context<'_>) -> 
             record.root_cause, ticket.slug
         ));
     }
-    if !ORIGIN.is_match(&record.repository) {
+    let origin = ORIGIN.is_match(&record.repository);
+    if !origin {
         problems.push(format!(
             "the record's repository `{}` is not a normalized origin, `host/owner/name`",
             record.repository
         ));
-    } else {
-        let name = record.repository.rsplit('/').next().unwrap_or_default();
-        if !title.starts_with(&format!("{name}: ")) {
-            problems.push(format!(
-                "the title does not open with `{name}: `, the name of the repository its item is filed in"
-            ));
-        }
     }
     if !record.owning_batches.iter().any(|one| one == context.batch) {
         problems.push(format!(
@@ -446,32 +469,80 @@ pub fn problems(ticket: &TicketFile, config: &Config, context: &Context<'_>) -> 
             ));
         }
     }
-    let mut held = record_value(record);
-    if let Value::Object(map) = &mut held {
-        if fields.is_empty() {
-            map.shift_remove("fields");
-        } else {
-            map.insert("fields".to_owned(), Value::Object(fields.clone()));
-        }
-    }
-    let data = match context.common {
-        Some(common) => Common { kind, ..common }.ticket(&TicketData {
-            title: &ticket.title,
-            slug: &ticket.slug,
-            body: &ticket.body,
-            record: &held,
-            estimate: None,
-        }),
-        None => minijinja::Value::from_serialize(
-            serde_json::json!({"rubric": config.rubric, "fields": fields}),
-        ),
-    };
-    match template_headings(context.template, data) {
-        Ok(expected) => problems.extend(body_problems(&ticket.body, &expected)),
-        Err(error) => problems.push(error.to_string()),
-    }
     if kind.priority == PriorityModel::Estimate {
-        problems.extend(impact_problems(&ticket.body, &config.rubric));
+        problems.extend(impact_problems(
+            record.impact.as_ref(),
+            &ticket.body,
+            &config.rubric,
+            context.filed,
+        ));
+    }
+    for check in kind.checks() {
+        match check {
+            Check::Headings => {
+                let mut held = record_value(record);
+                if let Value::Object(map) = &mut held {
+                    if fields.is_empty() {
+                        map.shift_remove("fields");
+                    } else {
+                        map.insert("fields".to_owned(), Value::Object(fields.clone()));
+                    }
+                }
+                let data = match context.common {
+                    Some(common) => Common { kind, ..common }.ticket(&TicketData {
+                        title: &ticket.title,
+                        slug: &ticket.slug,
+                        body: &ticket.body,
+                        record: &held,
+                        estimate: None,
+                    }),
+                    None => minijinja::Value::from_serialize(
+                        serde_json::json!({"rubric": config.rubric, "fields": fields}),
+                    ),
+                };
+                match template_headings(context.template, data) {
+                    Ok(expected) => problems.extend(body_problems(&ticket.body, &expected)),
+                    Err(error) => problems.push(error.to_string()),
+                }
+            }
+            Check::Title { prefix, limit } => {
+                if title.chars().count() > limit {
+                    problems.push(format!("the title is longer than {limit} characters"));
+                }
+                let name = record.repository.rsplit('/').next().unwrap_or_default();
+                if prefix == TitlePrefix::RepositoryName
+                    && origin
+                    && !title.starts_with(&format!("{name}: "))
+                {
+                    problems.push(format!(
+                        "the title does not open with `{name}: `, the name of the repository its item is filed in"
+                    ));
+                }
+            }
+            Check::Impact { section } => {
+                problems.extend(impact_part_problems(&ticket.body, &section, &config.rubric));
+            }
+            Check::FixUnits { section, locations } => {
+                problems.extend(fix_problems(&ticket.body, &section, &locations));
+            }
+            Check::EvidenceProse { section } => {
+                problems.extend(evidence_problems(
+                    &ticket.body,
+                    &section,
+                    &config.drafts_source,
+                    record,
+                    context.transcripts,
+                ));
+            }
+            Check::Witnesses { required } => {
+                if required && record.witnesses.as_ref().is_none_or(Vec::is_empty) {
+                    problems.push(
+                        "the record carries no `witnesses`: name at least one `<origin> <path>:<line> at <commit>` where the claim was seen, at its basis commit".to_owned(),
+                    );
+                }
+            }
+            Check::Command(_) => {}
+        }
     }
     problems
 }
@@ -518,55 +589,241 @@ fn body_problems(body: &str, expected: &[(String, bool)]) -> Vec<String> {
     problems
 }
 
-/// One `## Impact` line's label and value.
-fn impact_lines(body: &str) -> Vec<(String, String)> {
-    section(body, IMPACT)
-        .map(|content| {
-            content
-                .lines()
-                .filter_map(|line| IMPACT_LINE.captures(line.trim_end()))
-                .map(|captured| {
-                    (
-                        captured["label"].trim().to_owned(),
-                        captured["value"].trim().to_owned(),
-                    )
-                })
-                .collect()
-        })
-        .unwrap_or_default()
+/// `text` with every fenced line blanked to spaces, so an offset in it is the same in `text`.
+fn unfenced(text: &str) -> String {
+    let mut fence: Option<String> = None;
+    let mut out = String::with_capacity(text.len());
+    for line in text.split_inclusive('\n') {
+        let bare = line.trim_end_matches(['\n', '\r']);
+        let inside = if let Some(captured) = FENCE.captures(bare) {
+            let marker = captured[1].to_owned();
+            match &fence {
+                None => fence = Some(marker),
+                Some(open) if marker.starts_with(open.as_str()) => fence = None,
+                Some(_) => {}
+            }
+            true
+        } else {
+            fence.is_some()
+        };
+        if inside {
+            for one in line.chars() {
+                if one == '\n' {
+                    out.push('\n');
+                } else {
+                    out.extend(std::iter::repeat_n(' ', one.len_utf8()));
+                }
+            }
+        } else {
+            out.push_str(line);
+        }
+    }
+    out
 }
 
-/// The value `body`'s `## Impact` states for the line `label`.
+/// The legacy read of a body's impact values, for a record carrying no `impact` — every ticket
+/// 0.5.0 wrote: each rubric impact line's `- <label>: <value>` (or Linear's `* `), wherever it
+/// sits outside fenced code, a collapsed block's content included. `None` when a label is
+/// missing or repeated, or a severity value is no rubric level: the lines cannot be read.
 #[must_use]
-pub fn impact_value(body: &str, label: &str) -> Option<String> {
-    impact_lines(body)
+pub fn legacy_impact(body: &str, rubric: &Rubric) -> Option<IndexMap<String, String>> {
+    let mut found: IndexMap<String, Vec<String>> = IndexMap::new();
+    for line in unfenced(body).lines() {
+        if let Some(captured) = LABELLED_LINE.captures(line.trim_end()) {
+            let label = captured["label"].trim();
+            if rubric.impact_lines.iter().any(|wanted| wanted == label) {
+                found
+                    .entry(label.to_owned())
+                    .or_default()
+                    .push(captured["value"].trim().to_owned());
+            }
+        }
+    }
+    let mut values = IndexMap::new();
+    for label in &rubric.impact_lines {
+        match found.get(label).map(Vec::as_slice) {
+            Some([value]) => {
+                values.insert(label.clone(), value.clone());
+            }
+            _ => return None,
+        }
+    }
+    let severities = [rubric.impact_lines.first(), rubric.impact_lines.last()];
+    severities
         .into_iter()
-        .find(|(found, _)| found == label)
-        .map(|(_, value)| value)
+        .flatten()
+        .all(|label| level_index(rubric, &values[label]).is_some())
+        .then_some(values)
 }
 
-/// The rubric severity `body` records, by the rubric's first impact line.
+/// A ticket's impact values: its record's `impact`, or for a record carrying none, the legacy
+/// read of its body.
 #[must_use]
-pub fn severity(body: &str, rubric: &Rubric) -> Option<String> {
-    impact_value(body, rubric.impact_lines.first()?)
+pub fn impact_values(
+    impact: Option<&IndexMap<String, String>>,
+    body: &str,
+    rubric: &Rubric,
+) -> Option<IndexMap<String, String>> {
+    impact.cloned().or_else(|| legacy_impact(body, rubric))
 }
 
-/// The severity with the workaround `body` records, by the rubric's last impact line.
+/// One line 0.5.0 read from `body`'s `## Impact`: the first `- <label>:` line there.
+fn legacy_line(body: &str, label: &str) -> Option<String> {
+    section(body, LEGACY_IMPACT)?.lines().find_map(|line| {
+        LABELLED_LINE
+            .captures(line.trim_end())
+            .filter(|captured| captured["label"].trim() == label)
+            .map(|captured| captured["value"].trim().to_owned())
+    })
+}
+
+/// The rubric severity a ticket records, by the rubric's first impact line: `impact`'s, or for a
+/// record carrying none, its body's.
 #[must_use]
-pub fn with_workaround(body: &str, rubric: &Rubric) -> Option<String> {
-    impact_value(body, rubric.impact_lines.last()?)
+pub fn severity(
+    impact: Option<&IndexMap<String, String>>,
+    body: &str,
+    rubric: &Rubric,
+) -> Option<String> {
+    let label = rubric.impact_lines.first()?;
+    match impact_values(impact, body, rubric) {
+        Some(values) => values.get(label).cloned(),
+        None => legacy_line(body, label),
+    }
+}
+
+/// The severity with the workaround a ticket records, by the rubric's last impact line:
+/// `impact`'s, or for a record carrying none, its body's, read as 0.5.0 read it where the
+/// legacy read cannot read the body.
+#[must_use]
+pub fn with_workaround(
+    impact: Option<&IndexMap<String, String>>,
+    body: &str,
+    rubric: &Rubric,
+) -> Option<String> {
+    let label = rubric.impact_lines.last()?;
+    match impact_values(impact, body, rubric) {
+        Some(values) => values.get(label).cloned(),
+        None => legacy_line(body, label),
+    }
 }
 
 fn level_index(rubric: &Rubric, name: &str) -> Option<usize> {
     rubric.levels.iter().position(|level| level.name == name)
 }
 
-/// What `body`'s `## Impact` breaks of the rubric.
-fn impact_problems(body: &str, rubric: &Rubric) -> Vec<String> {
+fn quoted(names: &[&str]) -> String {
+    names
+        .iter()
+        .map(|one| format!("`{one}`"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// What an estimated ticket's impact values break of the rubric: its record's `impact`, which a
+/// ticket this release writes carries, or — for a ticket already `filed` whose record carries
+/// none, as 0.5.0 wrote it — the legacy read of its body.
+fn impact_problems(
+    impact: Option<&IndexMap<String, String>>,
+    body: &str,
+    rubric: &Rubric,
+    filed: bool,
+) -> Vec<String> {
+    let labels: Vec<&str> = rubric.impact_lines.iter().map(String::as_str).collect();
+    let values = match impact {
+        Some(values) => values.clone(),
+        None => match legacy_impact(body, rubric).filter(|_| filed) {
+            Some(values) => values,
+            None => {
+                return vec![format!(
+                    "the record carries no `impact`: it records each of the rubric's impact lines {} with its value, `impact: {{<label>: <value>}}`, which the priority is estimated from",
+                    quoted(&labels)
+                )];
+            }
+        },
+    };
     let mut problems = Vec::new();
-    let Some(content) = section(body, IMPACT) else {
+    for label in &labels {
+        if !values.contains_key(*label) {
+            problems.push(format!(
+                "the record's `impact` carries no `{label}`; it records each of the rubric's impact lines {}",
+                quoted(&labels)
+            ));
+        }
+    }
+    for label in values.keys() {
+        if !labels.contains(&label.as_str()) {
+            problems.push(format!(
+                "the record's `impact` carries `{label}`, which is not one of the rubric's impact lines {}",
+                quoted(&labels)
+            ));
+        }
+    }
+    let names: Vec<&str> = rubric
+        .levels
+        .iter()
+        .map(|level| level.name.as_str())
+        .collect();
+    let (Some(first), Some(last)) = (labels.first(), labels.last()) else {
+        return problems;
+    };
+    let mut levels = Vec::new();
+    for label in [*first, *last] {
+        let Some(value) = values.get(label) else {
+            continue;
+        };
+        match level_index(rubric, value) {
+            Some(at) => levels.push(at),
+            None => problems.push(format!(
+                "the record's `impact` gives `{label}` as `{value}`, which is not one of the rubric's levels {}",
+                quoted(&names)
+            )),
+        }
+    }
+    if !problems.is_empty() {
+        return problems;
+    }
+    let (raw, left) = (levels[0], levels[levels.len() - 1]);
+    let severity = &values[*first];
+    let mitigated = &values[*last];
+    let workaround = labels
+        .get(1)
+        .filter(|_| labels.len() > 2)
+        .and_then(|label| values.get(*label))
+        .map(String::as_str);
+    if workaround.is_some_and(str::is_empty) {
+        problems.push(format!(
+            "the record's `impact` gives `{}` empty: the workaround in place, or `{}`",
+            labels[1], rubric.no_workaround
+        ));
+    }
+    if left < raw {
+        problems.push(format!(
+            "the severity with the workaround, `{mitigated}`, is above the severity, `{severity}`"
+        ));
+    } else if workaround == Some(rubric.no_workaround.as_str()) && left != raw {
+        problems.push(format!(
+            "with a workaround of `{}` the severity with the workaround is the severity, `{severity}`",
+            rubric.no_workaround
+        ));
+    } else if workaround.is_some_and(|one| one != rubric.no_workaround)
+        && left == raw
+        && raw + 1 < rubric.levels.len()
+    {
+        problems.push(format!(
+            "an acceptable workaround lowers the severity `{severity}` at least one level; a workaround too costly to lower it is `{}`",
+            rubric.no_workaround
+        ));
+    }
+    problems
+}
+
+/// What `body`'s `## <name>` breaks of the rubric's labelled parts, each once, in order.
+fn impact_part_problems(body: &str, name: &str, rubric: &Rubric) -> Vec<String> {
+    let mut problems = Vec::new();
+    let Some(content) = section(body, name) else {
         return vec![format!(
-            "the body has no `## {IMPACT}` section, so there is no severity to estimate a priority from"
+            "the body has no `## {name}` section, which carries the rubric's labelled parts"
         )];
     };
     let mut from = 0;
@@ -575,75 +832,146 @@ fn impact_problems(body: &str, rubric: &Rubric) -> Vec<String> {
         match content[from..].find(&label) {
             Some(at) => from += at + label.len(),
             None => problems.push(format!(
-                "`## {IMPACT}` does not carry its `{label}` part, in the rubric's order"
+                "`## {name}` does not carry its `{label}` part, in the rubric's order"
             )),
         }
     }
-    let lines: Vec<(String, String)> = impact_lines(body)
-        .into_iter()
-        .filter(|(label, _)| rubric.impact_lines.contains(label))
-        .collect();
-    let labels: Vec<&String> = lines.iter().map(|(label, _)| label).collect();
-    let wanted: Vec<&String> = rubric.impact_lines.iter().collect();
-    if labels != wanted {
+    problems
+}
+
+/// What `body`'s `## <name>` breaks of a fix's form: a non-empty `**<locations>.**` part of one
+/// bullet per location, then its unit subsections. With exactly one unit nothing but that part
+/// precedes it; with two or more an overview paragraph opens the section.
+fn fix_problems(body: &str, name: &str, locations: &str) -> Vec<String> {
+    let Some(content) = section(body, name) else {
+        return vec![format!(
+            "the body has no `## {name}` section, which carries the fix and its units"
+        )];
+    };
+    let where_ = format!("`## {name}`");
+    let part = format!("**{locations}.**");
+    let plain = unfenced(&content);
+    let mut offset = 0;
+    let mut units: Vec<(usize, &str)> = Vec::new();
+    for line in plain.split_inclusive('\n') {
+        let bare = line.trim_end_matches(['\n', '\r']);
+        if SUBHEADING.is_match(bare) {
+            units.push((offset, bare));
+        }
+        offset += line.len();
+    }
+    let Some(&(first, _)) = units.first() else {
+        return vec![format!(
+            "{where_} carries no unit subsection. With one unit it is the {part} part then the unit, headed {UNIT_SHAPE}, whose opening sentence or two says why the change removes the root cause; with two or more units an overview paragraph saying how they fit together comes first"
+        )];
+    };
+    let placed = plain
+        .match_indices(&part)
+        .map(|(at, _)| at)
+        .find(|at| *at == 0 || plain[..*at].ends_with('\n'));
+    let Some(placed) = placed.filter(|at| *at < first) else {
+        return vec![format!(
+            "{where_} carries no {part} part before its first unit; list there every location that contributes to the root cause, one bullet each, {LOCATION_SHAPE}"
+        )];
+    };
+    if !plain[placed + part.len()..first]
+        .lines()
+        .any(|line| LOCATION.is_match(line))
+    {
+        return vec![format!(
+            "{where_}'s {part} part carries no bullet {LOCATION_SHAPE}; list every location that contributes to the root cause, one bullet each"
+        )];
+    }
+    let mut problems = Vec::new();
+    let overview = plain[..placed].trim();
+    if units.len() == 1 && !overview.is_empty() {
         problems.push(format!(
-            "`## {IMPACT}` carries its lines {}, where the rubric states each of {} exactly once, in that order",
-            labels.iter().map(|one| format!("`{one}`")).collect::<Vec<_>>().join(", "),
-            wanted.iter().map(|one| format!("`{one}`")).collect::<Vec<_>>().join(", ")
+            "{where_} has one unit, so nothing but its {part} part comes before it: drop the opening paragraph, and move what it says that the unit does not, such as why the change removes the root cause, into the unit's opening sentence or two"
         ));
-        return problems;
     }
-    let names: Vec<&str> = rubric
-        .levels
+    if units.len() > 1 && overview.is_empty() {
+        problems.push(format!(
+            "{where_} has {} units, so it opens with an overview paragraph saying how they fit together and why the change removes the root cause, before its {part} part",
+            units.len()
+        ));
+    }
+    let ends: Vec<usize> = units
         .iter()
-        .map(|level| level.name.as_str())
+        .skip(1)
+        .map(|(at, _)| *at)
+        .chain(std::iter::once(plain.len()))
         .collect();
-    let severity = &lines[0].1;
-    let mitigated = &lines[lines.len() - 1].1;
-    for (label, value) in [
-        (&lines[0].0, severity),
-        (&lines[lines.len() - 1].0, mitigated),
-    ] {
-        if level_index(rubric, value).is_none() {
+    for ((at, heading), end) in units.iter().zip(ends) {
+        if !UNIT_HEADING.is_match(heading) {
             problems.push(format!(
-                "`- {label}:` is `{value}`, which is not one of the rubric's levels {}",
-                names
-                    .iter()
-                    .map(|one| format!("`{one}`"))
-                    .collect::<Vec<_>>()
-                    .join(", ")
+                "{where_}'s subsection `{}` is not headed {UNIT_SHAPE}",
+                heading.trim()
             ));
-        }
-    }
-    if let (Some(raw), Some(left)) = (
-        level_index(rubric, severity),
-        level_index(rubric, mitigated),
-    ) {
-        let workaround = lines
-            .get(1)
-            .map(|(_, value)| value.as_str())
-            .unwrap_or_default();
-        if workaround.is_empty() {
-            problems.push("the workaround line is empty".to_owned());
-        }
-        if left < raw {
+        } else if content[at + heading.len()..end].trim().is_empty() {
             problems.push(format!(
-                "the severity with the workaround, `{mitigated}`, is above the severity, `{severity}`"
-            ));
-        } else if workaround == rubric.no_workaround && left != raw {
-            problems.push(format!(
-                "with a workaround of `{}` the severity with the workaround is the severity, `{severity}`",
-                rubric.no_workaround
-            ));
-        } else if workaround != rubric.no_workaround && left == raw && raw + 1 < rubric.levels.len()
-        {
-            problems.push(format!(
-                "an acceptable workaround lowers the severity `{severity}` at least one level; a workaround too costly to lower it is `{}`",
-                rubric.no_workaround
+                "{where_}'s subsection `{}` is empty; say what changes in that unit and show each contract that changes",
+                heading.trim()
             ));
         }
     }
     problems
+}
+
+/// What `body`'s `## <name>` carries of what the record holds: a `Host:` or `Basis:` line, a
+/// qualified draft id, a 40-character commit or a transcript command.
+fn evidence_problems(
+    body: &str,
+    name: &str,
+    drafts_source: &str,
+    record: &TicketRecord,
+    transcripts: &[String],
+) -> Vec<String> {
+    let Some(content) = section(body, name) else {
+        return vec![format!(
+            "the body has no `## {name}` section, which says what happened"
+        )];
+    };
+    let mut found: Vec<String> = Vec::new();
+    for line in content.lines() {
+        if let Some(captured) = METADATA_LINE.captures(line) {
+            let phrase = format!("a `{}:` line", &captured["label"]);
+            if !found.contains(&phrase) {
+                found.push(phrase);
+            }
+        }
+    }
+    let draft_id = format!("{drafts_source}:");
+    if record
+        .drafts
+        .iter()
+        .any(|draft| content.contains(draft.as_str()))
+        || content.split_whitespace().any(|word| {
+            word.trim_start_matches(['`', '(', '['])
+                .starts_with(&draft_id)
+                && word.contains('/')
+        })
+    {
+        found.push("a qualified draft id".to_owned());
+    }
+    if BARE_COMMIT.is_match(&content) {
+        found.push("a 40-character commit".to_owned());
+    }
+    if record
+        .transcripts
+        .iter()
+        .flat_map(IndexMap::values)
+        .chain(transcripts)
+        .any(|command| !command.trim().is_empty() && content.contains(command.trim()))
+    {
+        found.push("a transcript command".to_owned());
+    }
+    if found.is_empty() {
+        return Vec::new();
+    }
+    vec![format!(
+        "`## {name}` carries {}, which the record holds; say there only what happened",
+        found.join(", ")
+    )]
 }
 
 /// A configured priority as an estimate level, `none` reading as the lowest.
@@ -682,15 +1010,24 @@ pub fn priority_word(priority: Priority) -> &'static str {
 
 const LEVELS: [Level; 4] = [Level::Urgent, Level::High, Level::Medium, Level::Low];
 
-/// What a ticket's facts estimate: its level, and the estimate line `## Impact` carries for
-/// an estimated kind.
+/// The estimate line's label and template, as `estimate.line_label` and
+/// `estimate.line_template` configure them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EstimateLine {
+    /// The label the line is found by.
+    pub label: String,
+    /// The template it is rendered from.
+    pub template: Located,
+}
+
+/// What a ticket's facts estimate: its level, and the estimate line for an estimated kind.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Estimated {
     /// The level.
     pub level: Level,
     /// The estimate line, for the estimate model.
     pub line: Option<String>,
-    /// The severity with the workaround the body records, when it records one.
+    /// The severity with the workaround the ticket records, when it records one.
     pub mitigated: Option<String>,
     /// Whether it fires consistently, when judged.
     pub frequency: Option<Frequency>,
@@ -698,32 +1035,41 @@ pub struct Estimated {
     pub occurrences: u64,
     /// How the estimate was raised, or why not, for the estimate model.
     pub raise: Option<String>,
+    /// The level its related tickets' highest holds it at, above its own, when one does.
+    pub held: Option<Level>,
 }
 
-/// The priority `body` and `frequency` estimate under `kind` with `occurrences` occurrences.
+/// The priority a ticket's impact values and `frequency` estimate under `kind` with
+/// `occurrences` occurrences. The values are `impact`'s, or for a record carrying none (as
+/// 0.5.0 wrote it), its `body`'s.
 ///
 /// # Errors
 ///
-/// An estimated kind's body stating no severity with the workaround the rubric names.
+/// An estimated kind's ticket recording no severity with the workaround the rubric names, or
+/// an estimate line template that does not render one line opening with its label.
 pub fn estimate(
     config: &Config,
+    line: &EstimateLine,
     kind: &Kind,
+    impact: Option<&IndexMap<String, String>>,
     body: &str,
     frequency: Option<Frequency>,
     occurrences: u64,
 ) -> Result<Estimated, String> {
+    let mitigated = with_workaround(impact, body, &config.rubric);
     match &kind.priority {
         PriorityModel::Fixed(priority) => Ok(Estimated {
             level: level_of(*priority),
             line: None,
-            mitigated: with_workaround(body, &config.rubric),
+            mitigated,
             frequency,
             occurrences,
             raise: None,
+            held: None,
         }),
         PriorityModel::Estimate => {
-            let mitigated = with_workaround(body, &config.rubric).ok_or_else(|| {
-                format!("the body's `## {IMPACT}` states no severity with the workaround")
+            let mitigated = mitigated.ok_or_else(|| {
+                "the ticket records no severity with the workaround: its record carries no `impact`, and its body no line to read one from".to_owned()
             })?;
             let level = config
                 .rubric
@@ -766,35 +1112,123 @@ pub fn estimate(
             } else {
                 format!("raised one level because {held}")
             };
-            let fires = match frequency {
-                Some(Frequency::Consistent) => "fires consistently",
-                Some(Frequency::Intermittent) => "fires intermittently",
-                None => "frequency not judged",
-            };
-            let plural = if occurrences == 1 { "" } else { "s" };
-            Ok(Estimated {
+            let mut estimated = Estimated {
                 level,
-                line: Some(format!(
-                    "- {ESTIMATE_LINE}: {} (severity with the workaround {mitigated}; {fires}; {occurrences} occurrence{plural}; {raise})",
-                    level_word(level)
-                )),
+                line: None,
                 mitigated: Some(mitigated),
                 frequency,
                 occurrences,
                 raise: Some(raise),
-            })
+                held: None,
+            };
+            estimated.line = Some(render_line(line, &estimated)?);
+            Ok(estimated)
         }
     }
 }
 
-/// `body` with its `## Impact` estimate line set to `line`: replaced where it has one, and
-/// otherwise placed after the rubric's last impact line.
+/// Hold `estimated` at `level`, its related tickets' highest, rendering its line again.
+///
+/// # Errors
+///
+/// An estimate line template that does not render one line opening with its label.
+pub fn hold(line: &EstimateLine, estimated: &mut Estimated, level: Level) -> Result<(), String> {
+    estimated.level = level;
+    estimated.held = Some(level);
+    if estimated.line.is_some() {
+        estimated.line = Some(render_line(line, estimated)?);
+    }
+    Ok(())
+}
+
+/// The estimate line `estimated` renders through `estimate.line_template`.
+fn render_line(line: &EstimateLine, estimated: &Estimated) -> Result<String, String> {
+    let data = serde_json::json!({
+        "label": line.label,
+        "level": level_word(estimated.level),
+        "mitigated": estimated.mitigated,
+        "frequency": estimated.frequency.map(|frequency| match frequency {
+            Frequency::Consistent => "consistent",
+            Frequency::Intermittent => "intermittent",
+        }),
+        "occurrences": estimated.occurrences,
+        "raise": estimated.raise,
+        "held": estimated.held.map(level_word),
+    });
+    let rendered = template::render(&line.template, &data).map_err(|error| error.to_string())?;
+    let rendered = rendered.trim();
+    if rendered.contains('\n') || !is_estimate_line(rendered, &line.label) {
+        return Err(format!(
+            "`estimate.line_template` rendered `{rendered}`, which is not one line opening with `- {}:`, the label the line is found by",
+            line.label
+        ));
+    }
+    Ok(rendered.to_owned())
+}
+
+/// Whether `line` is an estimate line labelled `label`: after an optional `- ` or `* ` bullet, it
+/// opens with `<label>:`.
 #[must_use]
-pub fn with_estimate_line(body: &str, line: &str, rubric: &Rubric) -> String {
+pub fn is_estimate_line(line: &str, label: &str) -> bool {
+    let line = line.trim_end();
+    let bare = line
+        .strip_prefix("- ")
+        .or_else(|| line.strip_prefix("* "))
+        .unwrap_or(line);
+    bare.strip_prefix(label)
+        .is_some_and(|rest| rest.starts_with(':'))
+}
+
+/// `body` with its estimate line, found by `label` anywhere outside fenced code (a collapsed
+/// block's content included, Linear's `* ` bullet accepted), replaced in place by `line`;
+/// `None` when it carries none.
+#[must_use]
+pub fn replace_estimate_line(body: &str, line: &str, label: &str) -> Option<String> {
+    let plain = unfenced(body);
+    let mut offset = 0;
+    for (held, original) in plain.split_inclusive('\n').zip(body.split_inclusive('\n')) {
+        let bare = held.trim_end_matches(['\n', '\r']);
+        if is_estimate_line(bare, label) {
+            let ending = &original[bare.len()..];
+            return Some(format!(
+                "{}{line}{ending}{}",
+                &body[..offset],
+                &body[offset + original.len()..]
+            ));
+        }
+        offset += original.len();
+    }
+    None
+}
+
+/// `body` with every estimate line labelled `label` outside fenced code removed: what a
+/// person's edit is read from, onefollowup's own writes moving that line.
+#[must_use]
+pub fn without_estimate_line(body: &str, label: &str) -> String {
+    let plain = unfenced(body);
+    plain
+        .split('\n')
+        .zip(body.split('\n'))
+        .filter(|(held, _)| !is_estimate_line(held.trim_end_matches('\r'), label))
+        .map(|(_, original)| original)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// An authored `body` with its estimate line set to `line`, as `publish` writes it when no
+/// `render_template` renders the body: replaced in place where it carries one, and otherwise
+/// placed where 0.5.0 placed it, after its `## Impact`'s severity with the workaround.
+#[must_use]
+pub fn with_estimate_line(body: &str, line: &str, label: &str, rubric: &Rubric) -> String {
+    if let Some(replaced) = replace_estimate_line(body, line, label) {
+        return replaced;
+    }
     let mut lines: Vec<String> = body.split('\n').map(str::to_owned).collect();
-    let start = lines
-        .iter()
-        .position(|one| HEADING.captures(one).is_some_and(|c| &c["name"] == IMPACT));
+    let start = lines.iter().position(|one| {
+        HEADING
+            .captures(one)
+            .is_some_and(|c| &c["name"] == LEGACY_IMPACT)
+    });
     let Some(start) = start else {
         return body.to_owned();
     };
@@ -802,13 +1236,7 @@ pub fn with_estimate_line(body: &str, line: &str, rubric: &Rubric) -> String {
         .iter()
         .position(|one| one.starts_with("## "))
         .map_or(lines.len(), |offset| start + 1 + offset);
-    let estimate = format!("- {ESTIMATE_LINE}:");
-    let starred = format!("* {ESTIMATE_LINE}:");
-    if let Some(at) = (start..end)
-        .find(|at| lines[*at].starts_with(&estimate) || lines[*at].starts_with(&starred))
-    {
-        lines[at] = line.to_owned();
-    } else if let Some(last) = rubric.impact_lines.last() {
+    if let Some(last) = rubric.impact_lines.last() {
         let mitigated = format!("- {last}:");
         let starred_mitigated = format!("* {last}:");
         if let Some(at) = (start..end).find(|at| {

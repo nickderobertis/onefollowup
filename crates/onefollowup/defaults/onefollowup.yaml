@@ -185,9 +185,14 @@ rubric:
 # The estimate is the severity with the workaround, mapped through `rubric.levels[].priority`,
 # raised one level — capped at `raise_cap` — when the root cause fires consistently or has
 # `raise_at` or more occurrences (once, when both hold).
+# The estimate line states the estimate and why; `publish`, `ticket re-estimate`, the comment
+# pass's settle and the relations rollup find it by `line_label` anywhere in a body and replace
+# it in place.
 estimate:
   raise_at: 3
   raise_cap: high
+  line_label: Priority estimate
+  line_template: builtin:estimate-line.j2
 
 dispositions:
   - name: filed
@@ -223,9 +228,14 @@ kinds:
     duplicates: agent
     priority: {model: estimate}
     initial_status: proposal
-    # No `render_template`: the destination body is the authored body with its estimate
-    # line. No `projections`: no `projected` is written.
+    # The destination body: the authored sections with the workaround's cost, the priority
+    # calculation and the contributing locations collapsed. No `projections`: no `projected`
+    # is written.
+    render_template: builtin:ticket-render.md.j2
     evidence_section: Evidence
+    # The shape checks a ticket is held to (README.md, "Checks"); a kind naming none keeps
+    # `headings`, `title` and, for an estimated kind, `impact`.
+    checks: [headings, title, impact, fix-units, evidence-prose, witnesses]
 
 default_kind: root-cause
 

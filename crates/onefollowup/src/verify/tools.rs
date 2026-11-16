@@ -11,7 +11,7 @@ use crate::api::{
     TicketBoardStatusArgs, TicketCommentArgs, TicketCopyArgs, TicketReEstimateArgs,
     TicketRelateArgs, TicketSearchArgs, TicketValidateArgs, TicketValidated,
 };
-use crate::config::{Cardinality, DecidedBy, Duplicates, Settings};
+use crate::config::{Cardinality, Check, DecidedBy, Duplicates, Settings};
 use crate::error::Error;
 use crate::formats::HeldPriority;
 use crate::formats::batch::{BatchState, Merged, Read};
@@ -20,20 +20,51 @@ use crate::formats::outbox::{Outbox, StagedWrite};
 use crate::store::{Search, SearchIn};
 use crate::verify::context::Batch;
 use crate::verify::decide::{self, read_of};
-use crate::verify::journal;
 use crate::verify::relations::{self, Graph, Scope};
 use crate::verify::render::{self, Common};
 use crate::verify::ticket::{self, Context, SLUG, TicketFile};
+use crate::verify::{command, journal};
 
 /// Every rule `ticket` breaks, held to the batch's input set when it was prepared.
-#[must_use]
+///
+/// # Errors
+///
+/// The batch's journal, which says whether the ticket was already copied, cannot be read.
 pub fn ticket_problems(
     batch: &Batch<'_>,
     state: Option<&BatchState>,
     ticket: &TicketFile,
+) -> Result<Vec<String>, Error> {
+    let filed = match state.and_then(|state| state.tickets.get(&ticket.slug)) {
+        Some(item) => journal::bound(&journal::read(batch)?).contains_key(item),
+        None => false,
+    };
+    Ok(problems_of(batch, state, ticket, filed))
+}
+
+/// Every rule a ticket the comment pass changed breaks: one already copied to its item.
+#[must_use]
+pub fn filed_ticket_problems(batch: &Batch<'_>, ticket: &TicketFile) -> Vec<String> {
+    problems_of(batch, None, ticket, true)
+}
+
+fn problems_of(
+    batch: &Batch<'_>,
+    state: Option<&BatchState>,
+    ticket: &TicketFile,
+    filed: bool,
 ) -> Vec<String> {
     let inputs: Option<Vec<String>> =
         state.map(|state| state.inputs.iter().map(|input| input.id.clone()).collect());
+    let transcripts: Vec<String> = state
+        .map(|state| {
+            state
+                .inputs
+                .iter()
+                .filter_map(|input| input.transcript.clone())
+                .collect()
+        })
+        .unwrap_or_default();
     let kind = ticket.kind(batch.config);
     let template = batch.ticket_template(kind);
     let destination = kind.map_or_else(
@@ -46,17 +77,83 @@ pub fn ticket_problems(
         batch: &batch.batch,
         destination: &destination,
     });
-    ticket::problems(
+    let mut problems = ticket::problems(
         ticket,
         batch.config,
         &Context {
             batch: &batch.batch,
             inputs: inputs.as_deref(),
+            transcripts: &transcripts,
             template: &template,
             namespace: &batch.config.namespace,
             common,
+            filed,
         },
-    )
+    );
+    if let Some(kind) = kind {
+        for check in kind.checks() {
+            if let Check::Command(argv) = check {
+                problems.extend(command_check(
+                    batch,
+                    state,
+                    ticket,
+                    kind,
+                    &destination,
+                    &argv,
+                ));
+            }
+        }
+    }
+    problems
+}
+
+/// What a `{command: [...]}` check prints of `ticket`, given it as one JSON document on stdin:
+/// its authored body, its rendered body (`null` when it does not render), its record and its
+/// kind. Exit 0 and no output accepts it; otherwise each line it printed is a refusal.
+fn command_check(
+    batch: &Batch<'_>,
+    state: Option<&BatchState>,
+    ticket: &TicketFile,
+    kind: &crate::config::Kind,
+    destination: &str,
+    argv: &[String],
+) -> Vec<String> {
+    let rendered = trial_render(batch, state, ticket, kind, destination).ok();
+    let document = serde_json::json!({
+        "schema_version": 1,
+        "authored_body": ticket.body,
+        "rendered_body": rendered,
+        "record": ticket.record_value,
+        "kind": kind.name,
+    });
+    let name = argv.join(" ");
+    let ran = match command::run(
+        argv,
+        &document.to_string(),
+        batch.settings.working_directory(),
+        batch.settings.environment(),
+    ) {
+        Ok(ran) => ran,
+        Err(message) => return vec![format!("the check command `{name}` did not run: {message}")],
+    };
+    let printed: Vec<String> = ran
+        .stdout
+        .lines()
+        .chain(ran.stderr.lines())
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(str::to_owned)
+        .collect();
+    if ran.exit == 0 && printed.is_empty() {
+        return Vec::new();
+    }
+    if printed.is_empty() {
+        return vec![format!(
+            "the check command `{name}` exited {} and printed nothing",
+            ran.exit
+        )];
+    }
+    printed
 }
 
 /// `ticket validate`.
@@ -68,7 +165,7 @@ pub fn validate(settings: &Settings, args: TicketValidateArgs) -> Result<TicketV
     let batch = Batch::new(settings, &args.batch)?;
     let state = batch.read_state()?;
     let ticket = batch.ticket(&args.ticket)?;
-    let problems = ticket_problems(&batch, state.as_ref(), &ticket);
+    let problems = ticket_problems(&batch, state.as_ref(), &ticket)?;
     let (absent_targets, store_operations) = match state {
         Some(mut state) if !batch.config.relations.is_empty() => {
             let store_operations = ask_targets(&batch, &mut state, &ticket)?;
@@ -319,7 +416,7 @@ pub fn copy(settings: &Settings, args: TicketCopyArgs) -> Result<Staged, Error> 
     let mut state = batch.state()?;
     let ticket = batch.ticket(&args.ticket)?;
     let key = batch.ticket_key(&ticket.slug);
-    let problems = ticket_problems(&batch, Some(&state), &ticket);
+    let problems = ticket_problems(&batch, Some(&state), &ticket)?;
     if !problems.is_empty() {
         let message = problems.join("; ");
         journal::append(
@@ -478,7 +575,7 @@ pub fn copy(settings: &Settings, args: TicketCopyArgs) -> Result<Staged, Error> 
     }
     // The destination body and projections are rendered now, as `publish` renders them, so a
     // template that cannot render this ticket refuses it here with nothing staged.
-    if let Err(message) = trial_render(&batch, &state, &ticket, kind, &destination) {
+    if let Err(message) = trial_render(&batch, Some(&state), &ticket, kind, &destination) {
         journal::append(
             &batch,
             &[journal::refused_copy(
@@ -1193,24 +1290,32 @@ fn evidence_comment(
 /// Render `ticket`'s destination body and projections as `publish` would, from its own facts.
 fn trial_render(
     batch: &Batch<'_>,
-    state: &BatchState,
+    state: Option<&BatchState>,
     ticket: &TicketFile,
     kind: &crate::config::Kind,
     destination: &str,
-) -> Result<(), String> {
+) -> Result<String, String> {
     let mut record = ticket
         .record
         .clone()
         .ok_or_else(|| "the ticket's record does not read".to_owned())?;
-    let estimate = ticket::estimate(batch.config, kind, &ticket.body, record.frequency, 1)?;
+    let estimate = ticket::estimate(
+        batch.config,
+        &batch.estimate_line(),
+        kind,
+        record.impact.as_ref(),
+        &ticket.body,
+        record.frequency,
+        1,
+    )?;
     record.priority_estimate = estimate.level;
     let (sources, transcripts) = draft_fields(
-        &state.inputs,
+        state.map_or(&[], |state| state.inputs.as_slice()),
         &record.drafts,
         record.draft_sources.as_ref(),
         record.transcripts.as_ref(),
     );
     record.draft_sources = (!sources.is_empty()).then_some(sources);
     record.transcripts = (!transcripts.is_empty()).then_some(transcripts);
-    decide::rendered(batch, ticket, kind, destination, &mut record, &estimate).map(|_| ())
+    decide::rendered(batch, ticket, kind, destination, &mut record, &estimate)
 }

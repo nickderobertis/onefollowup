@@ -1,7 +1,9 @@
 {#-
   The destination body: the authored sections, the record's host, basis and witnesses shown
   in a `## Provenance` section, and the workaround's cost (its cost lines) and the contributing
-  locations each collapsed. Given every variable README.md's "Templates" documents.
+  locations each collapsed. It shows no estimate line: the priority, estimated from the record's
+  `impact`, is the destination's own field. Given every variable README.md's "Templates"
+  documents.
 -#}
 {%- set impact = ticket.section("Impact") -%}
 {%- set fix = ticket.section("Suggested fix") -%}
@@ -26,11 +28,6 @@
 {% for part in impact.parts if part.label == rubric.impact_parts[-1] -%}
 {{ collapsed(part.label, impact.lines | selectattr("label", "in", rubric.workaround_costs) | map(attribute="text") | join("\n")) }}
 {% endfor %}
-{% for line in impact.lines if line.label in rubric.impact_lines -%}
-{{ line.text }}
-{% endfor -%}
-{% if estimate_line.line %}{{ estimate_line.line }}
-{% endif %}
 {%- for section in ticket.sections if section.name not in ["Root cause", "Impact"] %}
 ## {{ section.name }}
 

@@ -25,7 +25,7 @@ use crate::formats::outbox::{Outbox, StagedWrite};
 use crate::formats::ticket::TicketRecord;
 use crate::verify::context::Batch;
 use crate::verify::decide::{self, Bound};
-use crate::verify::ticket::{self, ESTIMATE_LINE, Estimated, TicketFile};
+use crate::verify::ticket::{self, Estimated, TicketFile};
 
 /// One end of an edge.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -516,6 +516,7 @@ impl Graph {
         bound: &Bound,
         to: &End,
         kind: &Kind,
+        impact: Option<&indexmap::IndexMap<String, String>>,
         body: &str,
         frequency: Option<crate::formats::Frequency>,
         occurrences: u64,
@@ -545,29 +546,19 @@ impl Graph {
             }
         }
         let count = occurrences + added;
-        let mut estimated = ticket::estimate(batch.config, kind, body, frequency, count)?;
+        let line = batch.estimate_line();
+        let mut estimated =
+            ticket::estimate(batch.config, &line, kind, impact, body, frequency, count)?;
         if let Some(level) = highest
             && rank(level) > rank(estimated.level)
         {
-            estimated.line = estimated.line.map(|line| {
-                let inner = line
-                    .split_once('(')
-                    .and_then(|(_, rest)| rest.strip_suffix(')'))
-                    .unwrap_or_default()
-                    .to_owned();
-                format!(
-                    "- {ESTIMATE_LINE}: {} ({inner}; held at {}, its related tickets' highest)",
-                    ticket::level_word(level),
-                    ticket::level_word(level)
-                )
-            });
+            ticket::hold(&line, &mut estimated, level)?;
             estimated.raise = estimated.raise.map(|raise| {
                 format!(
                     "{raise}; held at {}, its related tickets' highest",
                     ticket::level_word(level)
                 )
             });
-            estimated.level = level;
         }
         Ok((estimated, count))
     }
@@ -603,16 +594,30 @@ impl Graph {
         {
             let kind = file.kind(batch.config)?;
             let frequency = file.record.as_ref().and_then(|record| record.frequency);
-            return ticket::estimate(batch.config, kind, &file.body, frequency, occurrences)
-                .ok()
-                .map(|estimated| estimated.level);
+            let impact = file
+                .record
+                .as_ref()
+                .and_then(|record| record.impact.as_ref());
+            return ticket::estimate(
+                batch.config,
+                &batch.estimate_line(),
+                kind,
+                impact,
+                &file.body,
+                frequency,
+                occurrences,
+            )
+            .ok()
+            .map(|estimated| estimated.level);
         }
         let (read, record) = read_at(batch, state, bound, end)?;
         let kind = batch.kind(record.kind.as_deref().unwrap_or(&batch.config.default_kind))?;
         Some(
             ticket::estimate(
                 batch.config,
+                &batch.estimate_line(),
                 kind,
+                record.impact.as_ref(),
                 &read.item.content,
                 record.frequency,
                 occurrences,

@@ -239,7 +239,7 @@ fn every_documented_variable_reaches_its_template_populated() {
     std::fs::write(
         &path,
         text.replacen(
-            "Read the window size once per save.\n\n**Contributing locations.**\n- widgets `src/layout.rs`: reads the size twice\n",
+            "**Contributing locations.**\n- widgets `src/layout.rs`: reads the size twice\n\n### Layout save — `widgets`\n\nRead the window size once per save. A save then never mixes two window sizes.\n",
             FIX,
             1,
         ),

@@ -236,7 +236,7 @@ pub struct ImpactAreas {
     pub resources: String,
 }
 
-/// How a priority estimate is raised.
+/// How a priority estimate is raised, and the line that states it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Estimate {
@@ -244,6 +244,21 @@ pub struct Estimate {
     pub raise_at: u32,
     /// The level a raise is capped at.
     pub raise_cap: Priority,
+    /// The label the estimate line is found by in a body: a line that, after an optional `- `
+    /// or `* ` bullet, opens with `<label>:`.
+    #[serde(default = "line_label")]
+    pub line_label: String,
+    /// The template the estimate line is rendered from (`builtin:` names a shipped file).
+    #[serde(default = "line_template")]
+    pub line_template: String,
+}
+
+fn line_label() -> String {
+    "Priority estimate".to_owned()
+}
+
+fn line_template() -> String {
+    "builtin:estimate-line.j2".to_owned()
 }
 
 /// The templates a batch's comments are rendered from, each a `builtin:` name or a path:
@@ -287,6 +302,10 @@ pub struct Kind {
     /// The section a `same` duplicate's merge stages as its evidence comment's evidence.
     #[serde(default = "evidence_section")]
     pub evidence_section: String,
+    /// The shape checks a ticket of the kind is held to, in order; `None` is 0.5.0's:
+    /// [`Check::defaults`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checks: Option<Vec<Check>>,
     /// How a ticket of the kind is found to be one already filed.
     #[serde(default)]
     pub duplicates: Duplicates,
@@ -306,6 +325,290 @@ pub struct Kind {
 
 fn evidence_section() -> String {
     "Evidence".to_owned()
+}
+
+impl Kind {
+    /// The checks a ticket of the kind is held to: its `checks`, or 0.5.0's.
+    #[must_use]
+    pub fn checks(&self) -> Vec<Check> {
+        self.checks
+            .clone()
+            .unwrap_or_else(|| Check::defaults(&self.priority))
+    }
+}
+
+/// One shape check a kind holds its tickets to: a built-in, with its parameters, or a command.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Check {
+    /// The level-2 headings in the ticket template's order, `<optional` sections optional.
+    Headings,
+    /// The title's prefix and length.
+    Title {
+        /// What the title opens with.
+        prefix: TitlePrefix,
+        /// The most characters it carries.
+        limit: usize,
+    },
+    /// The rubric's labelled parts, in order, in the named section.
+    Impact {
+        /// The section.
+        section: String,
+    },
+    /// The fix's units and its contributing locations, in the one-unit or the several-unit form.
+    FixUnits {
+        /// The fix's section.
+        section: String,
+        /// The labelled part listing the locations.
+        locations: String,
+    },
+    /// The named section is prose, carrying nothing the record holds.
+    EvidenceProse {
+        /// The section.
+        section: String,
+    },
+    /// The record's witnesses.
+    Witnesses {
+        /// Whether at least one is required.
+        required: bool,
+    },
+    /// A command given the ticket on stdin: exit 0 and no output accepts it.
+    Command(Vec<String>),
+}
+
+/// What a ticket's title opens with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TitlePrefix {
+    /// `<repository name>: `, the last part of the record's repository.
+    RepositoryName,
+    /// Nothing in particular.
+    None,
+}
+
+/// Every built-in check's name and the parameters it takes.
+pub const BUILT_IN_CHECKS: &[(&str, &[&str])] = &[
+    ("headings", &[]),
+    ("title", &["prefix", "limit"]),
+    ("impact", &["section"]),
+    ("fix-units", &["section", "locations"]),
+    ("evidence-prose", &["section"]),
+    ("witnesses", &["required"]),
+];
+
+impl Check {
+    /// The checks a kind naming none is held to, 0.5.0's: `headings`, `title`, and `impact`
+    /// for an estimated kind.
+    #[must_use]
+    pub fn defaults(priority: &PriorityModel) -> Vec<Self> {
+        let mut checks = vec![Self::Headings, Self::title()];
+        if *priority == PriorityModel::Estimate {
+            checks.push(Self::Impact {
+                section: "Impact".to_owned(),
+            });
+        }
+        checks
+    }
+
+    fn title() -> Self {
+        Self::Title {
+            prefix: TitlePrefix::RepositoryName,
+            limit: 120,
+        }
+    }
+
+    /// The built-in `name` with every parameter at its default.
+    fn built_in(name: &str) -> Option<Self> {
+        Some(match name {
+            "headings" => Self::Headings,
+            "title" => Self::title(),
+            "impact" => Self::Impact {
+                section: "Impact".to_owned(),
+            },
+            "fix-units" => Self::FixUnits {
+                section: "Suggested fix".to_owned(),
+                locations: "Contributing locations".to_owned(),
+            },
+            "evidence-prose" => Self::EvidenceProse {
+                section: "Evidence".to_owned(),
+            },
+            "witnesses" => Self::Witnesses { required: true },
+            _ => return None,
+        })
+    }
+}
+
+const CHECK_SHAPE: &str =
+    "a check is {check: <built-in>, ...parameters}, a built-in's name, or {command: [argv...]}";
+
+impl Serialize for Check {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut map: IndexMap<&str, Value> = IndexMap::new();
+        let mut named = |name: &str| {
+            map.insert("check", Value::from(name));
+        };
+        match self {
+            Self::Headings => named("headings"),
+            Self::Title { prefix, limit } => {
+                named("title");
+                map.insert(
+                    "prefix",
+                    match prefix {
+                        TitlePrefix::RepositoryName => Value::from("repository-name"),
+                        TitlePrefix::None => Value::Null,
+                    },
+                );
+                map.insert("limit", Value::from(*limit));
+            }
+            Self::Impact { section } => {
+                named("impact");
+                map.insert("section", Value::from(section.as_str()));
+            }
+            Self::FixUnits { section, locations } => {
+                named("fix-units");
+                map.insert("section", Value::from(section.as_str()));
+                map.insert("locations", Value::from(locations.as_str()));
+            }
+            Self::EvidenceProse { section } => {
+                named("evidence-prose");
+                map.insert("section", Value::from(section.as_str()));
+            }
+            Self::Witnesses { required } => {
+                named("witnesses");
+                map.insert("required", Value::from(*required));
+            }
+            Self::Command(argv) => {
+                map.insert("command", Value::from(argv.clone()));
+            }
+        }
+        map.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for Check {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = Value::deserialize(deserializer)?;
+        Self::read(&value).map_err(D::Error::custom)
+    }
+}
+
+impl Check {
+    fn read(value: &Value) -> Result<Self, String> {
+        let names = || {
+            BUILT_IN_CHECKS
+                .iter()
+                .map(|(name, _)| format!("`{name}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        let unknown = |name: &str| {
+            format!(
+                "`{name}` is not a built-in check; the built-ins are {}, and a command is {{command: [argv...]}}",
+                names()
+            )
+        };
+        let map = match value {
+            Value::String(name) => return Self::built_in(name).ok_or_else(|| unknown(name)),
+            Value::Object(map) => map,
+            other => return Err(format!("{CHECK_SHAPE}, not {other}")),
+        };
+        if let Some(argv) = map.get("command") {
+            if map.len() != 1 {
+                return Err(format!(
+                    "a command check carries `command` alone, not {}",
+                    map.keys()
+                        .filter(|key| *key != "command")
+                        .map(|key| format!("`{key}`"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
+            }
+            return match strings(argv) {
+                Some(argv) if !argv.is_empty() => Ok(Self::Command(argv)),
+                _ => Err("`command` is a non-empty list of strings, the argv run".to_owned()),
+            };
+        }
+        let name = match map.get("check") {
+            Some(Value::String(name)) => name.as_str(),
+            Some(other) => return Err(format!("`check` names a built-in check, not {other}")),
+            None => {
+                return Err(format!(
+                    "{CHECK_SHAPE}: it carries neither `check` nor `command`"
+                ));
+            }
+        };
+        let (_, parameters) = BUILT_IN_CHECKS
+            .iter()
+            .find(|(built_in, _)| *built_in == name)
+            .ok_or_else(|| unknown(name))?;
+        for key in map.keys().filter(|key| *key != "check") {
+            if !parameters.contains(&key.as_str()) {
+                return Err(format!(
+                    "the check `{name}` takes {}, not `{key}`",
+                    if parameters.is_empty() {
+                        "no parameter".to_owned()
+                    } else {
+                        parameters
+                            .iter()
+                            .map(|one| format!("`{one}`"))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    }
+                ));
+            }
+        }
+        let text = |key: &str, default: &str| -> Result<String, String> {
+            match map.get(key) {
+                None => Ok(default.to_owned()),
+                Some(Value::String(text)) if !text.trim().is_empty() => Ok(text.clone()),
+                Some(other) => Err(format!(
+                    "the check `{name}`'s `{key}` is a non-empty section or part name, not {other}"
+                )),
+            }
+        };
+        let mut check = Self::built_in(name).ok_or_else(|| unknown(name))?;
+        match &mut check {
+            Self::Headings | Self::Command(_) => {}
+            Self::Title { prefix, limit } => {
+                match map.get("prefix") {
+                    None => {}
+                    Some(Value::String(word)) if word == "repository-name" => {
+                        *prefix = TitlePrefix::RepositoryName;
+                    }
+                    Some(Value::Null) => *prefix = TitlePrefix::None,
+                    Some(other) => {
+                        return Err(format!(
+                            "the check `title`'s `prefix` is `repository-name` or null, not {other}"
+                        ));
+                    }
+                }
+                if let Some(given) = map.get("limit") {
+                    *limit = given
+                        .as_u64()
+                        .filter(|limit| *limit > 0)
+                        .and_then(|limit| usize::try_from(limit).ok())
+                        .ok_or_else(|| {
+                            format!(
+                                "the check `title`'s `limit` is a positive whole number of characters, not {given}"
+                            )
+                        })?;
+                }
+            }
+            Self::Impact { section } | Self::EvidenceProse { section } => {
+                *section = text("section", section)?;
+            }
+            Self::FixUnits { section, locations } => {
+                *section = text("section", section)?;
+                *locations = text("locations", locations)?;
+            }
+            Self::Witnesses { required } => {
+                if let Some(given) = map.get("required") {
+                    *required = given.as_bool().ok_or_else(|| {
+                        format!("the check `witnesses`' `required` is true or false, not {given}")
+                    })?;
+                }
+            }
+        }
+        Ok(check)
+    }
 }
 
 fn proposal() -> StatusRole {

@@ -1,0 +1,9 @@
+{#-
+  The estimate line `publish`, `ticket re-estimate`, the comment pass's settle and the
+  relations rollup write: one line opening with `- <label>:`, found again by its label. Given
+  `label` (`estimate.line_label`), `level`, `mitigated` (the severity with the workaround),
+  `frequency` (`consistent`, `intermittent` or null), `occurrences`, `raise` (how the estimate
+  was raised, or why not) and `held` (the level its related tickets' highest holds it at, or
+  null).
+-#}
+- {{ label }}: {{ level }} (severity with the workaround {{ mitigated }}; {% if frequency == "consistent" %}fires consistently{% elif frequency == "intermittent" %}fires intermittently{% else %}frequency not judged{% endif %}; {{ occurrences }} occurrence{% if occurrences != 1 %}s{% endif %}; {{ raise }}{% if held %}; held at {{ held }}, its related tickets' highest{% endif %})

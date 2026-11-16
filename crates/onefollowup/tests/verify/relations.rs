@@ -10,7 +10,7 @@ use std::path::Path;
 use serde_json::{Value, json};
 
 use crate::journey::{front, record};
-use crate::world::{Ticket, World, answer, filed_body, filed_item};
+use crate::world::{Shape, Ticket, World, answer, filed_body, filed_item};
 
 const BATCH: &str = "nightly-2026-11-10";
 const LATER: &str = "nightly-2026-11-11";
@@ -21,7 +21,8 @@ pub fn example_world() -> World {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/symptoms-and-root-causes");
     let config = std::fs::read_to_string(directory.join("onefollowup.yaml"))
         .expect("the example's configuration");
-    let world = World::new(&["eng"], &format!("{config}host_label: build-host-1\n"));
+    let mut world = World::new(&["eng"], &format!("{config}host_label: build-host-1\n"));
+    world.shape = Some(Shape::Lined);
     std::fs::create_dir_all(world.root.join("templates")).expect("a directory");
     for entry in std::fs::read_dir(directory.join("templates"))
         .expect("the templates")

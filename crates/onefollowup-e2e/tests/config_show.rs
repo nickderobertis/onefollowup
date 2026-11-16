@@ -59,7 +59,15 @@ fn with_nothing_configured_it_prints_every_default() {
         ("namespace", json!("orchestrator")),
         ("host_label", json!(hostname)),
         ("batch_id_pattern", json!("[\\w.@+-]*[\\w@+-][\\w.@+-]*")),
-        ("estimate", json!({"raise_at": 3, "raise_cap": "high"})),
+        (
+            "estimate",
+            json!({
+                "raise_at": 3,
+                "raise_cap": "high",
+                "line_label": "Priority estimate",
+                "line_template": "builtin:estimate-line.j2",
+            }),
+        ),
         ("task_template", json!("builtin:task-template.md.j2")),
         ("persona", json!("builtin:persona.yaml")),
         ("fields", json!({})),
@@ -79,11 +87,22 @@ fn with_nothing_configured_it_prints_every_default() {
     assert_eq!(kinds[0]["priority"], json!({"model": "estimate"}));
     assert_eq!(kinds[0]["initial_status"], "proposal");
     assert!(kinds[0].get("dispositions").is_none());
-    // The keys a host reshapes its tickets with, at their defaults: no render template (the
-    // authored body and its estimate line), no projections, and the `Evidence` section.
-    assert!(kinds[0].get("render_template").is_none());
+    // The keys a host reshapes its tickets with, at their defaults: the shipped render template,
+    // no projections, the `Evidence` section, and every built-in check with its parameters.
+    assert_eq!(kinds[0]["render_template"], "builtin:ticket-render.md.j2");
     assert!(kinds[0].get("projections").is_none());
     assert_eq!(kinds[0]["evidence_section"], "Evidence");
+    assert_eq!(
+        kinds[0]["checks"],
+        json!([
+            {"check": "headings"},
+            {"check": "title", "prefix": "repository-name", "limit": 120},
+            {"check": "impact", "section": "Impact"},
+            {"check": "fix-units", "section": "Suggested fix", "locations": "Contributing locations"},
+            {"check": "evidence-prose", "section": "Evidence"},
+            {"check": "witnesses", "required": true},
+        ])
+    );
     assert_eq!(
         config["comment_templates"],
         json!({"evidence": "builtin:comment-evidence.md.j2", "reply": "builtin:comment-reply.md.j2"})

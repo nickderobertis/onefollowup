@@ -4,8 +4,10 @@
 //! baselines committed under `tests/fixtures/baseline/`, which were taken from this journey at
 //! the base of the relations change (the formats as `ofu-verify-loop` left them), and re-taken
 //! once when records gained `draft_sources`: each record since carries its drafts' authors, and
-//! each copy receipt's digest covers that, while every comment stayed byte for byte. Nothing of a
-//! relation — no `task relations`, `task parent set-many` or `task link add-many` — is asked of
+//! each copy receipt's digest covers that, while every comment stayed byte for byte; and re-taken
+//! once more when the shipped default moved its ticket's values into the record: each record
+//! since carries its `impact` and `witnesses`, a 0.5.0 item's re-estimate writes the `impact` its
+//! body's lines state, and every comment again stayed byte for byte. Nothing of a relation — no `task relations`, `task parent set-many` or `task link add-many` — is asked of
 //! the store.
 //!
 //! What differs between two runs of one batch is masked the same way in the fixture and in the

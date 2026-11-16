@@ -215,7 +215,7 @@ fn under_same_an_open_item_with_the_values_takes_the_evidence_and_an_empty_value
     assert!(
         staged["write"]["body"]
             .as_str()
-            .is_some_and(|body| body.contains("the run's log shows a session token is printed")),
+            .is_some_and(|body| body.contains("The run's log shows a session token is printed")),
         "the ticket's evidence: {staged}"
     );
     world.ticket(

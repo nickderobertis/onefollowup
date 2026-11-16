@@ -1,7 +1,7 @@
 # One root-cause kind whose ticket shape, destination body, comments and board fields are this
 # host's own: the record's host, basis and witnesses shown in the body, the workaround's cost
-# and the contributing locations collapsed, an evidence comment's sources shown, and two
-# board fields rendered from the ticket's text.
+# and the contributing locations collapsed, no estimate line, an evidence comment's sources
+# shown, and two board fields rendered from the ticket's text.
 destination: followups
 drafts_source: drafts
 comment_templates:
@@ -20,6 +20,9 @@ kinds:
       # One part of a section.
       who_is_affected: >-
         {% for part in ticket.section('Impact').parts if part.label == 'Who is affected' %}{{ part.text }}{% endfor %}
+    # The default kind's checks less `fix-units`: this host's fix is one paragraph and its
+    # contributing locations, with no unit subsections.
+    checks: [headings, title, impact, evidence-prose, witnesses]
     duplicates: agent
     priority: {model: estimate}
     initial_status: proposal

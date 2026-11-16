@@ -28,6 +28,7 @@ mod renamed_shape;
 mod rollups;
 mod safeguards;
 mod shapes;
+mod snapshot;
 mod snapshots;
 mod template_data;
 mod template_edges;

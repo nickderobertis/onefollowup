@@ -75,3 +75,24 @@ budgets:
     unit: operations
     direction: max
     threshold: 6
+  # One empty batch's snapshot, counted by tests/e2e/snapshot.rs. Basis, by arithmetic over
+  # `snapshot`'s contract: on a batch with no drafts and no hook inputs it makes one drafts
+  # search covering the batch and its aliases together, no destination read and no write — 1.
+  # No headroom: any further call is a regression. It counts the `snapshot` call alone because
+  # once a host skips an empty batch that call is all the store work the batch causes; that the
+  # host launches nothing else is the host's journeys' to assert. About 60 seconds to report,
+  # as above.
+  - id: empty-batch-store-operations
+    description: >-
+      Store operations one `onefollowup snapshot` of a batch holding nothing to verify makes,
+      counted at onefollowup's store boundary against the drafts source and the destination
+      alike — a fresh batch with 2 aliases and no drafts, a `batch_preparing` hook printing no
+      inputs, beside 120 drafts of 30 other batches and a destination holding 400 other items.
+      The detail gives the drafts-source and destination operations apart, with the searches
+      each carried. It protects the store allowance every finished run with nothing to verify
+      spends, at about 305 such runs a month.
+    measure: reported
+    command: ["cargo", "test", "--quiet", "-p", "onefollowup-e2e", "--locked", "--test", "e2e", "--", "budget_runner::report", "--exact", "--nocapture", "../../target/debug/telemetry/onefollowup-e2e"]
+    unit: operations
+    direction: max
+    threshold: 1

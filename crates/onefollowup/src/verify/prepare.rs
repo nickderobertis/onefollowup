@@ -163,31 +163,51 @@ fn answers(batch: &Batch<'_>) -> Result<(Vec<DispositionEntry>, Option<Dispositi
     Ok((entries, written))
 }
 
-/// Snapshot the batch and write the verifying agent's task.
+/// Which pass of the batch an input set belongs to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Pass {
+    /// The batch's first: it had no state.
+    First,
+    /// The open pass its state holds: no publish yet, or one not settled.
+    Continuing,
+    /// The pass after a settled one, carrying that pass's inputs.
+    AfterSettled,
+}
+
+/// The batch's input set: the step `prepare` and `snapshot` share, so the two cannot
+/// disagree about what a batch holds. A continuing pass keeps its input set and runs no
+/// hook; any other runs the `batch_preparing` hook and one drafts search for the batch and
+/// its aliases, adding what is new by id. It writes nothing.
 ///
 /// # Errors
 ///
-/// A refused batch id, a failing hook (nothing snapshotted and nothing read), or the store's
-/// refusal.
-pub fn run(settings: &Settings, args: PrepareArgs) -> Result<Prepared, Error> {
-    let batch = Batch::new(settings, &args.batch)?;
-    for alias in &args.aliases {
+/// A refused alias, a failing hook (nothing snapshotted), or the store's refusal.
+pub fn input_set(
+    batch: &Batch<'_>,
+    store: &Store,
+    with_aliases: &[String],
+) -> Result<(BatchState, Pass), Error> {
+    for alias in with_aliases {
         batch.check_id(alias)?;
     }
     let existing = batch.read_state()?;
-    // A re-prepare within a pass keeps that pass's input set and runs no hook; a prepare after
-    // a settled pass starts the next one, adding the drafts and inputs there are now.
-    let continuing = existing.as_ref().is_some_and(|state| {
-        state.publishes.is_empty() || state.publishes.iter().any(|publish| !publish.settled)
-    });
-    let store = batch.store()?;
-    let hooked = if continuing {
+    let pass = match &existing {
+        None => Pass::First,
+        Some(state)
+            if state.publishes.is_empty()
+                || state.publishes.iter().any(|publish| !publish.settled) =>
+        {
+            Pass::Continuing
+        }
+        Some(_) => Pass::AfterSettled,
+    };
+    let hooked = if pass == Pass::Continuing {
         Vec::new()
     } else {
-        hook_inputs(&batch, &store)?
+        hook_inputs(batch, store)?
     };
-    let mut state = match existing {
-        Some(state) if continuing => state,
+    let state = match existing {
+        Some(state) if pass == Pass::Continuing => state,
         earlier => {
             // Each alias once, and never the batch itself: the drafts search asks one
             // question per id, which the store refuses to see twice.
@@ -195,12 +215,12 @@ pub fn run(settings: &Settings, args: PrepareArgs) -> Result<Prepared, Error> {
                 .as_ref()
                 .map(|state| state.aliases.clone())
                 .unwrap_or_default();
-            for alias in &args.aliases {
+            for alias in with_aliases {
                 if !aliases.contains(alias) && *alias != batch.batch {
                     aliases.push(alias.clone());
                 }
             }
-            let (drafted, project) = drafts(&batch, &store, &aliases)?;
+            let (drafted, project) = drafts(batch, store, &aliases)?;
             let mut inputs: Vec<Input> = earlier
                 .as_ref()
                 .map(|state| state.inputs.clone())
@@ -234,6 +254,19 @@ pub fn run(settings: &Settings, args: PrepareArgs) -> Result<Prepared, Error> {
             }
         }
     };
+    Ok((state, pass))
+}
+
+/// Snapshot the batch and write the verifying agent's task.
+///
+/// # Errors
+///
+/// A refused batch id, a failing hook (nothing snapshotted and nothing read), or the store's
+/// refusal.
+pub fn run(settings: &Settings, args: PrepareArgs) -> Result<Prepared, Error> {
+    let batch = Batch::new(settings, &args.batch)?;
+    let store = batch.store()?;
+    let (mut state, _) = input_set(&batch, &store, &args.aliases)?;
 
     // The answers: an earlier pass's are carried forward as they stand.
     let (answered, written) = answers(&batch)?;

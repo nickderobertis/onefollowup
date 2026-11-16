@@ -3,7 +3,7 @@
 //! result the command prints. The CLI is a thin layer over these (`tests/parity.rs` holds
 //! that), so anything the command line does, a Rust caller does by calling the function.
 //!
-//! The verify loop — [`draft`], [`prepare`], the agent's `ticket_*` tools, [`check`],
+//! The verify loop — [`draft`], [`snapshot`], [`prepare`], the agent's `ticket_*` tools, [`check`],
 //! [`publish`] and [`settle`] — the comment pass — [`comments_gather`],
 //! [`comments_launches`], [`comments_check`] and [`comments_settle`] — and [`config_show`]
 //! and [`kinds`] are implemented; every other verb refuses with [`Error::NotImplemented`],
@@ -459,6 +459,46 @@ pub struct DraftArgs {
 /// refusal.
 pub fn draft(settings: &Settings, args: DraftArgs) -> Result<Drafted, Error> {
     verify::draft::run(settings, args)
+}
+
+/// `onefollowup snapshot`: snapshot a batch's input set alone and say whether it is empty.
+#[derive(Debug, Clone, PartialEq, Eq, Args)]
+pub struct SnapshotArgs {
+    /// The batch.
+    #[arg(long, value_name = "ID")]
+    pub batch: String,
+    /// Another id the batch's drafts were recorded under; repeat for each.
+    #[arg(long = "alias", value_name = "ID")]
+    pub aliases: Vec<String>,
+}
+
+/// What `snapshot` found.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Snapshotted {
+    /// [`SCHEMA_VERSION`].
+    pub schema_version: u32,
+    /// The batch.
+    pub batch: String,
+    /// How many drafts the input set holds.
+    pub drafts: usize,
+    /// How many inputs `hooks.batch_preparing` supplied.
+    pub inputs: usize,
+    /// Whether the input set holds no draft and no hook input: nothing to verify.
+    pub empty: bool,
+    /// Each store operation it made.
+    pub store_operations: Vec<StoreOperation>,
+}
+
+/// Snapshot a batch's input set — its drafts and the `batch_preparing` hook's inputs —
+/// exactly as `prepare` does, reading no destination. A non-empty batch's first pass is saved
+/// for `prepare` to continue; an empty batch writes nothing.
+///
+/// # Errors
+///
+/// A refused batch id or alias, a failing `hooks.batch_preparing` command (nothing written),
+/// or the store's refusal.
+pub fn snapshot(settings: &Settings, args: SnapshotArgs) -> Result<Snapshotted, Error> {
+    verify::snapshot::run(settings, args)
 }
 
 /// `onefollowup prepare`: snapshot a batch's inputs and write the verifying agent's task.

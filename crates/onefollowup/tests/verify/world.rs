@@ -631,6 +631,7 @@ fn verb(settings: &Settings, command: Command, stdin: &str) -> Result<String, Er
             args.body = Some(stdin.to_owned());
             call(settings, args, api::draft)
         }
+        Command::Snapshot(args) => call(settings, args, api::snapshot),
         Command::Prepare(args) => call(settings, args, api::prepare),
         Command::Ticket(TicketCommand::Validate(args)) => {
             call(settings, args, api::ticket_validate)

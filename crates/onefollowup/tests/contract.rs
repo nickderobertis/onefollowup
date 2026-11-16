@@ -15,13 +15,14 @@ use indexmap::IndexMap;
 use onefollowup::api::{
     BoardComment, BoardStatus, Checked, CommentsChecked, CommentsSettled, Drafted, Gathered,
     HookRun, ItemStatus, Launch, Launches, Prepared, Problem, PublishOutcome, Published,
-    RoleStatus, SearchHit, SearchResults, Settled, SettledLaunch, Staged, StagedOp, StatusesShown,
-    TicketValidated,
+    RoleStatus, SearchHit, SearchResults, Settled, SettledLaunch, Snapshotted, Staged, StagedOp,
+    StatusesShown, TicketValidated,
 };
 use onefollowup::cli::Cli;
 use onefollowup::config::StatusRole;
 use onefollowup::formats::outbox::StagedWrite;
 use onefollowup::formats::{HeldPriority, Level};
+use onefollowup::store::StoreOperation;
 use serde_json::{Value, to_value};
 
 const README: &str = include_str!("../../../README.md");
@@ -76,6 +77,22 @@ fn examples() -> BTreeMap<&'static str, Value> {
                 absent_targets: Vec::new(),
                 missing_links: Vec::new(),
                 store_operations: Vec::new(),
+            })),
+        ),
+        (
+            "snapshot",
+            json(to_value(Snapshotted {
+                schema_version: 1,
+                batch: BATCH.to_owned(),
+                drafts: 3,
+                inputs: 1,
+                empty: false,
+                store_operations: vec![StoreOperation {
+                    op: "find".to_owned(),
+                    source: "drafts".to_owned(),
+                    destination: false,
+                    items: 3,
+                }],
             })),
         ),
         (

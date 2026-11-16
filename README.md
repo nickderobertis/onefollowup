@@ -29,7 +29,8 @@ library is the `onefollowup` crate.
 | Command | What it does |
 |---|---|
 | `draft --batch <ID> --title <T> --repository <ORIGIN> [--path <P>]... [--author <LABEL>] [--stamp <KEY=VALUE>]...` | Record one draft; its body is read from stdin. Filed under the batch's drafts project, `<drafts_source>:<batch>`; see Private drafts, below. |
-| `prepare --batch <ID> [--alias <ID>]... [--unanswered]` | Snapshot the batch's inputs (its drafts and the `batch_preparing` hook's inputs), make its destination reads in one batched search and one comments read — under relations, also one `task relations` read of the tickets found and one read of the tickets at their edges' other ends — and write the verifying agent's task. Prints `{"schema_version": 1, "batch", "drafts", "inputs", "answers", "task_template"}`, with `absent_targets` and `missing_links` when there are any (Relations, below). |
+| `snapshot --batch <ID> [--alias <ID>]...` | Run `prepare`'s input-set step alone — the drafts search for the batch and its aliases, and the `batch_preparing` hook — and say whether the batch holds anything to verify: `empty` is `true` exactly when the input set holds no draft and no hook input. It reads no destination and renders no task. An empty batch leaves no working file; a non-empty first pass is saved as the batch's state, which the next `prepare` continues without running the hook again. After a settled pass it saves nothing, and `prepare` opens that pass itself. Prints `{"schema_version": 1, "batch", "drafts", "inputs", "empty", "store_operations"}`. |
+| `prepare --batch <ID> [--alias <ID>]... [--unanswered]` | Snapshot the batch's inputs (its drafts and the `batch_preparing` hook's inputs), make its destination reads in one batched search and one comments read — under relations, also one `task relations` read of the tickets found and one read of the tickets at their edges' other ends — and write the verifying agent's task; it continues a pass `snapshot` opened, running no hook again. Prints `{"schema_version": 1, "batch", "drafts", "inputs", "answers", "task_template"}`, with `absent_targets` and `missing_links` when there are any (Relations, below). |
 | `ticket validate --batch <ID> <TICKET>` | Hold one ticket to the rules; `absent_targets` names each edge its fields derive whose target does not exist. |
 | `ticket board-status --batch <ID> <ITEM>` | Read one destination item's state and comments from the batch's prepared reads. |
 | `ticket search --batch <ID> --ticket <TICKET> <QUERY>` | Search the destination for a ticket's duplicates. |
@@ -214,6 +215,26 @@ field declared here is a contract change agreed with the manager first. `kinds` 
   },
   "retired": [
     "outbox/nightly-2026-11-01.json"
+  ]
+}
+```
+
+#### `snapshot`
+
+```json
+{
+  "schema_version": 1,
+  "batch": "nightly-2026-11-01",
+  "drafts": 3,
+  "inputs": 1,
+  "empty": false,
+  "store_operations": [
+    {
+      "op": "find",
+      "source": "drafts",
+      "destination": false,
+      "items": 3
+    }
   ]
 }
 ```
@@ -661,11 +682,12 @@ batch already sends; a configuration that assigns nobody writes no assignee and 
 **`hooks`** — a map from the moment a hook fires to its argv, and the `owner` a context
 file names. Two moments exist; any other key is refused:
 
-- `batch_preparing`: `prepare` runs it before it snapshots, with
+- `batch_preparing`: `prepare` and `snapshot` run it before they snapshot (a pass `snapshot`
+  opened is continued by `prepare` without running it again), with
   `{"schema_version": 1, "batch": "<id>"}` on stdin. Its stdout is the additional inputs
   needing a disposition, `{"schema_version": 1, "inputs": [{"id", "source", "summary",
   "detail"}]}`, `source` saying where the input came from (such as `budget-overrun`). A
-  non-zero exit or any other stdout fails `prepare`, naming the hook, with nothing
+  non-zero exit or any other stdout fails `prepare` or `snapshot`, naming the hook, with nothing
   snapshotted.
 - `batch_settled`: `settle` runs it with the settled batch's summary on stdin,
   `{"schema_version": 1, "batch", "writes", "read_back", "confirmed", "pending",

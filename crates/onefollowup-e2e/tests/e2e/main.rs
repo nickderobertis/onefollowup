@@ -26,6 +26,7 @@ mod refused_accounts;
 mod renamed_shape;
 mod rollups;
 mod safeguards;
+mod snapshot;
 mod snapshots;
 mod telemetry;
 mod template_data;

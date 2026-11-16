@@ -1,4 +1,4 @@
-//! The verify loop: what `draft`, `prepare`, the agent's `ticket` tools, `check`, `publish`
+//! The verify loop: what `draft`, `snapshot`, `prepare`, the agent's `ticket` tools, `check`, `publish`
 //! and `settle` do. Each verb's public function is in [`crate::api`]; it calls the one here.
 //!
 //! - [`context`] — the batch, its configuration and its working files.
@@ -21,6 +21,7 @@ pub mod relations;
 pub mod render;
 pub mod routes;
 pub mod settle;
+pub mod snapshot;
 pub mod template;
 pub mod ticket;
 pub mod tools;

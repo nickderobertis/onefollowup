@@ -79,6 +79,8 @@ impl ConfigArgs {
 pub enum Command {
     /// Record one draft; its body is read from stdin.
     Draft(api::DraftArgs),
+    /// Snapshot a batch's input set alone and say whether it holds anything to verify.
+    Snapshot(api::SnapshotArgs),
     /// Snapshot a batch's inputs, make its destination reads, and write the verifying
     /// agent's task.
     Prepare(api::PrepareArgs),
@@ -176,6 +178,7 @@ pub fn main() -> ExitCode {
 pub fn dispatch(command: Command, config: &ConfigArgs) -> Result<String, Error> {
     match command {
         Command::Draft(args) => handle(config, args, api::draft),
+        Command::Snapshot(args) => handle(config, args, api::snapshot),
         Command::Prepare(args) => handle(config, args, api::prepare),
         Command::Ticket(TicketCommand::Validate(args)) => {
             handle(config, args, api::ticket_validate)

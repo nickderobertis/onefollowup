@@ -15,13 +15,14 @@ use crate::config::{Cardinality, DecidedBy, Duplicates, Settings};
 use crate::error::Error;
 use crate::formats::HeldPriority;
 use crate::formats::batch::{BatchState, Merged, Read};
-use crate::formats::markers::EvidenceComment;
+use crate::formats::markers::CommentMarker;
 use crate::formats::outbox::{Outbox, StagedWrite};
 use crate::store::{Search, SearchIn};
 use crate::verify::context::Batch;
 use crate::verify::decide::{self, read_of};
 use crate::verify::journal;
 use crate::verify::relations::{self, Graph, Scope};
+use crate::verify::render::{self, Common};
 use crate::verify::ticket::{self, Context, SLUG, TicketFile};
 
 /// Every rule `ticket` breaks, held to the batch's input set when it was prepared.
@@ -33,7 +34,18 @@ pub fn ticket_problems(
 ) -> Vec<String> {
     let inputs: Option<Vec<String>> =
         state.map(|state| state.inputs.iter().map(|input| input.id.clone()).collect());
-    let template = batch.ticket_template(ticket.kind(batch.config));
+    let kind = ticket.kind(batch.config);
+    let template = batch.ticket_template(kind);
+    let destination = kind.map_or_else(
+        || batch.config.destination.clone(),
+        |kind| batch.destination_of(kind),
+    );
+    let common = kind.map(|kind| Common {
+        config: batch.config,
+        kind,
+        batch: &batch.batch,
+        destination: &destination,
+    });
     ticket::problems(
         ticket,
         batch.config,
@@ -41,6 +53,8 @@ pub fn ticket_problems(
             batch: &batch.batch,
             inputs: inputs.as_deref(),
             template: &template,
+            namespace: &batch.config.namespace,
+            common,
         },
     )
 }
@@ -375,20 +389,29 @@ pub fn copy(settings: &Settings, args: TicketCopyArgs) -> Result<Staged, Error> 
                 let root_cause = decide::item_record(&batch, &read)
                     .map_or_else(|| ticket.slug.clone(), |record| record.root_cause);
                 let evidence = ticket
-                    .section(ticket::EVIDENCE)
+                    .section(&kind.evidence_section)
                     .filter(|evidence| !evidence.is_empty())
                     .ok_or_else(|| {
                         Error::Refused(format!(
                             "the ticket `{}` is `{}` already filed, and carries no `## {}` to stage there",
-                            ticket.slug, read.item.id, ticket::EVIDENCE
+                            ticket.slug, read.item.id, kind.evidence_section
                         ))
                     })?;
-                let body = EvidenceComment {
-                    batch: batch.batch.clone(),
-                    root_cause: root_cause.clone(),
-                    evidence,
-                }
-                .render(&batch.config.namespace);
+                let record = ticket.record.as_ref().ok_or_else(|| {
+                    Error::Refused("the ticket's record does not read".to_owned())
+                })?;
+                let sources = record_sources(&state, record);
+                let body = evidence_comment(
+                    &batch,
+                    &read,
+                    &root_cause,
+                    &serde_json::json!({
+                        "evidence": evidence,
+                        "bears_on": null,
+                        "question": null,
+                        "sources": sources,
+                    }),
+                )?;
                 let item = read.item.id.clone();
                 let write = StagedWrite::Comment {
                     item: item.clone(),
@@ -452,6 +475,24 @@ pub fn copy(settings: &Settings, args: TicketCopyArgs) -> Result<Staged, Error> 
                 }
             }
         }
+    }
+    // The destination body and projections are rendered now, as `publish` renders them, so a
+    // template that cannot render this ticket refuses it here with nothing staged.
+    if let Err(message) = trial_render(&batch, &state, &ticket, kind, &destination) {
+        journal::append(
+            &batch,
+            &[journal::refused_copy(
+                &batch.batch,
+                &key,
+                None,
+                "invalid",
+                &message,
+            )],
+        )?;
+        return Err(Error::Refused(format!(
+            "the ticket `{}` does not render, so nothing was staged: {message}",
+            ticket.slug
+        )));
     }
     let write = StagedWrite::Copy {
         ticket: key.clone(),
@@ -654,12 +695,39 @@ pub fn comment(settings: &Settings, args: TicketCommentArgs) -> Result<Staged, E
             "the evidence, read from stdin, is empty".to_owned(),
         ));
     }
-    let body = EvidenceComment {
-        batch: batch.batch.clone(),
-        root_cause: root_cause.clone(),
-        evidence,
+    let bears_on = part_file(args.bears_on_file.as_deref(), "--bears-on-file")?;
+    let question = part_file(args.question_file.as_deref(), "--question-file")?;
+    let namespace = &batch.config.namespace;
+    let mut problems = render::reserved_lines(&evidence, namespace, "the evidence");
+    for (what, part) in [
+        ("the bears-on paragraph", &bears_on),
+        ("the question", &question),
+    ] {
+        if let Some(part) = part {
+            problems.extend(render::reserved_lines(part, namespace, what));
+        }
     }
-    .render(&batch.config.namespace);
+    let sources = match &args.sources_file {
+        Some(path) => Some(comment_sources(&batch, &state, path, &mut problems)?),
+        None => None,
+    };
+    if !problems.is_empty() {
+        return Err(Error::Refused(format!(
+            "nothing was staged: {}",
+            problems.join("; ")
+        )));
+    }
+    let body = evidence_comment(
+        &batch,
+        read,
+        &root_cause,
+        &serde_json::json!({
+            "evidence": evidence,
+            "bears_on": bears_on,
+            "question": question,
+            "sources": sources,
+        }),
+    )?;
     let write = StagedWrite::Comment {
         item: item.clone(),
         root_cause: root_cause.clone(),
@@ -896,4 +964,253 @@ pub fn re_estimate(settings: &Settings, args: TicketReEstimateArgs) -> Result<St
         matched: None,
         store_operations: Vec::new(),
     })
+}
+
+/// The text of a part `ticket comment` was handed in a file, trimmed; an empty one is none.
+fn part_file(path: Option<&std::path::Path>, flag: &str) -> Result<Option<String>, Error> {
+    let Some(path) = path else {
+        return Ok(None);
+    };
+    let text = std::fs::read_to_string(path).map_err(|error| {
+        Error::Refused(format!(
+            "{flag} {} could not be read: {error}; nothing was staged",
+            path.display()
+        ))
+    })?;
+    Ok(Some(text.trim().to_owned()).filter(|text| !text.is_empty()))
+}
+
+/// The keys a `--sources-file` holds, exactly.
+const SOURCE_KEYS: [&str; 4] = ["host", "basis", "drafts", "witnesses"];
+
+/// The sources a `--sources-file` states, validated as a ticket record's are, with each
+/// draft's source and transcript read from the batch's input set; each problem is added to
+/// `problems`.
+fn comment_sources(
+    batch: &Batch<'_>,
+    state: &BatchState,
+    path: &std::path::Path,
+    problems: &mut Vec<String>,
+) -> Result<serde_json::Value, Error> {
+    use serde_json::Value;
+    let text = std::fs::read_to_string(path).map_err(|error| {
+        Error::Refused(format!(
+            "--sources-file {} could not be read: {error}; nothing was staged",
+            path.display()
+        ))
+    })?;
+    let shape = || {
+        Error::Refused(format!(
+            "--sources-file {} is not one JSON object holding exactly {}; nothing was staged",
+            path.display(),
+            SOURCE_KEYS.map(|key| format!("`{key}`")).join(", ")
+        ))
+    };
+    let Ok(Value::Object(held)) = serde_json::from_str::<Value>(&text) else {
+        return Err(shape());
+    };
+    let mut keys: Vec<&str> = held.keys().map(String::as_str).collect();
+    keys.sort_unstable();
+    let mut wanted = SOURCE_KEYS;
+    wanted.sort_unstable();
+    if keys != wanted {
+        return Err(shape());
+    }
+    let strings = |key: &str| -> Option<Vec<String>> {
+        held[key]
+            .as_array()?
+            .iter()
+            .map(|one| one.as_str().map(str::to_owned))
+            .collect()
+    };
+    let host = held["host"].as_str().unwrap_or_default().to_owned();
+    if !ticket::is_host(&host) {
+        problems.push(format!(
+            "the sources' `host` {} is not a host name as `hostname` prints one",
+            held["host"]
+        ));
+    }
+    let basis: Option<indexmap::IndexMap<String, String>> =
+        held["basis"].as_object().and_then(|map| {
+            map.iter()
+                .map(|(origin, commit)| {
+                    commit
+                        .as_str()
+                        .map(|commit| (origin.clone(), commit.to_owned()))
+                })
+                .collect()
+        });
+    let basis = basis.unwrap_or_else(|| {
+        problems.push("the sources' `basis` is not an object of origin to commit".to_owned());
+        indexmap::IndexMap::new()
+    });
+    if held["basis"]
+        .as_object()
+        .is_some_and(serde_json::Map::is_empty)
+    {
+        problems.push("the sources' `basis` names no repository".to_owned());
+    }
+    problems.extend(ticket::basis_problems(&basis));
+    let drafts = strings("drafts").unwrap_or_else(|| {
+        problems.push("the sources' `drafts` is not a list of draft ids".to_owned());
+        Vec::new()
+    });
+    for draft in &drafts {
+        if !state.inputs.iter().any(|input| &input.id == draft) {
+            problems.push(format!(
+                "the sources name the draft `{draft}`, which is not one of batch `{}`'s inputs",
+                batch.batch
+            ));
+        }
+    }
+    let witnesses = strings("witnesses").unwrap_or_else(|| {
+        problems.push("the sources' `witnesses` is not a list of witnesses".to_owned());
+        Vec::new()
+    });
+    problems.extend(render::witness_problems(&witnesses, &basis));
+    let (draft_sources, transcripts) = draft_fields(&state.inputs, &drafts, None, None);
+    Ok(serde_json::json!({
+        "host": host,
+        "basis": basis,
+        "drafts": drafts,
+        "witnesses": witnesses,
+        "draft_sources": draft_sources,
+        "transcripts": transcripts,
+    }))
+}
+
+/// Each draft's source, and the transcript of each that names one, in `drafts`' order: what
+/// `held` already records kept as recorded, every other read from the batch's input set.
+#[must_use]
+pub fn draft_fields(
+    inputs: &[crate::formats::batch::Input],
+    drafts: &[String],
+    held_sources: Option<&indexmap::IndexMap<String, String>>,
+    held_transcripts: Option<&indexmap::IndexMap<String, String>>,
+) -> (
+    indexmap::IndexMap<String, String>,
+    indexmap::IndexMap<String, String>,
+) {
+    let mut sources = indexmap::IndexMap::new();
+    let mut transcripts = indexmap::IndexMap::new();
+    for draft in drafts {
+        if let Some(source) = held_sources.and_then(|held| held.get(draft)) {
+            sources.insert(draft.clone(), source.clone());
+            if let Some(transcript) = held_transcripts.and_then(|held| held.get(draft)) {
+                transcripts.insert(draft.clone(), transcript.clone());
+            }
+            continue;
+        }
+        let Some(input) = inputs.iter().find(|input| &input.id == draft) else {
+            continue;
+        };
+        if let Some(author) = &input.author {
+            sources.insert(draft.clone(), author.clone());
+        }
+        if let Some(transcript) = &input.transcript {
+            transcripts.insert(draft.clone(), transcript.clone());
+        }
+    }
+    // Whatever else the record held is kept, so no value it carried is lost.
+    for (draft, source) in held_sources.into_iter().flatten() {
+        sources
+            .entry(draft.clone())
+            .or_insert_with(|| source.clone());
+    }
+    for (draft, transcript) in held_transcripts.into_iter().flatten() {
+        transcripts
+            .entry(draft.clone())
+            .or_insert_with(|| transcript.clone());
+    }
+    (sources, transcripts)
+}
+
+/// A ticket record's own sources, as an evidence comment's `sources` holds them.
+fn record_sources(
+    state: &BatchState,
+    record: &crate::formats::ticket::TicketRecord,
+) -> serde_json::Value {
+    let (draft_sources, transcripts) = draft_fields(
+        &state.inputs,
+        &record.drafts,
+        record.draft_sources.as_ref(),
+        record.transcripts.as_ref(),
+    );
+    serde_json::json!({
+        "host": record.host,
+        "basis": record.basis,
+        "drafts": record.drafts,
+        "witnesses": record.witnesses.clone().unwrap_or_default(),
+        "draft_sources": draft_sources,
+        "transcripts": transcripts,
+    })
+}
+
+/// This batch's evidence comment on `read`'s item about `root_cause`: `parts` (`evidence`,
+/// `bears_on`, `question`, `sources`) rendered through `comment_templates.evidence`, then
+/// the marker.
+fn evidence_comment(
+    batch: &Batch<'_>,
+    read: &Read,
+    root_cause: &str,
+    parts: &serde_json::Value,
+) -> Result<String, Error> {
+    let config = batch.config;
+    let kind_name = decide::item_record(batch, read)
+        .and_then(|record| record.kind)
+        .unwrap_or_else(|| config.default_kind.clone());
+    let kind = batch
+        .kind(&kind_name)
+        .or_else(|| batch.kind(&config.default_kind))
+        .ok_or_else(|| Error::Refused(format!("the kind `{kind_name}` is not configured")))?;
+    let destination = read
+        .item
+        .id
+        .split_once(':')
+        .map_or(config.destination.as_str(), |(source, _)| source);
+    let mut comment = parts.clone();
+    comment["batch"] = serde_json::Value::from(batch.batch.as_str());
+    comment["root_cause"] = serde_json::Value::from(root_cause);
+    let marker = CommentMarker {
+        batch: batch.batch.clone(),
+        root_cause: root_cause.to_owned(),
+        reply: None,
+    };
+    render::comment(
+        &Common {
+            config,
+            kind,
+            batch: &batch.batch,
+            destination,
+        },
+        &batch.evidence_template(),
+        &comment,
+        &marker,
+    )
+    .map_err(|message| Error::Refused(format!("{message}; nothing was staged")))
+}
+
+/// Render `ticket`'s destination body and projections as `publish` would, from its own facts.
+fn trial_render(
+    batch: &Batch<'_>,
+    state: &BatchState,
+    ticket: &TicketFile,
+    kind: &crate::config::Kind,
+    destination: &str,
+) -> Result<(), String> {
+    let mut record = ticket
+        .record
+        .clone()
+        .ok_or_else(|| "the ticket's record does not read".to_owned())?;
+    let estimate = ticket::estimate(batch.config, kind, &ticket.body, record.frequency, 1)?;
+    record.priority_estimate = estimate.level;
+    let (sources, transcripts) = draft_fields(
+        &state.inputs,
+        &record.drafts,
+        record.draft_sources.as_ref(),
+        record.transcripts.as_ref(),
+    );
+    record.draft_sources = (!sources.is_empty()).then_some(sources);
+    record.transcripts = (!transcripts.is_empty()).then_some(transcripts);
+    decide::rendered(batch, ticket, kind, destination, &mut record, &estimate).map(|_| ())
 }

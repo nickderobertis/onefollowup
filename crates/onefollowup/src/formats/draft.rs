@@ -42,6 +42,22 @@ pub struct Author {
     pub member: Option<String>,
 }
 
+impl Author {
+    /// Where the draft came from, as a ticket record's `draft_sources` holds it: `author
+    /// <kind>`, then `; node <node>` and `; member <member>` where it names them.
+    #[must_use]
+    pub fn source(&self) -> String {
+        let mut line = format!("author {}", self.kind.as_str());
+        if let Some(node) = &self.node {
+            line.push_str(&format!("; node {node}"));
+        }
+        if let Some(member) = &self.member {
+            line.push_str(&format!("; member {member}"));
+        }
+        line
+    }
+}
+
 /// What kind of author drafted a draft.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -54,6 +70,19 @@ pub enum AuthorKind {
     Pacemaker,
     /// The manager.
     Manager,
+}
+
+impl AuthorKind {
+    /// The kind as a record spells it.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Node => "node",
+            Self::Monitor => "monitor",
+            Self::Pacemaker => "pacemaker",
+            Self::Manager => "manager",
+        }
+    }
 }
 
 /// Where a draft was drafted from.
@@ -96,4 +125,41 @@ impl Versioned for DraftsProjectRecord {
     const SCHEMA: u64 = 1;
     const STYLE: Style = Style::LINE;
     const TRAILING_NEWLINE: bool = false;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Author, AuthorKind};
+
+    #[test]
+    fn a_drafts_source_names_its_kind_then_its_node_and_member() {
+        for (kind, node, member, source) in [
+            (
+                AuthorKind::Node,
+                Some("verify-cursor"),
+                None,
+                "author node; node verify-cursor",
+            ),
+            (
+                AuthorKind::Monitor,
+                None,
+                Some("m-1"),
+                "author monitor; member m-1",
+            ),
+            (
+                AuthorKind::Pacemaker,
+                Some("n"),
+                Some("p-2"),
+                "author pacemaker; node n; member p-2",
+            ),
+            (AuthorKind::Manager, None, None, "author manager"),
+        ] {
+            let author = Author {
+                kind,
+                node: node.map(str::to_owned),
+                member: member.map(str::to_owned),
+            };
+            assert_eq!(author.source(), source);
+        }
+    }
 }

@@ -13,6 +13,7 @@ use crate::formats::ticket::TicketRecord;
 use crate::formats::{Level, Versioned};
 use crate::verify::context::Batch;
 use crate::verify::relations::{End, Graph};
+use crate::verify::render::{self, Common};
 use crate::verify::routes::{self, Facts};
 use crate::verify::ticket::{self, Estimated, TicketFile};
 
@@ -278,10 +279,24 @@ pub fn decide(
     {
         record.fields = None;
     }
-    let body = match &estimate.line {
-        Some(line) => ticket::with_estimate_line(&ticket.body, line, &config.rubric),
-        None => ticket.body.clone(),
-    };
+    let (sources, transcripts) = crate::verify::tools::draft_fields(
+        &state.inputs,
+        &record.drafts,
+        record.draft_sources.as_ref(),
+        record.transcripts.as_ref(),
+    );
+    record.draft_sources = (!sources.is_empty()).then_some(sources);
+    record.transcripts = (!transcripts.is_empty()).then_some(transcripts);
+    if record.witnesses.as_ref().is_some_and(Vec::is_empty) {
+        record.witnesses = None;
+    }
+    if record
+        .impact
+        .as_ref()
+        .is_some_and(indexmap::IndexMap::is_empty)
+    {
+        record.impact = None;
+    }
     // A new ticket is copied with the person its route assigns it; a bound one keeps what its
     // item records, the batch's `update-many` writing any other.
     let assignee = set.assignee.clone();
@@ -295,6 +310,7 @@ pub fn decide(
         .filter(|edge| edge.from == end)
         .map(|edge| (edge.relation.clone(), edge.to.clone()))
         .collect();
+    let body = rendered(batch, ticket, &kind, &destination, &mut record, &estimate)?;
     Ok(Decision {
         slug: ticket.slug.clone(),
         kind,
@@ -318,6 +334,36 @@ pub fn decide(
         edges,
         assignee,
     })
+}
+
+/// `ticket`'s destination body, its `record`'s `projected` rendered on the way: through its
+/// kind's `render_template` and `projections`, given every datum the README documents.
+///
+/// # Errors
+///
+/// A template that cannot be read or rendered.
+pub fn rendered(
+    batch: &Batch<'_>,
+    ticket: &TicketFile,
+    kind: &Kind,
+    destination: &str,
+    record: &mut TicketRecord,
+    estimate: &Estimated,
+) -> Result<String, String> {
+    render::destination(
+        &Common {
+            config: batch.config,
+            kind,
+            batch: &batch.batch,
+            destination,
+        },
+        batch.render_template(kind).as_ref(),
+        &ticket.title,
+        &ticket.slug,
+        &ticket.body,
+        record,
+        estimate,
+    )
 }
 
 /// The estimate an item's re-estimate writes, from prepare's read of it, this batch's

@@ -1,0 +1,27 @@
+{#-
+  An evidence comment: the evidence first, then its sources in the open. onefollowup appends
+  the marker line after this. Given every variable README.md's "Templates" documents.
+-#}
+**Evidence from batch {{ comment.batch }}.** {{ comment.evidence | trim }}
+{%- if comment.bears_on %}
+
+**Bears on the ticket.** {{ comment.bears_on | trim }}
+{%- endif %}
+{%- if comment.question %}
+
+**Question.** {{ comment.question | trim }}
+{%- endif %}
+{%- if comment.sources %}
+
+Sources:
+- Host: {{ comment.sources.host }}
+{%- for origin, commit in comment.sources.basis | items %}
+- Basis: {{ origin }} at {{ commit }}
+{%- endfor %}
+{%- for draft in comment.sources.drafts %}
+- Draft: {{ draft }}{% if comment.sources.draft_sources[draft] %}; {{ comment.sources.draft_sources[draft] }}{% endif %}{% if comment.sources.transcripts[draft] %}; transcript: {{ comment.sources.transcripts[draft] }}{% endif %}
+{%- endfor %}
+{%- for witness in comment.sources.witnesses %}
+- Witness: {{ witness }}
+{%- endfor %}
+{%- endif %}

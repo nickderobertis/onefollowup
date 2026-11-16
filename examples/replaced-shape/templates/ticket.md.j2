@@ -1,0 +1,50 @@
+{#-
+  The shape a verifying agent writes a ticket in. The host, the basis and the witnesses are
+  not prose here: they are the record's `host`, `basis` and `witnesses`, which the render
+  template shows. Given every variable README.md's "Templates" documents.
+-#}
+## Root cause
+
+<the guarantee that is missing or broken, in the product's own terms>
+
+## Impact
+
+**{{ rubric.impact_parts[0] }}.** <each affected group>
+**{{ rubric.impact_parts[1] }}.** <the cost per occurrence, and how often>
+**{{ rubric.impact_parts[2] }}.** <the impact itself>
+**{{ rubric.impact_parts[3] }}.**
+{% for cost in rubric.workaround_costs -%}
+- {{ cost }}: <the cost>
+{% endfor %}
+{% for line in rubric.impact_lines -%}
+- {{ line }}: <the value>
+{% endfor %}
+## Examples
+
+<one or more examples>
+
+## Suggested fix
+
+<the one fix>
+
+**Contributing locations.**
+- <repository> `<path>`: <what it does>
+
+## Owning batches
+
+<every batch whose evidence this ticket carries>
+
+{% if fields -%}
+## Fields
+
+{% for name, value in fields | items -%}
+- {{ name }}: {% if value is mapping %}<{{ value.description | trim }}>{% else %}{{ value }}{% endif %}
+{% endfor %}
+{% endif -%}
+## Related tickets
+
+<optional: each related ticket>
+
+## Evidence
+
+<what was observed; the claims' `path:line` go to the record's `witnesses`>

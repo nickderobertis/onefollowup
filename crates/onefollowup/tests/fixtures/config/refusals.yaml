@@ -232,3 +232,31 @@ cases:
       relations: [{name: r, from: error, to: incident, cardinality: many-to-one, decided_by: agent, store: link, rollup: max}]
     key: 'relations[0].rollup'
     message: 'priority is fixed'
+  - document: |
+      comment_templates: {evidence: 'builtin:comment-evidence.md.j2', opening: x}
+    key: 'comment_templates.opening'
+    message: 'unknown field `opening`'
+  - document: |
+      comment_templates: {evidence: templates/no-such-evidence.md.j2}
+    key: 'comment_templates.evidence'
+    message: 'which does not exist'
+  - document: |
+      comment_templates: {reply: 'builtin:no-such-reply.md.j2'}
+    key: 'comment_templates.reply'
+    message: 'names no shipped template'
+  - document: |
+      kinds: [{name: root-cause, description: R, render_template: templates/no-such-render.md.j2}]
+    key: 'kinds[0].render_template'
+    message: 'which does not exist'
+  - document: |
+      kinds: [{name: root-cause, description: R, projections: {root_cause: [not, a, string]}}]
+    key: 'kinds[0].projections.root_cause'
+    message: 'expected a string'
+  - document: |
+      kinds: [{name: root-cause, description: R, projections: {'two words': x}}]
+    key: 'kinds[0].projections'
+    message: 'is not a projection name'
+  - document: |
+      kinds: [{name: root-cause, description: R, evidence_section: ''}]
+    key: 'kinds[0].evidence_section'
+    message: 'is empty'

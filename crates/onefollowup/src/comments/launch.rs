@@ -23,6 +23,7 @@ use crate::formats::markers::{
 };
 use crate::formats::snapshot::{Launch as LaunchKind, Launched};
 use crate::formats::{Verdict, snapshot::Chosen};
+use crate::verify::render::{self, Common};
 use crate::verify::template;
 use crate::work;
 
@@ -196,6 +197,8 @@ fn render(
             "ticket": batch.work.ticket(&batch.batch, &written.ticket),
             "item_version": written.version,
             "reply_opening": reply_opening(&batch.batch, &url, listed.author.as_deref()),
+            "reply_confirms": reply_shape(pass, batch, &one.issue, written, &url, listed.author.as_deref(), &one.comment, Verdict::Confirms)?,
+            "reply_does_not_confirm": reply_shape(pass, batch, &one.issue, written, &url, listed.author.as_deref(), &one.comment, Verdict::DoesNotConfirm)?,
             "marker_confirms": marker(Verdict::Confirms),
             "marker_does_not_confirm": marker(Verdict::DoesNotConfirm),
         }));
@@ -230,9 +233,18 @@ fn render(
         .iter()
         .map(|(name, field)| (name.clone(), json!({"description": field.description})))
         .collect();
-    let example_ticket = template::render(
-        &batch.ticket_template(batch.kind(&pass.config.default_kind)),
-        &json!({"rubric": pass.config.rubric, "fields": fields}),
+    let default_kind = batch
+        .kind(&pass.config.default_kind)
+        .ok_or_else(|| Error::Refused("the default kind is not configured".to_owned()))?;
+    let example_ticket = template::render_value(
+        &batch.ticket_template(Some(default_kind)),
+        Common {
+            config: pass.config,
+            kind: default_kind,
+            batch: &batch.batch,
+            destination: &batch.destination_of(default_kind),
+        }
+        .example(),
     )?;
     let check = format!(
         "onefollowup comments check --feedback {}",
@@ -266,4 +278,54 @@ fn render(
         FeedbackSnapshot(snapshotted.directory.display().to_string()).render(namespace),
         task
     ))
+}
+
+/// The visible part of the reply this batch posts to one quoted comment with `verdict`, its
+/// response left as the placeholder the answering agent replaces: `comment_templates.reply`
+/// rendered.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "each part of the reply a template is given"
+)]
+fn reply_shape(
+    pass: &Pass<'_>,
+    batch: &crate::verify::context::Batch<'_>,
+    issue: &str,
+    written: &crate::formats::gathering::LastWritten,
+    url: &str,
+    author: Option<&str>,
+    answers: &str,
+    verdict: Verdict,
+) -> Result<String, Error> {
+    let kind_name = written
+        .record
+        .get("kind")
+        .and_then(Value::as_str)
+        .unwrap_or(&pass.config.default_kind);
+    let kind = batch
+        .kind(kind_name)
+        .or_else(|| batch.kind(&pass.config.default_kind))
+        .ok_or_else(|| Error::Refused(format!("the kind `{kind_name}` is not configured")))?;
+    let destination = issue
+        .split_once(':')
+        .map_or(pass.config.destination.as_str(), |(source, _)| source);
+    render::visible(
+        &Common {
+            config: pass.config,
+            kind,
+            batch: &batch.batch,
+            destination,
+        },
+        &batch.reply_template(),
+        &json!({
+            "batch": batch.batch,
+            "root_cause": written.ticket,
+            "answers": answers,
+            "verdict": verdict.as_str(),
+            "url": url,
+            "author": author,
+            "response": "<your reply, in your words>",
+        }),
+    )
+    .map_err(Error::Refused)
 }

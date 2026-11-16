@@ -4,10 +4,12 @@
 
 mod adoption;
 mod answering;
+mod board_record;
 mod budget;
 mod budget_runner;
 mod comment_adoption;
 mod comment_budgets;
+mod comment_forms;
 mod comment_refusals;
 mod comments;
 mod configuration;
@@ -24,4 +26,6 @@ mod rollups;
 mod safeguards;
 mod snapshots;
 mod telemetry;
+mod template_data;
+mod template_refusals;
 mod world;

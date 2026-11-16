@@ -22,6 +22,7 @@ pub const KEYS: &[&str] = &[
     "estimate",
     "task_template",
     "persona",
+    "comment_templates",
     "fields",
     "kinds",
     "default_kind",
@@ -60,6 +61,8 @@ pub struct Config {
     pub task_template: String,
     /// The verifying agent's persona (`builtin:` names a shipped file).
     pub persona: String,
+    /// The templates a batch's comments are rendered from.
+    pub comment_templates: CommentTemplates,
     /// The fields a ticket may record beyond the record's own keys.
     pub fields: IndexMap<String, FieldDeclaration>,
     /// The ticket kinds the verifying agent chooses from.
@@ -243,6 +246,17 @@ pub struct Estimate {
     pub raise_cap: Priority,
 }
 
+/// The templates a batch's comments are rendered from, each a `builtin:` name or a path:
+/// the visible part of the comment, after which onefollowup appends the marker line.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CommentTemplates {
+    /// An evidence comment's template.
+    pub evidence: String,
+    /// A reply's template.
+    pub reply: String,
+}
+
 /// A declared field.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -262,6 +276,17 @@ pub struct Kind {
     /// The kind's ticket template; `None` is the shipped one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ticket_template: Option<String>,
+    /// The template the destination body is rendered from; `None` is the authored body with
+    /// its estimate line.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub render_template: Option<String>,
+    /// Each projection's template, by name, rendered into the record's `projected`; `None`
+    /// writes no `projected`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub projections: Option<IndexMap<String, String>>,
+    /// The section a `same` duplicate's merge stages as its evidence comment's evidence.
+    #[serde(default = "evidence_section")]
+    pub evidence_section: String,
     /// How a ticket of the kind is found to be one already filed.
     #[serde(default)]
     pub duplicates: Duplicates,
@@ -277,6 +302,10 @@ pub struct Kind {
     /// The dispositions inputs of the kind may be given; `None` is `default_dispositions`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dispositions: Option<Vec<String>>,
+}
+
+fn evidence_section() -> String {
+    "Evidence".to_owned()
 }
 
 fn proposal() -> StatusRole {

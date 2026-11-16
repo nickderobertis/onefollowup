@@ -79,6 +79,15 @@ fn with_nothing_configured_it_prints_every_default() {
     assert_eq!(kinds[0]["priority"], json!({"model": "estimate"}));
     assert_eq!(kinds[0]["initial_status"], "proposal");
     assert!(kinds[0].get("dispositions").is_none());
+    // The keys a host reshapes its tickets with, at their defaults: no render template (the
+    // authored body and its estimate line), no projections, and the `Evidence` section.
+    assert!(kinds[0].get("render_template").is_none());
+    assert!(kinds[0].get("projections").is_none());
+    assert_eq!(kinds[0]["evidence_section"], "Evidence");
+    assert_eq!(
+        config["comment_templates"],
+        json!({"evidence": "builtin:comment-evidence.md.j2", "reply": "builtin:comment-reply.md.j2"})
+    );
     let dispositions: Vec<(&Value, &Value)> = config["dispositions"]
         .as_array()
         .expect("a list")
@@ -313,6 +322,21 @@ fn case(key: &str) -> Option<Case> {
             "persona=s.yaml",
             "/persona",
             [json!("f.yaml"), json!("e.yaml"), json!("s.yaml")],
+        ),
+        // Each value names a template that exists, since a missing one is refused.
+        "comment_templates" => simple(
+            "comment_templates: {evidence: 'builtin:comment-reply.md.j2'}",
+            (
+                "ONEFOLLOWUP_COMMENT_TEMPLATES__EVIDENCE",
+                "builtin:ticket-template.md.j2",
+            ),
+            "comment_templates.evidence=builtin:task-template.md.j2",
+            "/comment_templates/evidence",
+            [
+                json!("builtin:comment-reply.md.j2"),
+                json!("builtin:ticket-template.md.j2"),
+                json!("builtin:task-template.md.j2"),
+            ],
         ),
         "fields" => simple(
             "fields: {code: {description: f}}",

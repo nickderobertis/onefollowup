@@ -2,9 +2,13 @@
 //! `<namespace>.follow-up` key of the store's metadata slot (the hidden trailing comment on
 //! GitHub and Linear, which onetaskgraph's metadata search finds).
 //!
-//! Its four optional keys onefollowup adds within schema 14 — `kind`, `fields`, `edges` and
-//! `board_assignee` — are omitted when empty, so a host using only the default kind, no
-//! declared fields, no relations and no assignee writes byte-identical schema-14 records.
+//! Its optional keys onefollowup adds within schema 14 — `draft_sources`, `transcripts`,
+//! `witnesses`, `kind`, `fields`, `edges`, `board_assignee`, `impact` and `projected` — are
+//! omitted when empty, so a host using only the default kind, no declared fields, no relations,
+//! no assignee and no projections, whose drafts name no author, writes byte-identical
+//! schema-14 records. `draft_sources`, `transcripts` and `witnesses` take the names, shapes and
+//! places of the schema-15 records an orchestrator's `followups` board held, whose
+//! `metadata_fields` read them: never rename one.
 
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
@@ -28,8 +32,21 @@ pub struct TicketRecord {
     pub owning_batches: Vec<String>,
     /// The qualified ids of the drafts the ticket stands on.
     pub drafts: Vec<String>,
+    /// Where each draft came from, by its qualified id: `author <kind>`, then `; node <node>`
+    /// and `; member <member>` where the draft names them. onefollowup writes it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub draft_sources: Option<IndexMap<String, String>>,
+    /// The command that reads each draft's turns, by its qualified id, for each draft naming
+    /// one. onefollowup writes it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transcripts: Option<IndexMap<String, String>>,
     /// Each repository verified, and the commit it was verified at.
     pub basis: IndexMap<String, String>,
+    /// Where each verified claim was seen: `<origin> <path>:<line> at <commit>`, the origin a
+    /// key of `basis` and the commit the one `basis` holds for it. The verifying agent writes
+    /// it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub witnesses: Option<Vec<String>>,
     /// When it was verified.
     pub verified_at: String,
     /// The host that verified it.
@@ -57,6 +74,14 @@ pub struct TicketRecord {
     /// The one person onefollowup last wrote as the ticket's item's assignee.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub board_assignee: Option<String>,
+    /// The rubric's impact-line values, by the line's label, as the verifying agent records
+    /// them; read and kept whole.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub impact: Option<IndexMap<String, String>>,
+    /// Each of the kind's `projections`, rendered, by its name: what a destination's
+    /// `metadata_fields` reads at `[projected, <name>]`. onefollowup alone writes it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub projected: Option<IndexMap<String, String>>,
 }
 
 /// The budget a ticket filed for an overrun names.
@@ -69,8 +94,9 @@ pub struct OverrunBudget {
     pub file: String,
     /// The budget's id.
     pub id: String,
-    /// The threshold, always written as a float (`300.0`).
-    pub threshold: f64,
+    /// The threshold, spelled as it was written: an integer stays an integer (`123`) and a
+    /// float a float (`300.0`, `123.5`), so a rewrite changes no record's bytes.
+    pub threshold: serde_json::Number,
     /// Whether the threshold is a `max` or a `min`.
     pub direction: Direction,
 }

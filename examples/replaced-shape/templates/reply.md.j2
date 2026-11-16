@@ -1,0 +1,7 @@
+{#-
+  A reply: the response first, then whom it answers. onefollowup appends the marker line
+  after this. Given every variable README.md's "Templates" documents.
+-#}
+{{ comment.response | trim }}
+
+— batch {{ comment.batch }}, answering {% if comment.author %}@{{ comment.author }}{% else %}the comment{% endif %} ({{ comment.url }})

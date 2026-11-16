@@ -1,0 +1,25 @@
+# One root-cause kind whose ticket shape, destination body, comments and board fields are this
+# host's own: the record's host, basis and witnesses shown in the body, the workaround's cost
+# and the contributing locations collapsed, an evidence comment's sources shown, and two
+# board fields rendered from the ticket's text.
+destination: followups
+drafts_source: drafts
+comment_templates:
+  evidence: templates/evidence.md.j2
+  reply: templates/reply.md.j2
+kinds:
+  - name: root-cause
+    description: >-
+      One root cause: the invariant or guarantee that is missing or broken, stated in the
+      product's own terms.
+    ticket_template: templates/ticket.md.j2
+    render_template: templates/render.md.j2
+    projections:
+      # A section's text.
+      root_cause: "{{ ticket.section('Root cause').content }}"
+      # One part of a section.
+      who_is_affected: >-
+        {% for part in ticket.section('Impact').parts if part.label == 'Who is affected' %}{{ part.text }}{% endfor %}
+    duplicates: agent
+    priority: {model: estimate}
+    initial_status: proposal

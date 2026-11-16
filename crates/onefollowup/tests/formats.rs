@@ -14,8 +14,8 @@ use onefollowup::formats::draft::{DraftRecord, DraftsProjectRecord};
 use onefollowup::formats::existing_tickets::ExistingTickets;
 use onefollowup::formats::gathering::Gathering;
 use onefollowup::formats::markers::{
-    CommentMarker, EvidenceComment, FeedbackBoundary, FeedbackSnapshot, IssueLine, QuotedAnchor,
-    Reply, ReplyTo, evidence_opening, reply_opening,
+    self, CommentMarker, FeedbackBoundary, FeedbackSnapshot, IssueLine, QuotedAnchor, ReplyTo,
+    evidence_opening, reply_opening,
 };
 use onefollowup::formats::outbox::{Outbox, StagedWrite};
 use onefollowup::formats::pending::Pending;
@@ -27,6 +27,9 @@ use onefollowup::formats::snapshot::{Launched, Snapshot};
 use onefollowup::formats::ticket::TicketRecord;
 use onefollowup::formats::watermark::Watermark;
 use onefollowup::formats::{FormatError, Level, Verdict, Versioned};
+use onefollowup::verify::render::{self, Common};
+use onefollowup::verify::template::Located;
+use serde_json::{Value, json};
 
 const NAMESPACE: &str = "orchestrator";
 
@@ -63,6 +66,23 @@ fn refused<T: Versioned + std::fmt::Debug>(path: &str, format: &str, found: &str
     }
 }
 
+/// A comment rendered through a shipped comment template under the shipped configuration.
+fn shipped(template: &str, comment: &Value, marker: &CommentMarker) -> String {
+    let config = onefollowup::config::defaults("build-host-1");
+    render::comment(
+        &Common {
+            config: &config,
+            kind: &config.kinds[0],
+            batch: &marker.batch,
+            destination: "followups",
+        },
+        &Located::Shipped(template.to_owned()),
+        comment,
+        marker,
+    )
+    .expect("the shipped template renders")
+}
+
 fn leak(text: &str) -> &'static str {
     Box::leak(text.to_owned().into_boxed_str())
 }
@@ -77,7 +97,9 @@ fn ticket_records_round_trip() {
     );
     let full: TicketRecord = round_trips("ticket-record/record-full.json");
     assert_eq!(
-        full.budget.as_ref().map(|budget| budget.threshold),
+        full.budget
+            .as_ref()
+            .and_then(|budget| budget.threshold.as_f64()),
         Some(300.0)
     );
     round_trips::<TicketRecord>("ticket-record/record-budget-fractional-threshold.json");
@@ -104,6 +126,81 @@ fn ticket_records_round_trip() {
         ..extended
     };
     assert_eq!(plain.render(), fixture("ticket-record/record-full.json"));
+
+    // The record at ai-orchestrator 8bf72a30's `tests/fixtures/cycle-time/ticket-v15.json`, its
+    // `schema` set to 14 and spelled as a record is stored (one line, as `json.dumps` writes it):
+    // its `draft_sources`, `transcripts` and `witnesses` read in the schema-15 order, and it
+    // re-renders byte for byte, its integer threshold `123` still `123`.
+    let board: TicketRecord = round_trips("ticket-record/record-board-fields.json");
+    assert_eq!(
+        board
+            .budget
+            .as_ref()
+            .map(|budget| budget.threshold.to_string()),
+        Some("123".to_owned())
+    );
+    let draft = "drafts:listing-run/drafts/20260101T000000Z-cursor";
+    assert_eq!(
+        board
+            .draft_sources
+            .as_ref()
+            .and_then(|sources| sources.get(draft))
+            .map(String::as_str),
+        Some("author node; node verify-cursor")
+    );
+    assert_eq!(
+        board
+            .transcripts
+            .as_ref()
+            .and_then(|transcripts| transcripts.get(draft))
+            .map(String::as_str),
+        Some("onepipeline transcript listing-run verify-cursor")
+    );
+    assert_eq!(board.witnesses.as_ref().map(Vec::len), Some(1));
+    let keys: Vec<String> = serde_json::from_str::<serde_json::Map<String, Value>>(&board.render())
+        .expect("an object")
+        .keys()
+        .cloned()
+        .collect();
+    assert_eq!(
+        keys,
+        [
+            "schema",
+            "root_cause",
+            "repository",
+            "created_by_run",
+            "owning_runs",
+            "drafts",
+            "draft_sources",
+            "transcripts",
+            "basis",
+            "witnesses",
+            "verified_at",
+            "host",
+            "priority_estimate",
+            "frequency",
+            "budget",
+            "board_estimate",
+        ],
+        "the schema-15 records' key order"
+    );
+
+    // `impact` and `projected` follow the keys before them, each omitted when absent.
+    let mut impact = indexmap::IndexMap::new();
+    impact.insert("Severity".to_owned(), "high".to_owned());
+    let mut projected = indexmap::IndexMap::new();
+    projected.insert("root_cause".to_owned(), "A cursor skips.".to_owned());
+    let more = TicketRecord {
+        impact: Some(impact),
+        projected: Some(projected),
+        ..board
+    };
+    let text = more.render();
+    assert!(
+        text.ends_with(r#""board_estimate": "medium", "impact": {"Severity": "high"}, "projected": {"root_cause": "A cursor skips."}}"#),
+        "{text}"
+    );
+    assert_eq!(TicketRecord::parse(&text), Ok(more));
 }
 
 #[test]
@@ -112,6 +209,12 @@ fn ticket_records_of_another_schema_are_refused() {
         "ticket-record/record-minimal-schema13.json",
         "ticket record",
         "13",
+        14,
+    );
+    refused::<TicketRecord>(
+        "ticket-record/record-board-fields-schema15.json",
+        "ticket record",
+        "15",
         14,
     );
     refused::<TicketRecord>(
@@ -221,46 +324,93 @@ fn comment_markers_round_trip() {
         fixture("comment-markers/reply-opening-unattributed.txt")
     );
 
+    // The shipped comment templates write 0.5.0's comments byte for byte.
     let evidence_text = fixture("comment-markers/evidence-comment.md");
-    let evidence = EvidenceComment::parse(&evidence_text, NAMESPACE).expect("an evidence comment");
-    assert_eq!(evidence.render(NAMESPACE), evidence_text);
-    assert!(
-        EvidenceComment::parse(&fixture("comment-markers/reply-attributed.md"), NAMESPACE).is_err()
+    let root_cause = "layout-save-reads-size-twice";
+    assert_eq!(
+        shipped(
+            "comment-evidence.md.j2",
+            &json!({"batch": batch, "root_cause": root_cause,
+                    "evidence": "Seen again — a resize during save on build-host-1.\n",
+                    "bears_on": null, "question": null, "sources": null}),
+            &CommentMarker {
+                batch: batch.to_owned(),
+                root_cause: root_cause.to_owned(),
+                reply: None
+            },
+        ),
+        evidence_text
     );
-    assert!(EvidenceComment::parse("no newline", NAMESPACE).is_err());
-    assert!(EvidenceComment::parse("one line\n", NAMESPACE).is_err());
-    assert!(EvidenceComment::parse("a\n\nb\n", NAMESPACE).is_err());
-    for path in ["reply-attributed.md", "reply-unattributed.md"] {
-        let text = fixture(&format!("comment-markers/{path}"));
-        let reply =
-            Reply::parse(&text, NAMESPACE).unwrap_or_else(|error| panic!("{path}: {error}"));
-        assert_eq!(reply.render(NAMESPACE), text, "{path}");
+    for (path, author, answers, verdict, response) in [
+        (
+            "reply-attributed.md",
+            Some("alice"),
+            "IC_kwDOA1001",
+            Verdict::Confirms,
+            "The ticket now names the resize — thanks.",
+        ),
+        (
+            "reply-unattributed.md",
+            None,
+            "IC_kwDOA1002",
+            Verdict::DoesNotConfirm,
+            "This is a different cause; the ticket stands.",
+        ),
+    ] {
+        let to = ReplyTo {
+            answers: answers.to_owned(),
+            verdict: Some(verdict),
+        };
+        assert_eq!(
+            shipped(
+                "comment-reply.md.j2",
+                &json!({"batch": batch, "root_cause": root_cause, "answers": answers,
+                        "verdict": verdict.as_str(), "url": url, "author": author,
+                        "response": response}),
+                &CommentMarker {
+                    batch: batch.to_owned(),
+                    root_cause: root_cause.to_owned(),
+                    reply: Some(to.clone())
+                },
+            ),
+            fixture(&format!("comment-markers/{path}")),
+            "{path}"
+        );
+        let owner = markers::owner(&fixture(&format!("comment-markers/{path}")), NAMESPACE)
+            .expect("a reply is owned by its marker");
+        assert_eq!(owner.reply, Some(to), "{path}");
     }
-    assert!(Reply::parse(&evidence_text, NAMESPACE).is_err());
-    let foreign = fixture("comment-markers/reply-attributed.md").replacen(
-        "run `nightly-2026-11-01`",
-        "run `other`",
-        1,
+
+    // A comment is owned by its marker alone, whatever comes before it.
+    let owner = markers::owner(&evidence_text, NAMESPACE).expect("owned");
+    assert_eq!((owner.batch.as_str(), owner.reply), (batch, None));
+    let reopened = evidence_text.replacen("run `nightly-2026-11-01`", "run `someone-else`", 1);
+    assert_eq!(
+        markers::owner(&reopened, NAMESPACE).map(|owner| owner.batch),
+        Some(batch.to_owned()),
+        "the opening line names nothing the marker does not"
     );
-    assert!(Reply::parse(&foreign, NAMESPACE).is_err());
-    let unnamed = fixture("comment-markers/reply-attributed.md").replacen(
-        "to @alice's comment",
-        "to alice",
-        1,
+    let blocked = format!(
+        "<details>\n<summary>Additional evidence from follow-up run {batch}.</summary>\n\n- Host: build-host-1\n\n</details>\n\nSeen again.\n\n{}\n",
+        CommentMarker {
+            batch: batch.to_owned(),
+            root_cause: root_cause.to_owned(),
+            reply: None
+        }
+        .render(NAMESPACE)
     );
-    assert!(Reply::parse(&unnamed, NAMESPACE).is_err());
-    let built = Reply {
-        batch: batch.to_owned(),
-        root_cause: "x".to_owned(),
-        to: ReplyTo {
-            answers: "c".to_owned(),
-            verdict: Some(Verdict::Confirms),
-        },
-        url: url.to_owned(),
-        author: None,
-        response: "Thanks.".to_owned(),
-    };
-    assert_eq!(Reply::parse(&built.render(NAMESPACE), NAMESPACE), Ok(built));
+    assert_eq!(
+        markers::owner(&blocked, NAMESPACE).map(|owner| owner.root_cause),
+        Some(root_cause.to_owned())
+    );
+    for unowned in [
+        "no newline",
+        "one line\n",
+        "a\n\nb\n",
+        &evidence_text.replace(NAMESPACE, "acme"),
+    ] {
+        assert!(markers::owner(unowned, NAMESPACE).is_none(), "{unowned}");
+    }
 
     let anchor_line = fixture("comment-markers/quoted-comment-anchor.txt");
     let anchor = QuotedAnchor::parse(&anchor_line, NAMESPACE).expect("an anchor");
@@ -519,11 +669,18 @@ fn watermarks_pending_writes_and_existing_tickets_round_trip() {
 #[test]
 fn an_outbox_written_by_the_library_round_trips() {
     let batch = "nightly-2026-11-01";
-    let evidence = EvidenceComment {
+    let marker = CommentMarker {
         batch: batch.to_owned(),
         root_cause: "export-dialog-drops-unicode".to_owned(),
-        evidence: "Seen again — the title café lost its accent.".to_owned(),
+        reply: None,
     };
+    let body = shipped(
+        "comment-evidence.md.j2",
+        &json!({"batch": batch, "root_cause": marker.root_cause,
+                "evidence": "Seen again — the title café lost its accent.",
+                "bears_on": null, "question": null, "sources": null}),
+        &marker,
+    );
     let outbox = Outbox {
         batch: batch.to_owned(),
         writes: vec![
@@ -533,8 +690,8 @@ fn an_outbox_written_by_the_library_round_trips() {
             },
             StagedWrite::Comment {
                 item: "followups:item-13".to_owned(),
-                root_cause: evidence.root_cause.clone(),
-                body: evidence.render(NAMESPACE),
+                root_cause: marker.root_cause.clone(),
+                body,
             },
             StagedWrite::ReEstimate {
                 item: "followups:item-13".to_owned(),

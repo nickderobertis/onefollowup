@@ -11,7 +11,7 @@ use crate::config::CONTEXT_FILE;
 use crate::config::Settings;
 use crate::error::Error;
 use crate::formats::Versioned;
-use crate::formats::markers::EvidenceComment;
+use crate::formats::markers;
 use crate::formats::outbox::StagedWrite;
 use crate::formats::pending::{Pending, PendingEntry, PendingState, PendingWrite};
 use crate::formats::receipts::{AssignAction, Outcome, Receipt};
@@ -361,9 +361,11 @@ pub fn run(settings: &Settings, args: BatchArgs) -> Result<Settled, Error> {
                     root_cause, body, ..
                 } => detail.is_some_and(|detail| {
                     detail.comments.iter().flatten().any(|comment| {
-                        EvidenceComment::parse(&comment.body, &batch.config.namespace).is_ok_and(
-                            |held| held.batch == batch.batch && &held.root_cause == root_cause,
-                        ) && comment.body.trim() == body.trim()
+                        markers::owner(&comment.body, &batch.config.namespace).is_some_and(|held| {
+                            held.reply.is_none()
+                                && held.batch == batch.batch
+                                && &held.root_cause == root_cause
+                        }) && comment.body.trim() == body.trim()
                     })
                 }),
                 StagedWrite::ReEstimate {

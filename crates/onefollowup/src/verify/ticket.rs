@@ -31,6 +31,7 @@ use crate::config::{Config, Kind, Priority, PriorityModel, Rubric, StatusRole};
 use crate::formats::markers::CommentMarker;
 use crate::formats::ticket::TicketRecord;
 use crate::formats::{Frequency, Level, Verdict, Versioned};
+use crate::verify::render::{self, Common, TicketData};
 use crate::verify::template::{self, Located};
 
 /// The longest title a ticket carries.
@@ -270,6 +271,31 @@ pub fn parse(slug: &str, path: &Path, text: &str, namespace: &str) -> TicketFile
     ticket
 }
 
+/// Whether `host` is a host name as `hostname` prints one.
+#[must_use]
+pub fn is_host(host: &str) -> bool {
+    HOST.is_match(host)
+}
+
+/// Every way `basis` does not name a commit per origin.
+#[must_use]
+pub fn basis_problems(basis: &indexmap::IndexMap<String, String>) -> Vec<String> {
+    let mut problems = Vec::new();
+    for (origin, commit) in basis {
+        if !ORIGIN.is_match(origin) {
+            problems.push(format!(
+                "the basis names `{origin}`, which is not an origin"
+            ));
+        }
+        if !COMMIT.is_match(commit) {
+            problems.push(format!(
+                "the basis commit `{commit}` of `{origin}` is not a 40-character commit"
+            ));
+        }
+    }
+    problems
+}
+
 /// What a ticket is held to besides the configuration.
 #[derive(Debug, Clone, Copy)]
 pub struct Context<'a> {
@@ -279,6 +305,10 @@ pub struct Context<'a> {
     pub inputs: Option<&'a [String]>,
     /// The kind's ticket template, resolved.
     pub template: &'a Located,
+    /// The configured namespace, whose marker lines a ticket never carries.
+    pub namespace: &'a str,
+    /// What every template sees besides the ticket: the batch's data.
+    pub common: Option<Common<'a>>,
 }
 
 /// The template headings a ticket of the kind carries, each with whether it is optional.
@@ -288,13 +318,9 @@ pub struct Context<'a> {
 /// A template that cannot be rendered.
 pub fn template_headings(
     template: &Located,
-    rubric: &Rubric,
-    fields: &Map<String, Value>,
+    data: minijinja::Value,
 ) -> Result<Vec<(String, bool)>, template::TemplateError> {
-    let rendered = template::render(
-        template,
-        &serde_json::json!({"rubric": rubric, "fields": fields}),
-    )?;
+    let rendered = template::render_value(template, data)?;
     let found = headings(&rendered);
     Ok(found
         .iter()
@@ -326,6 +352,16 @@ pub fn problems(ticket: &TicketFile, config: &Config, context: &Context<'_>) -> 
     if title.chars().any(char::is_control) {
         problems.push("the title carries a control character".to_owned());
     }
+    problems.extend(render::reserved_lines(
+        title,
+        context.namespace,
+        "the title",
+    ));
+    problems.extend(render::reserved_lines(
+        &ticket.body,
+        context.namespace,
+        "the body",
+    ));
     let Some(record) = &ticket.record else {
         return problems;
     };
@@ -372,17 +408,14 @@ pub fn problems(ticket: &TicketFile, config: &Config, context: &Context<'_>) -> 
             record.repository
         ));
     }
-    for (origin, commit) in &record.basis {
-        if !ORIGIN.is_match(origin) {
-            problems.push(format!(
-                "the basis names `{origin}`, which is not an origin"
-            ));
-        }
-        if !COMMIT.is_match(commit) {
-            problems.push(format!(
-                "the basis commit `{commit}` of `{origin}` is not a 40-character commit"
-            ));
-        }
+    problems.extend(basis_problems(&record.basis));
+    if let Some(witnesses) = &record.witnesses {
+        problems.extend(render::witness_problems(witnesses, &record.basis));
+    }
+    if record.projected.is_some() {
+        problems.push(
+            "the record carries `projected`, which onefollowup alone writes from the kind's `projections`; leave it out".to_owned(),
+        );
     }
     if chrono::DateTime::parse_from_rfc3339(&record.verified_at).is_err() {
         problems.push(format!(
@@ -413,7 +446,27 @@ pub fn problems(ticket: &TicketFile, config: &Config, context: &Context<'_>) -> 
             ));
         }
     }
-    match template_headings(context.template, &config.rubric, &fields) {
+    let mut held = record_value(record);
+    if let Value::Object(map) = &mut held {
+        if fields.is_empty() {
+            map.shift_remove("fields");
+        } else {
+            map.insert("fields".to_owned(), Value::Object(fields.clone()));
+        }
+    }
+    let data = match context.common {
+        Some(common) => Common { kind, ..common }.ticket(&TicketData {
+            title: &ticket.title,
+            slug: &ticket.slug,
+            body: &ticket.body,
+            record: &held,
+            estimate: None,
+        }),
+        None => minijinja::Value::from_serialize(
+            serde_json::json!({"rubric": config.rubric, "fields": fields}),
+        ),
+    };
+    match template_headings(context.template, data) {
         Ok(expected) => problems.extend(body_problems(&ticket.body, &expected)),
         Err(error) => problems.push(error.to_string()),
     }
@@ -637,6 +690,14 @@ pub struct Estimated {
     pub level: Level,
     /// The estimate line, for the estimate model.
     pub line: Option<String>,
+    /// The severity with the workaround the body records, when it records one.
+    pub mitigated: Option<String>,
+    /// Whether it fires consistently, when judged.
+    pub frequency: Option<Frequency>,
+    /// The occurrences the estimate counted.
+    pub occurrences: u64,
+    /// How the estimate was raised, or why not, for the estimate model.
+    pub raise: Option<String>,
 }
 
 /// The priority `body` and `frequency` estimate under `kind` with `occurrences` occurrences.
@@ -655,6 +716,10 @@ pub fn estimate(
         PriorityModel::Fixed(priority) => Ok(Estimated {
             level: level_of(*priority),
             line: None,
+            mitigated: with_workaround(body, &config.rubric),
+            frequency,
+            occurrences,
+            raise: None,
         }),
         PriorityModel::Estimate => {
             let mitigated = with_workaround(body, &config.rubric).ok_or_else(|| {
@@ -701,7 +766,7 @@ pub fn estimate(
             } else {
                 format!("raised one level because {held}")
             };
-            let frequency = match frequency {
+            let fires = match frequency {
                 Some(Frequency::Consistent) => "fires consistently",
                 Some(Frequency::Intermittent) => "fires intermittently",
                 None => "frequency not judged",
@@ -710,9 +775,13 @@ pub fn estimate(
             Ok(Estimated {
                 level,
                 line: Some(format!(
-                    "- {ESTIMATE_LINE}: {} (severity with the workaround {mitigated}; {frequency}; {occurrences} occurrence{plural}; {raise})",
+                    "- {ESTIMATE_LINE}: {} (severity with the workaround {mitigated}; {fires}; {occurrences} occurrence{plural}; {raise})",
                     level_word(level)
                 )),
+                mitigated: Some(mitigated),
+                frequency,
+                occurrences,
+                raise: Some(raise),
             })
         }
     }

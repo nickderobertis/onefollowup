@@ -56,6 +56,20 @@ fn the_replaced_shape_example_runs_its_walk_through() {
     replaced_shape();
 }
 
+/// The record of the qualified `card`, read back through the store's own read.
+fn stored_record(world: &World, card: &str) -> Value {
+    let environment = vec![(
+        "HOME".to_owned(),
+        world.root.join("home").display().to_string(),
+    )];
+    let store = onefollowup::store::Store::open(Some(&world.root), &world.root, &environment)
+        .expect("the world's store opens");
+    let read = store
+        .read(&[card.to_owned()], false)
+        .expect("the store reads it");
+    read[0].item.as_ref().expect("the store holds it").metadata["orchestrator.follow-up"].clone()
+}
+
 /// The front matter's record and the body of `destination`'s item `id`.
 fn item_parts(world: &World, destination: &str, id: &str) -> (Value, String) {
     let text = world.read_item(destination, id);
@@ -153,6 +167,11 @@ fn replaced_shape() {
             "who_is_affected": "Users of widgets who save layouts.",
         }),
         "a section's text and one part of a section: {held}"
+    );
+    assert_eq!(
+        stored_record(&world, &card)["projected"],
+        held["projected"],
+        "the store reads each value at [projected, <name>]"
     );
     // The host, basis and witnesses shown in the body; two parts collapsed.
     assert!(
@@ -303,6 +322,11 @@ fn replaced_shape() {
     world.ok("settle", &["settle", "--batch", BATCH], "");
     let (held, body) = item_parts(&world, "followups", &id);
     assert_eq!(held["projected"]["root_cause"], ticket.cause, "{held}");
+    assert_eq!(
+        stored_record(&world, &card)["projected"],
+        json!({"root_cause": ticket.cause, "who_is_affected": "Users of widgets who save layouts."}),
+        "the store reads the updated values at [projected, <name>]"
+    );
     assert_eq!(
         held["projected"]["who_is_affected"],
         "Users of widgets who save layouts."

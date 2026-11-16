@@ -1,0 +1,33 @@
+{#- The `followups` board's ticket shape at ai-orchestrator 8bf72a30, as the sections a
+    verifying agent writes: no `## Owning batches`, which the board shows as a field. -#}
+## Root cause
+
+<the guarantee that is missing or broken>
+
+## Impact
+
+{% for part in rubric.impact_parts -%}
+**{{ part }}.** <the part>
+{% endfor %}
+{% for line in rubric.impact_lines -%}
+- {{ line }}: <the value>
+{% endfor %}
+## Examples
+
+<one or more examples>
+
+## Suggested fix
+
+<the one fix>
+
+## Rejected fixes
+
+<optional: each fix considered and not chosen>
+
+## Related tickets
+
+<optional: each related ticket>
+
+## Evidence
+
+<what was observed>

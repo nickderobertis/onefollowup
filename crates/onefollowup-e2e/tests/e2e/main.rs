@@ -4,6 +4,7 @@
 
 mod adoption;
 mod answering;
+mod board_record;
 mod budget;
 mod budget_runner;
 mod comment_adoption;

@@ -210,6 +210,17 @@ impl<'a> Batch<'a> {
             .map(|configured| Located::of(configured, |path| self.settings.path("kinds", path)))
     }
 
+    /// The estimate line's label and template.
+    #[must_use]
+    pub fn estimate_line(&self) -> crate::verify::ticket::EstimateLine {
+        crate::verify::ticket::EstimateLine {
+            label: self.config.estimate.line_label.clone(),
+            template: Located::of(&self.config.estimate.line_template, |path| {
+                self.settings.path("estimate", path)
+            }),
+        }
+    }
+
     /// The evidence comment's template.
     #[must_use]
     pub fn evidence_template(&self) -> Located {

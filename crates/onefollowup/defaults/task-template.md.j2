@@ -132,10 +132,12 @@ Every draft and input takes exactly one of these:
 6. **Judge each ticket's facts.** **Judge both severities by the rubric** in the example's
    `## Impact` guidance, from the product owner's perspective across users, development and
    resources, and write the parts that judgment rests on —
-   {% for part in rubric.impact_parts %}`**{{ part }}.**`{% if not loop.last %}, {% endif %}{% endfor %} —
-   before the severity lines: the severity with the workaround follows from the workaround
-   costs you state there, and an acceptable workaround always lowers a severity above
-   `{{ (rubric.levels | last).name }}`. Then **judge from the original evidence whether the
+   {% for part in rubric.impact_parts %}`**{{ part }}.**`{% if not loop.last %}, {% endif %}{% endfor %}.
+   Record the judgment itself in the ticket record's `impact`, one value per rubric impact
+   line — {% for line in rubric.impact_lines %}`{{ line }}`{% if not loop.last %}, {% endif %}{% endfor %} —
+   and never as lines in the body: the priority is estimated from `impact` alone. The severity
+   with the workaround follows from the workaround costs you state, and an acceptable
+   workaround always lowers a severity above `{{ (rubric.levels | last).name }}`. Then **judge from the original evidence whether the
    root cause fires consistently** — every time its conditions hold — or only
    intermittently or in certain situations, and record that as the ticket's `frequency`.
    {%- if fields %} Record every declared field too:
@@ -275,15 +277,24 @@ hold. This task is not finished while it refuses.
   backticked call. Read it back as the person deciding whether to accept the ticket would,
   on a phone, and rewrite whatever that reader could not follow.
 - **Every location is listed in `## Suggested fix`**, as its `**Contributing locations.**`
-  part: after its opening paragraph and before its unit subsections, one bullet per location
-  that contributes to the root cause, possibly several and in several repositories. Every
-  specific code reference the ticket carries belongs there.
+  part: before its unit subsections, one bullet per location that contributes to the root
+  cause, possibly several and in several repositories. Every specific code reference the
+  ticket carries belongs there.
+- **`## Suggested fix` takes the form its units call for.** With one unit, nothing but the
+  `**Contributing locations.**` part comes before it, and the unit's own opening sentence or
+  two says what changes and why that removes the root cause — never an overview repeating
+  the unit. With two or more units, one overview paragraph opens the section, saying how the
+  units fit together and why the change removes the root cause, then the part, then the
+  units.
+- **Every part is plain; you never write a collapsed block.** The destination shows the
+  workaround's cost, the priority calculation and the contributing locations collapsed,
+  rendered from your plain parts and the record; a `<details>` line in a ticket is refused.
 - **`## Suggested fix` states one concrete fix**: a single change, or a single set of
   changes that together remove the root cause, never a list of options. `## Rejected fixes`
   is optional: when another fix was considered, it comes directly after `## Suggested fix`
   and gives each rejected fix with why; otherwise it is left out.
-- **`## Impact` states what the severities rest on, concisely**: its labelled parts in order
-  before its lines, each in one or two sentences, the last carrying
+- **`## Impact` states what the severities rest on, concisely**: its labelled parts in order,
+  each in one or two sentences, the last carrying
   {% for cost in rubric.workaround_costs %}`- {{ cost }}:`{% if not loop.last %}, {% endif %}{% endfor %}
   — or, with a workaround of `{{ rubric.no_workaround }}`, saying there is no acceptable
   workaround and why. The product owner's part states the impact itself in plain words —
@@ -312,8 +323,12 @@ hold. This task is not finished while it refuses.
   narrowed, in `## Suggested fix` for one it re-fixed, and in `## Rejected fixes` beside the
   fix it displaced, stating what is assumed ("assuming the fix in <URL> lands, …").
 - **`## Evidence` closes the ticket**, after every section a person reads to decide on it.
-- **`host` is read, never typed.** Run `hostname` and write exactly what it prints, both in
-  the record and in `## Evidence`.
+- **`## Evidence` is prose about what happened**: what was observed, where and when, and
+  what it shows. Nothing the record holds goes there — no `Host:` or `Basis:` line, no draft
+  id, commit or transcript command: the record's `host`, `basis`, `drafts` and `witnesses`
+  carry them, each verified claim's `path:line` at its basis commit a `witnesses` entry.
+- **`host` is read, never typed.** Run `hostname` and write exactly what it prints in the
+  record's `host`.
 - **The ticket's item is the one its record names**, once a publish has placed it. When you
   rewrite a ticket, keep every key the tool wrote into its record exactly as it stands.
 - **It reaches the destination only through `onefollowup ticket copy` and

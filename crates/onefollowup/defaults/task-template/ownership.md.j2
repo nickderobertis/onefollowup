@@ -11,10 +11,10 @@
   `onefollowup ticket re-estimate` on that item.
 - **`onefollowup ticket re-estimate` re-estimates an item's priority after this batch
   comments on it.** It recounts the item's occurrences from its comments, stores the
-  estimate in its `{{ namespace }}` record, rewrites the `- Priority estimate:` line of its
-  `## Impact` section, and moves its priority only while the destination holds the estimate
-  its record stored (or holds none, where it stored none), so a priority a person set
-  stays. It changes nothing else about the item, its status included. Stage it on the item
+  estimate in its `{{ namespace }}` record, rewrites its `{{ estimate.line_label }}` line in
+  place wherever its body carries one, and moves its priority only while the destination
+  holds the estimate its record stored (or holds none, where it stored none), so a priority
+  a person set stays. It changes nothing else about the item, its status included. Stage it on the item
   each time this batch adds or edits an evidence comment there, and on no other occasion.
 - **An evidence comment** carries this batch's evidence on another batch's item.
   `onefollowup ticket comment` gives it its visible opening line and its closing marker,

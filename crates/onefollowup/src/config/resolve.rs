@@ -155,7 +155,7 @@ impl Settings {
         Ok(settings)
     }
 
-    /// Refuse a `render_template` or comment template that names no shipped file and no file
+    /// Refuse a `render_template`, the estimate line's template or a comment template that names no shipped file and no file
     /// on disk, naming its key.
     fn templates_exist(&self) -> Result<(), (String, String)> {
         let mut named: Vec<(String, &str, String)> = self
@@ -173,6 +173,11 @@ impl Settings {
                 })
             })
             .collect();
+        named.push((
+            "estimate.line_template".to_owned(),
+            "estimate",
+            self.config.estimate.line_template.clone(),
+        ));
         for (part, configured) in [
             ("evidence", &self.config.comment_templates.evidence),
             ("reply", &self.config.comment_templates.reply),

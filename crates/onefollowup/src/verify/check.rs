@@ -314,7 +314,7 @@ fn tickets(
                 format!("the ticket `{slug}` it copies is not under the batch's tickets"),
             )),
             Some(file) => {
-                for found in ticket_problems(batch, Some(state), file) {
+                for found in ticket_problems(batch, Some(state), file)? {
                     problems.push(problem(format!("ticket:{slug}"), found));
                 }
             }

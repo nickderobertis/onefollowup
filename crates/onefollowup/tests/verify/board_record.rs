@@ -3,7 +3,8 @@
 //! record relabelled schema 14) — filed by its own batch over local-md and copied again once it
 //! is bound, under a render template that writes the board's collapsed shape. The bound copy
 //! keeps every record key the board held, with its value, and writes the body exactly as the
-//! board holds it.
+//! board holds it; a later batch's re-estimate moving its priority and assignee rewrites only
+//! its estimate line.
 
 use std::path::{Path, PathBuf};
 
@@ -16,6 +17,8 @@ use crate::world::{World, answer};
 /// The batch the board's record names as creating and owning it.
 const BATCH: &str =
     "Move-follow-up-ticket-metadata-onto-board-fields-and-collapse-its-long-optional-parts";
+/// A later batch, adding evidence and re-estimating.
+const LATER: &str = "nightly-2026-11-16";
 
 fn fixtures() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../onefollowup/tests/fixtures/board")
@@ -77,7 +80,11 @@ fn a_board_ticket_read_from_onetaskgraph_4039_survives_a_bound_re_copy_whole() {
         );
     }
 
-    let mut world = World::new(&["followups"], &configuration(false));
+    let mut world = World::assigning(
+        &["followups"],
+        &["drafts", "followups"],
+        &configuration(false),
+    );
     std::fs::create_dir_all(world.root.join("board")).expect("a directory");
     for name in ["ticket.md.j2", "render.md.j2"] {
         std::fs::copy(fixtures().join(name), world.root.join("board").join(name)).expect("copied");
@@ -105,6 +112,14 @@ fn a_board_ticket_read_from_onetaskgraph_4039_survives_a_bound_re_copy_whole() {
     .expect("the draft");
 
     // The ticket file: the board's title and record, and the body its verifying agent authors.
+    // Its agent records the impact values its body's lines state, as this release's records
+    // carry them.
+    let mut authored_record = board_record.clone();
+    authored_record["impact"] = json!({
+        "Severity": "low",
+        "Workaround": "Keep source drafts available so transcript projections remain populated where a transcript exists.",
+        "Severity with the workaround": "low",
+    });
     let authored = read("onetaskgraph-4039.authored.md");
     let authored = authored
         .split_once("-->\n")
@@ -118,7 +133,7 @@ fn a_board_ticket_read_from_onetaskgraph_4039_survives_a_bound_re_copy_whole() {
     std::fs::write(
         &ticket_path,
         format!(
-            "---\ntitle: {}\nmetadata:\n  orchestrator.follow-up: {board_record}\n---\n{authored}",
+            "---\ntitle: {}\nmetadata:\n  orchestrator.follow-up: {authored_record}\n---\n{authored}",
             board_front["title"]
         ),
     )
@@ -155,4 +170,67 @@ fn a_board_ticket_read_from_onetaskgraph_4039_survives_a_bound_re_copy_whole() {
     for (key, value) in board_record.as_object().expect("an object") {
         assert_eq!(&held[key], value, "{key}: {held}");
     }
+
+    // A later batch's evidence and re-estimate, under a route that sets the priority and names
+    // the person: the priority and the assignee move; every visible part stays as the board
+    // holds it, its estimate line rewritten in place; every key of the board's record keeps its
+    // value but `board_estimate`, which records the priority onefollowup wrote.
+    std::fs::write(
+        world.root.join("onefollowup.yaml"),
+        format!(
+            "{}routes:\n  - {{name: escalate, match: {{kind: [root-cause]}}, set: {{priority: high, assignee: jane.doe}}}}\n",
+            configuration(true)
+        ),
+    )
+    .expect("written");
+    let later = world.draft_in(
+        LATER,
+        "github.com/nickderobertis/onetaskgraph",
+        "Unchanged empty metadata projections must not reread board fields",
+        &["crates/onetaskgraph-github-projects/src/lib.rs"],
+        "The board reread its fields again.\n",
+    );
+    world.ok("prepare", &["prepare", "--batch", LATER], "");
+    let card = format!("followups:{id}");
+    world.ok(
+        "agent",
+        &["ticket", "comment", "--batch", LATER, "--item", &card],
+        "The board reread its fields on another metadata write.\n",
+    );
+    world.ok(
+        "agent",
+        &["ticket", "re-estimate", "--batch", LATER, &card],
+        "",
+    );
+    world.answer(
+        LATER,
+        &[answer(&later, "root-cause", "filed", &[slug], "Evidence.")],
+    );
+    let checked = world.ok("check", &["check", "--batch", LATER], "");
+    assert_eq!(checked["sound"], true, "{checked}");
+    world.ok("publish", &["publish", "--batch", LATER], "");
+    world.ok("settle", &["settle", "--batch", LATER], "");
+    let text = world.read_item("followups", &id);
+    assert_eq!(front(&text)["priority"], "high", "{text}");
+    assert_eq!(front(&text)["assignees"], json!(["jane.doe"]), "{text}");
+    let held = record(&text);
+    assert_eq!(held["board_estimate"], "high");
+    assert_eq!(held["board_assignee"], "jane.doe");
+    for (key, value) in board_record.as_object().expect("an object") {
+        if key != "board_estimate" {
+            assert_eq!(&held[key], value, "{key}: {held}");
+        }
+    }
+    assert_eq!(
+        body(&text).split("\n## Comments\n").next().map(str::trim_end),
+        Some(
+            board_body
+                .replace(
+                    "- Priority estimate: medium (severity with the workaround low; fires consistently; 1 occurrence; raised one level because it fires consistently)",
+                    "- Priority estimate: medium (severity with the workaround low; fires consistently; 2 occurrences; raised one level because it fires consistently)",
+                )
+                .trim_end()
+        ),
+        "every visible part as the board holds it, the estimate line rewritten in place"
+    );
 }

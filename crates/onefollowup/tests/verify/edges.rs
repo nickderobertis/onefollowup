@@ -375,10 +375,7 @@ fn validate_names_every_rule_a_ticket_file_breaks() {
             .render(BATCH)
             .replacen("## Root cause", "## Stray notes\n\nX.\n\n## Root cause", 1)
             .replace("## Examples\n\na sound ticket.", "## Examples\n")
-            .replace(
-                "## Owning batches",
-                "## Root cause\n\nAgain.\n\n## Owning batches",
-            ),
+            .replace("## Evidence", "## Root cause\n\nAgain.\n\n## Evidence"),
     );
     assert_finds(
         &problems(&mut world, "sections-out-of-order"),
@@ -396,7 +393,7 @@ fn validate_names_every_rule_a_ticket_file_breaks() {
         &problems(&mut world, "no-impact"),
         &[
             "missing the `## Impact` section its ticket template requires, before `## Examples`",
-            "no `## Impact` section, so there is no severity",
+            "no `## Impact` section, which carries the rubric's labelled parts",
         ],
         "no impact",
     );
@@ -406,13 +403,14 @@ fn validate_names_every_rule_a_ticket_file_breaks() {
         &sound
             .render(BATCH)
             .replace("**What it costs them.**", "**What it costs.**")
-            .replace("- Workaround: ", "- Work-around: "),
+            .replace("\"Workaround\":", "\"Work-around\":"),
     );
     assert_finds(
         &problems(&mut world, "impact-out-of-shape"),
         &[
             "does not carry its `**What it costs them.**` part",
-            "where the rubric states each of",
+            "the record's `impact` carries no `Workaround`",
+            "the record's `impact` carries `Work-around`, which is not one of the rubric's impact lines",
         ],
         "the impact's shape",
     );
@@ -425,7 +423,7 @@ fn validate_names_every_rule_a_ticket_file_breaks() {
         (
             "empty-workaround",
             ("high", "medium", ""),
-            "the workaround line is empty",
+            "gives `Workaround` empty",
         ),
         (
             "raised-by-workaround",

@@ -43,6 +43,14 @@ const SHIPPED: &[(&str, &str)] = &[
         "comment-reply.md.j2",
         include_str!("../../defaults/comment-reply.md.j2"),
     ),
+    (
+        "estimate-line.j2",
+        include_str!("../../defaults/estimate-line.j2"),
+    ),
+    (
+        "ticket-render.md.j2",
+        include_str!("../../defaults/ticket-render.md.j2"),
+    ),
 ];
 
 /// One expandable block in the authored form: `<details>` alone, `<summary>…</summary>`, a blank

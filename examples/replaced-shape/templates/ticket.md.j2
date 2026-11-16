@@ -1,7 +1,9 @@
 {#-
   The shape a verifying agent writes a ticket in. The host, the basis and the witnesses are
   not prose here: they are the record's `host`, `basis` and `witnesses`, which the render
-  template shows. Given every variable README.md's "Templates" documents.
+  template shows; nor are the impact values, which are the record's `impact`, one value per
+  rubric impact line, the priority estimated from them. Given every variable README.md's
+  "Templates" documents.
 -#}
 ## Root cause
 
@@ -15,9 +17,6 @@
 **{{ rubric.impact_parts[3] }}.**
 {% for cost in rubric.workaround_costs -%}
 - {{ cost }}: <the cost>
-{% endfor %}
-{% for line in rubric.impact_lines -%}
-- {{ line }}: <the value>
 {% endfor %}
 ## Examples
 

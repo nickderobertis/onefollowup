@@ -102,6 +102,15 @@ pub fn validate(config: &Config) -> Result<(), Refusal> {
         config.rubric.levels.iter().map(|level| level.name.as_str()),
         "rubric.levels",
     )?;
+    let label = &config.estimate.line_label;
+    if label.trim().is_empty() || label.trim() != label || label.contains([':', '\n', '\r']) {
+        return refuse(
+            "estimate.line_label".to_owned(),
+            format!(
+                "`{label}` is not a label: one line of text with no `:` and no surrounding space, which the estimate line opens with"
+            ),
+        );
+    }
     if !duration(&config.snapshot.launchable_for) {
         return refuse(
             "snapshot.launchable_for".to_owned(),

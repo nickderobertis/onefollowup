@@ -1,0 +1,21 @@
+{#-
+  This host's destination body: its own sections, and a `## Weighing` section showing the
+  record's `impact` as a table, then the estimate line. Given every variable README.md's
+  "Templates" documents.
+-#}
+{%- set lines = rubric.impact_lines -%}
+{%- for section in ticket.sections %}
+## {{ section.name }}
+
+{{ section.content }}
+{% if section.name == "Who pays" %}
+## Weighing
+
+| {{ lines | join(" | ") }} |
+|{% for line in lines %}---|{% endfor %}
+| {% for line in lines %}{{ record.impact[line] }}{% if not loop.last %} | {% endif %}{% endfor %} |
+{% if estimate_line.line %}
+{{ estimate_line.line }}
+{% endif %}
+{%- endif %}
+{%- endfor %}

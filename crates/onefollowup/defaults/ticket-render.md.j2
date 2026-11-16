@@ -1,0 +1,54 @@
+{#-
+  The default `root-cause` kind's destination body: the authored sections in order, with three
+  long parts collapsed so a person deciding on a phone scrolls past none of them.
+
+  - `## Impact` keeps its parts before `**Cost of the workaround.**`; that part becomes a
+    collapsed `Cost of the workaround` block whose first bullet is the record's workaround line,
+    then a collapsed `Priority calculation` block holds the record's two severity lines and the
+    estimate line. The values are the record's `impact`; the agent writes none of them.
+  - `## Suggested fix` opens with its overview, when it has one, then a collapsed
+    `Contributing locations` block, then its unit subsections.
+  - Every other section is the authored one.
+
+  Each block is written as ai-orchestrator's `collapsed()` writes it (8bf72a30,
+  `orchestrator/follow_up_tickets.py`). Every variable README.md's "Templates" documents is
+  given.
+-#}
+{%- set lines = rubric.impact_lines -%}
+{%- set cost_label = rubric.impact_parts | last -%}
+{%- set cost_part = "**" ~ cost_label ~ ".**" -%}
+{%- set locations_part = "**Contributing locations.**" -%}
+{%- set calculation -%}
+- {{ lines | first }}: {{ record.impact[lines | first] }}
+- {{ lines | last }}: {{ record.impact[lines | last] }}
+{%- if estimate_line.line %}
+{{ estimate_line.line }}
+{%- endif %}
+{%- endset -%}
+{%- for section in ticket.sections %}
+## {{ section.name }}
+
+{% if section.name == "Impact" and record.impact and cost_part in section.content -%}
+{%- set held = section.content | split(cost_part, 1) -%}
+{{ held[0] | trim }}
+
+{{ collapsed(cost_label, "- " ~ lines[1] ~ ": " ~ record.impact[lines[1]] ~ "\n" ~ (held[1] | trim)) }}
+
+{{ collapsed("Priority calculation", calculation) }}
+{% elif section.name == "Impact" and record.impact -%}
+{{ section.content }}
+
+{{ collapsed("Priority calculation", calculation) }}
+{% elif section.name == "Suggested fix" and locations_part in section.content and "\n###" in section.content -%}
+{%- set held = section.content | split(locations_part, 1) -%}
+{%- set units = held[1] | split("\n###", 1) -%}
+{%- if held[0] | trim %}{{ held[0] | trim }}
+
+{% endif -%}
+{{ collapsed("Contributing locations", units[0]) }}
+
+###{{ units[1] }}
+{% else -%}
+{{ section.content }}
+{% endif %}
+{%- endfor %}

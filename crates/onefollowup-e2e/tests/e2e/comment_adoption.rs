@@ -99,6 +99,7 @@ fn a_host_answers_comments_by_configuration_alone() {
         "created_by_run": BATCH, "owning_runs": [BATCH], "drafts": [draft],
         "basis": {REPOSITORY: COMMIT}, "verified_at": "2026-11-07T10:00:00Z", "host": HOST,
         "frequency": "intermittent",
+        "impact": {"Severity": "sev2", "Mitigation": "retry the job", "Residual severity": "sev3"},
     });
     let ticket = format!(
         "---\ntitle: \"widgets: the queue worker drops jobs\"\nmetadata:\n  orchestrator.follow-up: {record}\n---\n## Summary\n\nJobs vanish from the queue.\n\n## Impact\n\n**Who.** Customers with queued jobs.\n**Cost.** A lost job each time.\n\n- Severity: sev2\n- Mitigation: retry the job\n- Residual severity: sev3\n\n## Evidence\n\nHost {HOST}: the worker log shows the drop.\n"

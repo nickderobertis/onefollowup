@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use serde_json::{Value, json};
 
 use crate::journey::front;
-use crate::world::{COMMIT, HOST, REPOSITORY, Ticket, World, answer};
+use crate::world::{COMMIT, HOST, REPOSITORY, Shape, Ticket, World, answer};
 
 fn directory(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -19,10 +19,11 @@ fn directory(name: &str) -> PathBuf {
 pub fn world_of(name: &str) -> World {
     let config = std::fs::read_to_string(directory(name).join("onefollowup.yaml"))
         .expect("the example's configuration");
-    let world = World::new(
+    let mut world = World::new(
         &["followups"],
         &format!("{config}host_label: build-host-1\n"),
     );
+    world.shape = Some(Shape::Owned);
     let templates = directory(name).join("templates");
     std::fs::create_dir_all(world.root.join("templates")).expect("a directory");
     for entry in std::fs::read_dir(&templates)
@@ -88,6 +89,7 @@ fn item_parts(world: &World, destination: &str, id: &str) -> (Value, String) {
 fn replaced_shape() {
     const BATCH: &str = "nightly-2026-11-10";
     const LATER: &str = "nightly-2026-11-11";
+    const LATEST: &str = "nightly-2026-11-12";
     let mut world = world_of("replaced-shape");
     let witness = format!("{REPOSITORY} src/layout.rs:42 at {COMMIT}");
 
@@ -197,8 +199,16 @@ fn replaced_shape() {
             && !body.contains("**Contributing locations.**"),
         "the default leaves both open; this host collapses them: {body}"
     );
+    // The priority is estimated from the record's `impact`, which the body never states, and
+    // this host's body shows no estimate line.
+    assert_eq!(
+        held["impact"]["Severity with the workaround"], "medium",
+        "{held}"
+    );
+    assert_eq!(held["priority_estimate"], "medium", "{held}");
+    assert_eq!(item_priority(&world, &id), "medium");
     assert!(
-        body.contains("- Severity with the workaround: medium\n- Priority estimate: medium (severity with the workaround medium; fires intermittently; 1 occurrence; not raised)\n"),
+        !body.contains("Priority estimate") && !body.contains("- Severity"),
         "{body}"
     );
     for section in ["Examples", "Owning batches", "Evidence"] {
@@ -212,7 +222,8 @@ fn replaced_shape() {
     // question, each where the example's evidence template places it.
     let d2 = world.draft(
         LATER,
-        "a layout save reads one window size again",
+        // Named as the ticket is, so prepare finds its item and reads its comments.
+        "a layout save reads one window size",
         &["src/layout.rs"],
         "Seen again on a slower disk.\n",
     );
@@ -280,6 +291,13 @@ fn replaced_shape() {
             "Evidence.",
         )],
     );
+    // Its re-estimate counts two occurrences: still `medium`, from the record's `impact`.
+    let staged = world.ok(
+        "agent",
+        &["ticket", "re-estimate", "--batch", LATER, &card],
+        "",
+    );
+    assert_eq!(staged["write"]["priority_estimate"], "medium", "{staged}");
     let checked = world.ok("check", &["check", "--batch", LATER], "");
     assert_eq!(checked["sound"], true, "{checked}");
     world.ok("publish", &["publish", "--batch", LATER], "");
@@ -294,6 +312,46 @@ fn replaced_shape() {
     );
     assert!(commented.contains(&expected), "{commented}");
 
+    // A third batch's evidence and re-estimate count three occurrences, which raise the estimate
+    // one level: the destination's priority moves with it, and the body still shows no line.
+    let d3 = world.draft(
+        LATEST,
+        "a layout save reads one window size",
+        &["src/layout.rs"],
+        "Seen once more.\n",
+    );
+    world.ok("prepare", &["prepare", "--batch", LATEST], "");
+    world.ok(
+        "agent",
+        &["ticket", "comment", "--batch", LATEST, "--item", &card],
+        "A third save lost the layout.\n",
+    );
+    let staged = world.ok(
+        "agent",
+        &["ticket", "re-estimate", "--batch", LATEST, &card],
+        "",
+    );
+    assert_eq!(staged["write"]["priority_estimate"], "high", "{staged}");
+    world.answer(
+        LATEST,
+        &[answer(
+            &d3,
+            "root-cause",
+            "filed",
+            &[&ticket.slug],
+            "Evidence.",
+        )],
+    );
+    let checked = world.ok("check", &["check", "--batch", LATEST], "");
+    assert_eq!(checked["sound"], true, "{checked}");
+    world.ok("publish", &["publish", "--batch", LATEST], "");
+    world.ok("settle", &["settle", "--batch", LATEST], "");
+    let (held, body) = item_parts(&world, "followups", &id);
+    assert_eq!(held["priority_estimate"], "high", "{held}");
+    assert_eq!(held["board_estimate"], "high", "{held}");
+    assert_eq!(item_priority(&world, &id), "high");
+    assert!(!body.contains("Priority estimate"), "{body}");
+
     // The first batch's next pass counts that comment as an occurrence its marker's batch owns,
     // and a changed root cause re-renders the body and the projections on a bound re-copy.
     world.ok("prepare", &["prepare", "--batch", BATCH], "");
@@ -305,7 +363,7 @@ fn replaced_shape() {
     assert!(
         status["estimate_line"]
             .as_str()
-            .is_some_and(|line| line.contains("; 2 occurrences;")),
+            .is_some_and(|line| line.contains("; 3 occurrences;")),
         "{status}"
     );
     ticket.cause = "Widgets save a layout from two different window sizes.".to_owned();
@@ -338,5 +396,15 @@ fn replaced_shape() {
         )),
         "{body}"
     );
-    assert!(body.contains("; 2 occurrences;"), "{body}");
+    assert!(!body.contains("Priority estimate"), "{body}");
+    assert_eq!(item_priority(&world, &id), "high");
+}
+
+/// The priority `followups`' item `id` holds.
+fn item_priority(world: &World, id: &str) -> String {
+    let text = world.read_item("followups", id);
+    front(&text)["priority"]
+        .as_str()
+        .expect("a priority")
+        .to_owned()
 }

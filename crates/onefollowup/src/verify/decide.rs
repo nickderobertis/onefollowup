@@ -199,7 +199,15 @@ pub fn decide(
     let end = End::Ticket(ticket.slug.clone());
     let (estimate, occurrences) = if graph.edges.is_empty() && graph.held.is_empty() {
         (
-            ticket::estimate(config, &kind, &ticket.body, record.frequency, occurrences)?,
+            ticket::estimate(
+                config,
+                &batch.estimate_line(),
+                &kind,
+                record.impact.as_ref(),
+                &ticket.body,
+                record.frequency,
+                occurrences,
+            )?,
             occurrences,
         )
     } else {
@@ -210,13 +218,14 @@ pub fn decide(
             bound,
             &end,
             &kind,
+            record.impact.as_ref(),
             &ticket.body,
             record.frequency,
             occurrences,
         )?
     };
     let counts = graph.counts(batch, state, bound, &end);
-    let severity = ticket::severity(&ticket.body, &config.rubric);
+    let severity = ticket::severity(record.impact.as_ref(), &ticket.body, &config.rubric);
     let mut paths: Vec<String> = Vec::new();
     for draft in &record.drafts {
         if let Some(input) = state.inputs.iter().find(|input| &input.id == draft) {
@@ -296,6 +305,10 @@ pub fn decide(
         .is_some_and(indexmap::IndexMap::is_empty)
     {
         record.impact = None;
+    }
+    // A bound ticket 0.5.0 wrote carries no `impact`: what the legacy read found is written there.
+    if record.impact.is_none() && read.is_some() {
+        record.impact = ticket::legacy_impact(&ticket.body, &config.rubric);
     }
     // A new ticket is copied with the person its route assigns it; a bound one keeps what its
     // item records, the batch's `update-many` writing any other.
@@ -408,7 +421,9 @@ pub fn re_estimate(
         (
             ticket::estimate(
                 batch.config,
+                &batch.estimate_line(),
                 kind,
+                record.impact.as_ref(),
                 &read.item.content,
                 record.frequency,
                 count,
@@ -423,6 +438,7 @@ pub fn re_estimate(
             bound,
             &End::Item(item.to_owned()),
             kind,
+            record.impact.as_ref(),
             &read.item.content,
             record.frequency,
             count,

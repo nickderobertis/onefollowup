@@ -786,7 +786,7 @@ fn item_route<'a>(
         .kind
         .clone()
         .unwrap_or_else(|| batch.config.default_kind.clone());
-    let severity = ticket::severity(content, &batch.config.rubric);
+    let severity = ticket::severity(record.impact.as_ref(), content, &batch.config.rubric);
     let counts = publishing.graph.counts(
         batch,
         publishing.state,
@@ -1041,7 +1041,11 @@ fn updates(
                 "schema_version": 1,
                 "ticket": ticket::record_value(&record),
                 "kind": kind,
-                "severity": ticket::severity(&read.item.content, &batch.config.rubric),
+                "severity": ticket::severity(
+                    record.impact.as_ref(),
+                    &read.item.content,
+                    &batch.config.rubric,
+                ),
                 "repository": record.repository,
                 "paths": Vec::<String>::new(),
                 "route": route.name,
@@ -1100,10 +1104,21 @@ fn updates(
         if following {
             record.board_estimate = Some(written);
         }
-        let body = estimated.line.as_ref().map_or_else(
-            || read.item.content.clone(),
-            |line| ticket::with_estimate_line(&read.item.content, line, &batch.config.rubric),
-        );
+        // A record 0.5.0 wrote carries no `impact`: what the legacy read found is written there.
+        if record.impact.is_none() {
+            record.impact = ticket::legacy_impact(&read.item.content, &batch.config.rubric);
+        }
+        let body = estimated
+            .line
+            .as_ref()
+            .and_then(|line| {
+                ticket::replace_estimate_line(
+                    &read.item.content,
+                    line,
+                    &batch.config.estimate.line_label,
+                )
+            })
+            .unwrap_or_else(|| read.item.content.clone());
         let update = HeldUpdate {
             item: item.clone(),
             if_version: latest
@@ -1136,6 +1151,7 @@ fn updates(
             priority_estimate: estimated.level,
             root_cause: Some(record.root_cause.clone()),
             severity_with_workaround: ticket::with_workaround(
+                record.impact.as_ref(),
                 &read.item.content,
                 &batch.config.rubric,
             )

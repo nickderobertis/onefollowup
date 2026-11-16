@@ -1,7 +1,9 @@
 {#-
-  The default `root-cause` kind's ticket body shape: every level-2 heading in order, each
-  with the guidance it carries, the optional ones too. A verifying agent replaces every
-  `<...>` placeholder and leaves out each optional section it has nothing for.
+  The default `root-cause` kind's ticket body shape, as the verifying agent writes it: every
+  level-2 heading in order, each with the guidance it carries, the optional ones too. A
+  verifying agent replaces every `<...>` placeholder and leaves out each optional section it
+  has nothing for. Every part is plain: `ticket-render.md.j2` writes the collapsed blocks the
+  destination shows, and the record carries the impact values and every piece of provenance.
 
   Variables:
     rubric    the policy's rubric ({levels, areas, guidance, impact_lines, no_workaround,
@@ -29,9 +31,11 @@ removes it, so no catch-all ticket stands>
 
 ## Impact
 
-<the {{ parts | length }} labelled parts below, each in one or two sentences, in this order;
-then the {{ lines | length }} lines below, each exactly once, in this order, with nothing
-between or after them. Both severities are judged by this rubric:
+<the {{ parts | length }} labelled parts below, each in one or two sentences, in this order. The
+values the priority is estimated from are not written here: the record's `impact` carries
+them, one per rubric impact line — `impact: { {%- for line in lines %}"{{ line }}": <{% if loop.first %}the severity with no workaround applied{% elif loop.last %}the severity that remains once the workaround is taken{% else %}the workaround in place and how it is applied, or {{ rubric.no_workaround }}{% endif %}>{% if not loop.last %}, {% endif %}{% endfor %}}` —
+and the rendered ticket shows them, with the priority estimate, in collapsed blocks you never
+write. Both severities are judged by this rubric:
 
 | | {{ rubric.areas.users }} | {{ rubric.areas.development }} | {{ rubric.areas.resources }} |
 |---|---|---|---|
@@ -44,9 +48,8 @@ The severity with the workaround follows from the {{ costs | length }} workaroun
 state, rated on the rubric's scale, and is never above the severity. A workaround of exactly
 `{{ rubric.no_workaround }}` leaves the two the same, and its `**{{ parts[-1] }}.**` part says
 there is no acceptable workaround and why, in place of the bullets. Any other workaround
-lowers a severity above `{{ (rubric.levels | last).name }}` at least one level. The last line,
-the priority estimate and why, is written by `onefollowup ticket board-status` and never by
-you>
+lowers a severity above `{{ (rubric.levels | last).name }}` at least one level. The priority
+estimate and why is written by `onefollowup publish` and never by you>
 
 **{{ parts[0] }}.** <each affected group by name: users of X, developers of Y, or spend only>
 **{{ parts[1] }}.** <the concrete cost per occurrence, and how often it happens>
@@ -59,20 +62,18 @@ $/month and quota share>
 - {{ costs[2] }}: <the failure names it (free), or how long finding it takes and whether a
   person must step in>
 
-- {{ lines[0] }}: <the severity with no workaround applied>
-- {{ lines[1] }}: <the workaround in place and how it is applied, or {{ rubric.no_workaround }}>
-- {{ lines[2] }}: <the severity that remains once the workaround is taken>
-- Priority estimate: <written by `onefollowup ticket board-status`: the estimate and why>
-
 ## Examples
 
 <one or more examples of it>
 
 ## Suggested fix
 
-<one paragraph: what changes overall, and why that removes the root cause. The one fix this
-ticket recommends, concrete enough that whoever picks it up has nothing left to choose; never
-a list of options or alternatives to choose between>
+<the one fix this ticket recommends, concrete enough that whoever picks it up has nothing left
+to choose; never a list of options or alternatives to choose between. It takes one of two
+forms. With one unit: nothing but the `**Contributing locations.**` part, then the unit, whose
+opening sentence or two says what changes and why that removes the root cause. With two or
+more units: first one overview paragraph saying what changes overall, how the units fit
+together and why that removes the root cause, then the part, then the units>
 
 **Contributing locations.**
 - <repository name> `<path>`: <what this location does that breaks the guarantee>
@@ -83,20 +84,17 @@ a list of options or alternatives to choose between>
 
 <one subsection per unit that changes: a unit is a repository, or a part of a project, and
 the parenthesis appears only when the unit is part of a repository. Say what changes in this
-unit in a sentence or two, then show only the contracts that change — public interfaces, CLI
-flags, schemas, output shapes and documented behaviour — each as a diff or the full shape. A
-fix that changes behaviour with no interface change says so in one sentence. Leave out line
-numbers, internal or private functions, refactoring steps, test names and implementation
-walkthroughs: those are for whoever picks the ticket up to work out>
+unit in a sentence or two — with one unit, why that removes the root cause too — then show
+only the contracts that change — public interfaces, CLI flags, schemas, output shapes and
+documented behaviour — each as a diff or the full shape. A fix that changes behaviour with no
+interface change says so in one sentence. Leave out line numbers, internal or private
+functions, refactoring steps, test names and implementation walkthroughs: those are for
+whoever picks the ticket up to work out>
 
 ## Rejected fixes
 
 <optional: leave this section out when no other fix was considered. Otherwise each fix that
 was considered and not chosen, and why it was rejected>
-
-## Owning batches
-
-<every batch whose evidence this ticket carries>
 
 {% if fields -%}
 ## Fields
@@ -128,6 +126,6 @@ irrelevant candidate elsewhere, even in Evidence>
 
 ## Evidence
 
-<the host the verification ran on, exactly as `hostname` printed it; then per draft or input:
-its id, where it came from, the verified claim with `path:line` at the basis commit, and the
-command that shows the transcript or source it was drafted from, where it names one>
+<prose about what happened: what was observed, where and when, and what it shows. Nothing the
+record holds goes here — no `Host:` or `Basis:` line, no draft id, no commit and no
+transcript command: the record's `host`, `basis`, `drafts` and `witnesses` carry them>

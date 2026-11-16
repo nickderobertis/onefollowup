@@ -260,3 +260,67 @@ cases:
       kinds: [{name: root-cause, description: R, evidence_section: ''}]
     key: 'kinds[0].evidence_section'
     message: 'is empty'
+  - document: |
+      kinds: [{name: root-cause, description: R, checks: [headings, spelling]}]
+    key: 'kinds[0].checks[1]'
+    message: '`spelling` is not a built-in check; the built-ins are `headings`, `title`, `impact`, `fix-units`, `evidence-prose`, `witnesses`'
+  - document: |
+      kinds: [{name: root-cause, description: R, checks: [{check: spelling}]}]
+    key: 'kinds[0].checks[0]'
+    message: '`spelling` is not a built-in check'
+  - document: |
+      kinds: [{name: root-cause, description: R, checks: [{check: title, limt: 80}]}]
+    key: 'kinds[0].checks[0]'
+    message: 'the check `title` takes `prefix`, `limit`, not `limt`'
+  - document: |
+      kinds: [{name: root-cause, description: R, checks: [{check: headings, section: Impact}]}]
+    key: 'kinds[0].checks[0]'
+    message: 'the check `headings` takes no parameter, not `section`'
+  - document: |
+      kinds: [{name: root-cause, description: R, checks: [{check: title, limit: many}]}]
+    key: 'kinds[0].checks[0]'
+    message: 'the check `title`''s `limit` is a positive whole number of characters'
+  - document: |
+      kinds: [{name: root-cause, description: R, checks: [{check: title, prefix: owner}]}]
+    key: 'kinds[0].checks[0]'
+    message: 'the check `title`''s `prefix` is `repository-name` or null'
+  - document: |
+      kinds: [{name: root-cause, description: R, checks: [{check: impact, section: ''}]}]
+    key: 'kinds[0].checks[0]'
+    message: 'the check `impact`''s `section` is a non-empty section or part name'
+  - document: |
+      kinds: [{name: root-cause, description: R, checks: [{check: witnesses, required: maybe}]}]
+    key: 'kinds[0].checks[0]'
+    message: 'the check `witnesses`'' `required` is true or false'
+  - document: |
+      kinds: [{name: root-cause, description: R, checks: [{command: []}]}]
+    key: 'kinds[0].checks[0]'
+    message: '`command` is a non-empty list of strings'
+  - document: |
+      kinds: [{name: root-cause, description: R, checks: [{command: [x], check: title}]}]
+    key: 'kinds[0].checks[0]'
+    message: 'a command check carries `command` alone, not `check`'
+  - document: |
+      kinds: [{name: root-cause, description: R, checks: [{section: Impact}]}]
+    key: 'kinds[0].checks[0]'
+    message: 'it carries neither `check` nor `command`'
+  - document: |
+      kinds: [{name: root-cause, description: R, checks: [{check: [title]}]}]
+    key: 'kinds[0].checks[0]'
+    message: '`check` names a built-in check'
+  - document: |
+      kinds: [{name: root-cause, description: R, checks: [7]}]
+    key: 'kinds[0].checks[0]'
+    message: 'a check is {check: <built-in>, ...parameters}'
+  - document: |
+      estimate: {line_template: templates/no-such-line.j2}
+    key: 'estimate.line_template'
+    message: 'which does not exist'
+  - document: |
+      estimate: {line_template: 'builtin:no-such-line.j2'}
+    key: 'estimate.line_template'
+    message: 'names no shipped template'
+  - document: |
+      estimate: {line_label: 'Priority: estimate'}
+    key: 'estimate.line_label'
+    message: 'is not a label'

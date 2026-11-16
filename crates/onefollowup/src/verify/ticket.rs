@@ -883,6 +883,30 @@ fn fix_problems(body: &str, name: &str, locations: &str) -> Vec<String> {
         )];
     }
     let mut problems = Vec::new();
+    // The part is its bullets alone, a bullet's wrapped lines indented under it: any other line
+    // is prose between the locations and the first unit.
+    let mut bulleted = false;
+    let stray = plain[placed + part.len()..first].lines().find(|line| {
+        if line.trim().is_empty() {
+            return false;
+        }
+        if LOCATION.is_match(line) {
+            bulleted = true;
+            return false;
+        }
+        !(bulleted && line.starts_with([' ', '\t']))
+    });
+    if let Some(line) = stray {
+        let after = if units.len() == 1 {
+            "with one unit nothing but that part comes before the unit; move what it says that the unit does not, such as why the change removes the root cause, into the unit's opening sentence or two".to_owned()
+        } else {
+            "the overview saying how the units fit together comes before the part".to_owned()
+        };
+        problems.push(format!(
+            "{where_}'s {part} part carries `{}`, which is no location bullet: the part is one bullet per location, {LOCATION_SHAPE}, and {after}",
+            line.trim()
+        ));
+    }
     let overview = plain[..placed].trim();
     if units.len() == 1 && !overview.is_empty() {
         problems.push(format!(

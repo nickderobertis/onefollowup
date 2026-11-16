@@ -419,7 +419,13 @@ fn refused_everywhere(
         checked["problems"].to_string().contains(wanted),
         "check names {wanted:?}: {checked}"
     );
+    // Recovery: the sound form restored, check no longer names it.
     write_ticket(world, batch, ticket, sound);
+    let checked = world.ok("check", &["check", "--batch", batch], "");
+    assert!(
+        !checked["problems"].to_string().contains(wanted),
+        "the sound form clears {wanted:?}: {checked}"
+    );
 }
 
 #[test]
@@ -455,6 +461,61 @@ fn the_fix_units_check_holds_each_fix_form_both_ways_and_a_kind_may_turn_it_off(
             "move what it says that the unit does not, such as why the change removes the root cause, into the unit's opening sentence or two"
         )),
         "{found:#?}"
+    );
+    // An overview paragraph after the location bullets, before the only unit, is no part of the
+    // locations: refused, naming the one-unit form.
+    let one_with_trailing_overview = one.replacen(
+        "stops one page early when the count changes.\n\n### ",
+        &format!("stops one page early when the count changes.\n\n{overview}### "),
+        1,
+    );
+    refused_everywhere(
+        &mut world,
+        BATCH,
+        &ticket,
+        &one,
+        &one_with_trailing_overview,
+        "part carries `Page the listing by cursor in the service and follow the cursor in the export, so no page is skipped when the count changes.`, which is no location bullet",
+    );
+    write_ticket(&world, BATCH, &ticket, &one_with_trailing_overview);
+    let found = problems(&mut world, BATCH, &ticket.slug);
+    assert!(
+        found.iter().any(|one| one.contains(
+            "with one unit nothing but that part comes before the unit; move what it says that the unit does not"
+        )),
+        "{found:#?}"
+    );
+    // A location bullet wrapped onto an indented line is still one bullet.
+    write_ticket(
+        &world,
+        BATCH,
+        &ticket,
+        &one.replacen(
+            "stops one page early when the count changes.",
+            "stops one page early\n  when the count changes.",
+            1,
+        ),
+    );
+    assert_eq!(
+        problems(&mut world, BATCH, &ticket.slug),
+        Vec::<String>::new()
+    );
+    // With two units, prose between the bullets and the first unit is refused too, naming where
+    // the overview goes.
+    write_ticket(
+        &world,
+        BATCH,
+        &ticket,
+        &two.replacen(
+            "stops reading when a page comes back short.\n\n",
+            "stops reading when a page comes back short.\n\nBoth change together.\n\n",
+            1,
+        ),
+    );
+    assert!(
+        problems(&mut world, BATCH, &ticket.slug).iter().any(|one| one.contains(
+            "carries `Both change together.`, which is no location bullet: the part is one bullet per location, `- <repository> `<path>`: <what this location does that breaks the guarantee>`, and the overview saying how the units fit together comes before the part"
+        )),
     );
     // Two units with no overview are refused, naming the several-unit form.
     let two_without_overview = two.replacen(overview, "", 1);

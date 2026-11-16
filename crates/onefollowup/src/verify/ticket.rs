@@ -1180,8 +1180,8 @@ pub fn is_estimate_line(line: &str, label: &str) -> bool {
 }
 
 /// `body` with its estimate line, found by `label` anywhere outside fenced code (a collapsed
-/// block's content included, Linear's `* ` bullet accepted), replaced in place by `line`;
-/// `None` when it carries none.
+/// block's content included, Linear's `* ` bullet accepted), replaced in place by `line`, which
+/// keeps the bullet the body wrote; `None` when it carries none.
 #[must_use]
 pub fn replace_estimate_line(body: &str, line: &str, label: &str) -> Option<String> {
     let plain = unfenced(body);
@@ -1190,6 +1190,10 @@ pub fn replace_estimate_line(body: &str, line: &str, label: &str) -> Option<Stri
         let bare = held.trim_end_matches(['\n', '\r']);
         if is_estimate_line(bare, label) {
             let ending = &original[bare.len()..];
+            let line = match (bare.strip_prefix("* "), line.strip_prefix("- ")) {
+                (Some(_), Some(rest)) => format!("* {rest}"),
+                _ => line.to_owned(),
+            };
             return Some(format!(
                 "{}{line}{ending}{}",
                 &body[..offset],

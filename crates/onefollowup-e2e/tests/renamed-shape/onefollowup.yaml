@@ -1,0 +1,24 @@
+# A host that renames every section of the default kind's ticket — no `## Impact` — and shows
+# the severity values as a table under a section of its own name. Its agents record those
+# values only in the record's `impact`; the priority is estimated from them whatever the body
+# shows, its estimate line found by this host's label and replaced in place.
+destination: followups
+drafts_source: drafts
+estimate:
+  raise_at: 2
+  line_label: Estimated priority
+  line_template: templates/estimate-line.j2
+kinds:
+  - name: root-cause
+    description: One root cause, in this host's words.
+    ticket_template: templates/ticket.md.j2
+    render_template: templates/render.md.j2
+    # The default's checks over this host's section names, the `impact` check left out: this
+    # host's body carries no rubric parts.
+    checks:
+      - headings
+      - title
+      - {check: fix-units, section: Remedy, locations: Where it lives}
+      - {check: evidence-prose, section: What happened}
+      - witnesses
+    priority: {model: estimate}

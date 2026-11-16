@@ -398,3 +398,36 @@ hooks: {{batch_preparing: [inputs, --json], batch_settled: [notify]}}
         ("default_kind", Origin::Default)
     );
 }
+
+#[test]
+fn a_library_caller_typing_its_own_configuration_takes_the_estimate_lines_defaults_and_checks_round_trip()
+ {
+    let estimate: config::Estimate =
+        serde_json::from_value(serde_json::json!({"raise_at": 3, "raise_cap": "high"}))
+            .expect("an estimate");
+    assert_eq!(estimate.line_label, "Priority estimate");
+    assert_eq!(estimate.line_template, "builtin:estimate-line.j2");
+    let checks = serde_json::json!([
+        "headings",
+        {"check": "title", "prefix": null, "limit": 80},
+        {"check": "fix-units", "section": "Remedy", "locations": "Where it lives"},
+        {"check": "witnesses", "required": false},
+        {"command": ["shape-check", "--strict"]},
+    ]);
+    let typed: Vec<config::Check> = serde_json::from_value(checks).expect("checks");
+    assert_eq!(
+        typed[1],
+        config::Check::Title {
+            prefix: config::TitlePrefix::None,
+            limit: 80
+        }
+    );
+    let written = serde_json::to_value(&typed).expect("serialized");
+    assert_eq!(written[0], serde_json::json!({"check": "headings"}));
+    assert_eq!(
+        written[1],
+        serde_json::json!({"check": "title", "prefix": null, "limit": 80})
+    );
+    let again: Vec<config::Check> = serde_json::from_value(written).expect("read back");
+    assert_eq!(again, typed, "what is written reads back as it was");
+}

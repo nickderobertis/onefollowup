@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0](https://github.com/nickderobertis/onefollowup/compare/v0.5.0...v0.6.0) - 2026-11-16
+
+### Added
+
+- [**breaking**] render follow-up tickets and comments through configurable templates that all see the same ticket data ([#23](https://github.com/nickderobertis/onefollowup/pull/23))
+
 ## [0.5.0](https://github.com/nickderobertis/onefollowup/compare/v0.4.0...v0.5.0) - 2026-11-14
 
 ### Added

@@ -97,7 +97,9 @@ fn ticket_records_round_trip() {
     );
     let full: TicketRecord = round_trips("ticket-record/record-full.json");
     assert_eq!(
-        full.budget.as_ref().map(|budget| budget.threshold),
+        full.budget
+            .as_ref()
+            .and_then(|budget| budget.threshold.as_f64()),
         Some(300.0)
     );
     round_trips::<TicketRecord>("ticket-record/record-budget-fractional-threshold.json");
@@ -126,10 +128,17 @@ fn ticket_records_round_trip() {
     assert_eq!(plain.render(), fixture("ticket-record/record-full.json"));
 
     // The record at ai-orchestrator 8bf72a30's `tests/fixtures/cycle-time/ticket-v15.json`, its
-    // `schema` set to 14 and spelled as a record is stored (one line; a threshold is always a
-    // float, so its `123` is `123.0`): its `draft_sources`, `transcripts` and `witnesses` read in
-    // the schema-15 order and re-render byte for byte.
+    // `schema` set to 14 and spelled as a record is stored (one line, as `json.dumps` writes it):
+    // its `draft_sources`, `transcripts` and `witnesses` read in the schema-15 order, and it
+    // re-renders byte for byte, its integer threshold `123` still `123`.
     let board: TicketRecord = round_trips("ticket-record/record-board-fields.json");
+    assert_eq!(
+        board
+            .budget
+            .as_ref()
+            .map(|budget| budget.threshold.to_string()),
+        Some("123".to_owned())
+    );
     let draft = "drafts:listing-run/drafts/20260101T000000Z-cursor";
     assert_eq!(
         board

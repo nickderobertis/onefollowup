@@ -94,8 +94,9 @@ pub struct OverrunBudget {
     pub file: String,
     /// The budget's id.
     pub id: String,
-    /// The threshold, always written as a float (`300.0`).
-    pub threshold: f64,
+    /// The threshold, spelled as it was written: an integer stays an integer (`123`) and a
+    /// float a float (`300.0`, `123.5`), so a rewrite changes no record's bytes.
+    pub threshold: serde_json::Number,
     /// Whether the threshold is a `max` or a `min`.
     pub direction: Direction,
 }

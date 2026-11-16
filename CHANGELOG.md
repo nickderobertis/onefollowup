@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0](https://github.com/nickderobertis/onefollowup/compare/v0.7.0...v0.8.0) - 2026-11-16
+
+### Added
+
+- snapshot a batch's inputs and say when it holds nothing to verify ([#27](https://github.com/nickderobertis/onefollowup/pull/27))
+
 ## [0.7.0](https://github.com/nickderobertis/onefollowup/compare/v0.6.0...v0.7.0) - 2026-11-16
 
 ### Added

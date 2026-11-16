@@ -34,7 +34,7 @@ library is the `onefollowup` crate.
 | `ticket board-status --batch <ID> <ITEM>` | Read one destination item's state and comments from the batch's prepared reads. |
 | `ticket search --batch <ID> --ticket <TICKET> <QUERY>` | Search the destination for a ticket's duplicates. |
 | `ticket copy --batch <ID> <TICKET>` | **Stage** a ticket's copy to its destination. |
-| `ticket comment --batch <ID> (--item <ITEM> \| --field <NAME=VALUE>...) [--root-cause <RC>]` | **Stage** the batch's evidence comment (read from stdin) on an item; given the declared fields observed, on the most specific existing ticket they name. The root cause defaults to the item's own. |
+| `ticket comment --batch <ID> (--item <ITEM> \| --field <NAME=VALUE>...) [--root-cause <RC>] [--sources-file <F>] [--bears-on-file <F>] [--question-file <F>]` | **Stage** the batch's evidence comment (read from stdin) on an item; given the declared fields observed, on the most specific existing ticket they name. The root cause defaults to the item's own. `--sources-file` is one JSON object of exactly `host`, `basis`, `drafts` and `witnesses`, validated as a ticket record's are (each draft one of the batch's inputs, each witness at the commit `basis` records); each draft's source and transcript are read from the draft. `--bears-on-file` and `--question-file` hold the paragraph saying what the evidence bears on and the question it asks. The comment is `comment_templates.evidence` rendered, then its marker (Templates, below). |
 | `ticket re-estimate --batch <ID> <ITEM>` | **Stage** an item's re-estimate. |
 | `ticket relate --batch <ID> --relation <NAME> --from <TICKET> --to <TICKET>` | **Stage** an edge of a relation the agent decides; a ticket is its root cause, its file, or an item the batch read. |
 | `check --batch <ID>` | Hold the batch's dispositions, tickets, edges and staged writes to the rules before anything is written; exit 0 when sound. |
@@ -413,6 +413,7 @@ key, the layer its value came from.
 | `estimate` | `raise_at: 3`, `raise_cap: high` | An estimate is raised one level, capped at `raise_cap`, when a root cause fires consistently or has `raise_at` or more occurrences. |
 | `task_template` | `builtin:task-template.md.j2` | The verifying agent's task template; a path, or `builtin:` for a shipped file. |
 | `persona` | `builtin:persona.yaml` | The verifying agent's persona. |
+| `comment_templates` | `evidence: builtin:comment-evidence.md.j2`, `reply: builtin:comment-reply.md.j2` | The visible part of an evidence comment and of a reply, each a path or `builtin:`; onefollowup appends the marker line after it (Templates, below). The defaults write 0.5.0's comments byte for byte. |
 | `fields` | `{}` | Declared fields (below). |
 | `kinds` | one kind, `root-cause` | Ticket kinds (below). |
 | `default_kind` | `root-cause` | The kind a record without one is read as. |
@@ -435,8 +436,9 @@ engine and no lifecycle policy.
 the record's own keys (`error_signature`, `client`, …). The verifying agent is shown each
 description; any kind may record any declared field; a ticket recording an undeclared
 field is refused by `ticket validate` and `check`. Values live in the ticket record (the
-store's metadata slot) and in the ticket's visible section; nothing projects them to labels
-or board fields. A field declares no format.
+store's metadata slot) and in the ticket's visible section; a kind's `projections` can render
+any of them into the record's `projected`, which a destination's `metadata_fields` can show on
+a board field. A field declares no format.
 
 **`kinds`** — a list, and `default_kind` names one. The verifying agent picks one kind per
 ticket.
@@ -445,12 +447,29 @@ ticket.
 - name: client-error
   description: One client's error.          # shown to the verifying agent
   ticket_template: templates/client.md.j2   # optional; default the shipped template
+  render_template: templates/client-body.md.j2  # optional; default the authored body
+  projections:                              # optional; default none
+    client: "{{ fields.client }}"
+  evidence_section: Evidence                # the default
   duplicates: {same: [error_code, client]}  # or `agent` (the default)
   priority: {model: estimate}               # or {fixed: high}
   initial_status: proposal                  # the status role a new ticket is copied in
   destination: errors                       # optional; default the top-level destination
   dispositions: [filed, wont-fix]           # optional; default `default_dispositions`
 ```
+
+`ticket_template` is the shape the verifying agent writes and `ticket validate` holds a ticket
+to. `render_template` (a path, or `builtin:`) is what the destination body is rendered from at
+`ticket copy` and `publish`, given every datum (Templates, below); omitted, the body is the
+authored one with its estimate line, as 0.5.0 wrote it. `projections` maps a name to a template
+string, each rendered with the same data and written as `record.projected.<name>`, so any datum
+— a section's text, or one part of it — reaches a board field through the destination's own
+`metadata_fields` at path `[projected, <name>]`, with no field written by the agent; omitted, no
+`projected` is written, and an authored record supplying it is refused. `evidence_section`
+(default `Evidence`) is the section a `same` duplicate's merge stages as its evidence comment's
+evidence, with the ticket's record as its sources. A `render_template` or comment template that
+names no file and no shipped template, a projection that is not a string or whose name is not
+one word, and an empty `evidence_section` are refused by key when the configuration loads.
 
 `duplicates` says how a ticket of the kind is found to be one already filed. `agent` is the
 agent searching the destination and judging whether an open ticket states the same thing;
@@ -671,12 +690,64 @@ another hands it, its store at `/srv/follow-ups`:
 `crates/onefollowup-e2e/tests/e2e/hook_context.rs` runs this configuration and holds the file its
 settle writes to this example.
 
+### Templates
+
+Every ticket-facing template — a kind's `ticket_template` and `render_template`, both
+`comment_templates`, each of a kind's `projections`, and the task template's ticket example —
+is a Jinja template (minijinja) given the same data:
+
+| Variable | What it is |
+|---|---|
+| `rubric` | The configured rubric (`levels`, `areas`, `guidance`, `impact_lines`, `no_workaround`, `impact_parts`, `workaround_costs`). |
+| `estimate` | The configured `estimate` (`raise_at`, `raise_cap`). |
+| `fields` | For a ticket, each declared field it records mapped to its value; otherwise each declared field mapped to `{description}`. |
+| `kind` | The ticket's kind as configured (`name`, `description`, …); for a comment, the kind of the ticket it is on. |
+| `batch` | The batch rendering. |
+| `destination` | The source the ticket is copied to, or the comment's item is on. |
+| `namespace` | The configured `namespace`. |
+| `ticket` | For a ticket: `title`, `slug`, `body` (authored, verbatim), `sections`, and `section(name)` (the section named, or none). Each section is `{name, content, lead, parts, lines, subsections}`: `content` its text trimmed, `lead` its text before the first `###` subsection, `parts` every `**Label.**` part of the lead as `{label, text}` (the text running to the next part, the first blank line once it has begun, or the end of the lead), `lines` every `- Label: value` line as `{label, value, text}` (`text` the whole line), and `subsections` every `###` subsection as `{heading, content}`. Fenced code is never read as any of these. |
+| `record` | For a ticket: every key of its record as it will be stored — `projected` included once the projections are rendered, for the render template. |
+| `estimate_line` | For a ticket: `{level, line, mitigated, frequency, occurrences, raise}` — the estimate's level, the `- Priority estimate:` line (`null` for a fixed-priority kind), the severity with the workaround, `consistent`/`intermittent` or `null`, the occurrences counted, and how the estimate was raised or why not. The authored `body` carries no estimate line; a render template places `estimate_line.line` itself. |
+| `comment` | For a comment: `batch`, `root_cause`, `evidence`, `bears_on`, `question` (each `null` when not given) and `sources` (`host`, `basis`, `drafts`, `witnesses`, `draft_sources`, `transcripts`, or `null`); for a reply, `answers`, `verdict`, `url`, `author` and `response` instead of the evidence's parts. The reply shape a feedback file quotes is rendered once per verdict, its `response` the placeholder `<your reply, in your words>`. |
+
+Every template may call **`collapsed(summary, content)`**, which writes one expandable block in
+the authored form onetaskgraph's README states ("Expandable blocks"): `<details>` alone,
+`<summary>…</summary>`, a blank line, the content, a blank line, `</details>`. The store writes
+that form as each destination's own (Linear's `+++`). So a host's `render_template`, comment
+templates and `projections` put any datum in the body, in a collapsed block, on a board field,
+or nowhere, while the record keeps every value.
+
+Only the renderer writes a block and only onefollowup writes a marker: under every
+configuration, a ticket's authored title or body, and every part handed to `ticket comment`
+(the evidence, the bears-on paragraph and the question), carrying a `<details>` or `</details>`
+line outside fenced code, or a comment-marker line, is refused before anything is staged. A
+comment's text is its template rendered, a blank line, then the marker as its last line; a
+template never writes the marker. A comment's owner and kind are read from that marker alone,
+so 0.5.0's comments (an opening line, the text, the marker), those opening with a collapsed
+block, and those any configured template rendered are each counted as the occurrence of, and
+owned by, the batch and root cause their marker names.
+
+[`examples/replaced-shape`](examples/replaced-shape) replaces all four templates, and
+`crates/onefollowup-e2e/tests/e2e/template_data.rs` prints every variable above through them.
+
 ## Examples
 
-[`examples/`](examples) holds four worked configurations, each directory an
+[`examples/`](examples) holds five worked configurations, each directory an
 `onefollowup.yaml`, the `onetaskgraph.yaml` it relies on, and the templates and scripts it
 names. `crates/onefollowup-e2e/tests/e2e/examples.rs` runs one batch of each through the built
 binary, its sources replaced by local-md sources of the same names, to the outcome stated here.
+
+**[`replaced-shape`](examples/replaced-shape)** — the default `root-cause` kind with its ticket
+shape, destination body and both comments the host's own, in YAML and templates alone. Its
+`render_template` shows the record's host, basis and witnesses in a `## Provenance` section and
+collapses the workaround's cost and the contributing locations, which the default leaves open;
+its evidence template puts the evidence first and lists its sources (host, basis, each draft with
+its source and transcript, each witness) in the open; its reply puts the response first; its
+`projections` render the root cause's text and the `Who is affected` part of `## Impact` into
+`projected`, which its `onetaskgraph.yaml`'s `metadata_fields` show on board fields. Batch: one
+draft filed as a ticket carrying a witness; a later batch's evidence comment on it, with its
+sources, bears-on paragraph and question; the first batch's next pass counting that comment as
+an occurrence and re-copying the changed ticket, its projections updated. Where: `followups`.
 
 **[`single-root-cause`](examples/single-root-cause)** — one root-cause kind and no relations:
 the configuration an orchestrator repository uses to keep today's behaviour, every input given
@@ -800,9 +871,9 @@ the batch id stands where they say `run`.
 
 | Format | Schema | Where |
 |---|---|---|
-| Ticket record | 14 | The ticket's `<namespace>.follow-up` metadata. Optional keys onefollowup adds within 14: `kind`, `fields`, `edges` (`[{"relation", "to"}]`) and `board_assignee`, each omitted when empty. |
+| Ticket record | 14 | The ticket's `<namespace>.follow-up` metadata. Optional keys onefollowup adds within 14, each omitted when empty: `draft_sources` (qualified draft id → `author <kind>`, then `; node <node>` and `; member <member>` where the draft names them; written by onefollowup from each draft, after `drafts`), `transcripts` (qualified draft id → the command that reads its turns; written by onefollowup, after `draft_sources`), `witnesses` (`["<origin> <path>:<line> at <commit>"]`, the origin a key of `basis` and the commit the one `basis` holds for it; written by the verifying agent, after `basis`), `kind`, `fields`, `edges` (`[{"relation", "to"}]`), `board_assignee`, `impact` (rubric impact-line label → value; written by the verifying agent and kept whole) and `projected` (projection name → rendered value; written by onefollowup alone at `ticket copy` and `publish`, and refused in an authored record). The names, shapes and order of `draft_sources`, `transcripts` and `witnesses` are those of the schema-15 records an orchestrator's `followups` board held, relabelled 14, whose `metadata_fields` read them: never rename one. |
 | Draft record | 1 | A draft's `<namespace>.follow-up-draft` metadata. |
-| Comment markers | — | `<!-- <namespace>:follow-up-comment run="…" root_cause="…" -->` closing an evidence comment or (with `kind="reply" answers="…" verdict="…"`) a reply; the quoted-comment and feedback anchors. |
+| Comment markers | — | `<!-- <namespace>:follow-up-comment run="…" root_cause="…" -->`, the last line of an evidence comment or (with `kind="reply" answers="…" verdict="…"`) a reply, which alone names the comment's owner and kind; the quoted-comment and feedback anchors. |
 | Receipt journal | 3 | `receipts/<batch>.jsonl`, one line per write outcome. Two line kinds onefollowup adds within 3, written only under relations or an assignee: `relate` (an edge's `relation`, `store`, `from`, `to`, `to_card`, `derived`, `action` of `written`, `exists` or `failed`, and its `error`) and `assign` (the `assignee`, the `when` it was held to, `action` of `written`, `held` or `failed`, and its `error`, `assignee-held` when a person's assignment stood). |
 | Dispositions | 1 | `dispositions/<batch>.json`; each entry may carry `kind`, which `check` requires. |
 | Carried dispositions | 1 | `dispositions/<batch>.carried.json`. |
@@ -813,7 +884,7 @@ the batch id stands where they say `run`.
 | Pending writes | 1 | `feedback/pending.json`. |
 | Existing tickets | 1 | `existing-tickets.json`. |
 | Outbox | 1 | `outbox/<batch>.json`: the staged writes `publish` sends. |
-| Batch state | 1 | `state/<batch>.json`: onefollowup's own working file — the input set, prepare's reads and each publish. An optional member onefollowup adds within 1: `relations` (prepare's `task relations` read of the tickets it found), omitted when empty. |
+| Batch state | 1 | `state/<batch>.json`: onefollowup's own working file — the input set, prepare's reads and each publish. An optional member onefollowup adds within 1: `relations` (prepare's `task relations` read of the tickets it found), omitted when empty; and on each input, `author` (a draft's source, as `draft_sources` holds it) and `transcript`, each omitted when absent. |
 
 ## Development
 

@@ -26,4 +26,5 @@ mod rollups;
 mod safeguards;
 mod snapshots;
 mod telemetry;
+mod template_data;
 mod world;

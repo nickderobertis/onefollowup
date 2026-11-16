@@ -197,7 +197,8 @@ fn render(
             "ticket": batch.work.ticket(&batch.batch, &written.ticket),
             "item_version": written.version,
             "reply_opening": reply_opening(&batch.batch, &url, listed.author.as_deref()),
-            "reply": reply_shape(pass, batch, &one.issue, written, &url, listed.author.as_deref(), &one.comment)?,
+            "reply_confirms": reply_shape(pass, batch, &one.issue, written, &url, listed.author.as_deref(), &one.comment, Verdict::Confirms)?,
+            "reply_does_not_confirm": reply_shape(pass, batch, &one.issue, written, &url, listed.author.as_deref(), &one.comment, Verdict::DoesNotConfirm)?,
             "marker_confirms": marker(Verdict::Confirms),
             "marker_does_not_confirm": marker(Verdict::DoesNotConfirm),
         }));
@@ -279,8 +280,13 @@ fn render(
     ))
 }
 
-/// The visible part of the reply this batch posts to one quoted comment, its response left as
-/// the placeholder the answering agent replaces: `comment_templates.reply` rendered.
+/// The visible part of the reply this batch posts to one quoted comment with `verdict`, its
+/// response left as the placeholder the answering agent replaces: `comment_templates.reply`
+/// rendered.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "each part of the reply a template is given"
+)]
 fn reply_shape(
     pass: &Pass<'_>,
     batch: &crate::verify::context::Batch<'_>,
@@ -289,6 +295,7 @@ fn reply_shape(
     url: &str,
     author: Option<&str>,
     answers: &str,
+    verdict: Verdict,
 ) -> Result<String, Error> {
     let kind_name = written
         .record
@@ -314,7 +321,7 @@ fn reply_shape(
             "batch": batch.batch,
             "root_cause": written.ticket,
             "answers": answers,
-            "verdict": null,
+            "verdict": verdict.as_str(),
             "url": url,
             "author": author,
             "response": "<your reply, in your words>",

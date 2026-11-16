@@ -27,4 +27,5 @@ mod safeguards;
 mod snapshots;
 mod telemetry;
 mod template_data;
+mod template_refusals;
 mod world;

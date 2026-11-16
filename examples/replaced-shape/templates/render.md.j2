@@ -1,0 +1,50 @@
+{#-
+  The destination body: the authored sections, the record's host, basis and witnesses shown
+  in a `## Provenance` section, and the workaround's cost and the contributing locations each
+  collapsed. Given every variable README.md's "Templates" documents.
+-#}
+{%- set impact = ticket.section("Impact") -%}
+{%- set fix = ticket.section("Suggested fix") -%}
+## Root cause
+
+{{ ticket.section("Root cause").content }}
+
+## Provenance
+
+- Host: {{ record.host }}
+{% for origin, commit in record.basis | items -%}
+- Basis: {{ origin }} at {{ commit }}
+{% endfor -%}
+{% for witness in record.witnesses or [] -%}
+- Witness: {{ witness }}
+{% endfor %}
+## Impact
+
+{% for part in impact.parts if part.label != rubric.impact_parts[-1] -%}
+**{{ part.label }}.** {{ part.text }}
+{% endfor %}
+{% for part in impact.parts if part.label == rubric.impact_parts[-1] -%}
+{{ collapsed(part.label, part.text) }}
+{% endfor %}
+{% for line in impact.lines if line.label in rubric.impact_lines -%}
+{{ line.text }}
+{% endfor -%}
+{% if estimate_line.line %}{{ estimate_line.line }}
+{% endif %}
+{%- for section in ticket.sections if section.name not in ["Root cause", "Impact"] %}
+## {{ section.name }}
+
+{% if section.name == "Suggested fix" -%}
+{{ section.lead | split("**Contributing locations.**") | first | trim }}
+{% for part in section.parts if part.label == "Contributing locations" %}
+{{ collapsed(part.label, part.text) }}
+{% endfor %}
+{%- for subsection in section.subsections %}
+### {{ subsection.heading }}
+
+{{ subsection.content }}
+{% endfor %}
+{%- else -%}
+{{ section.content }}
+{% endif %}
+{%- endfor %}

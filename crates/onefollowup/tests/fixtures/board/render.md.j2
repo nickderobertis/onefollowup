@@ -16,12 +16,12 @@
 {% endfor -%}
 {%- for part in section.parts if part.label == mitigation -%}
 {%- set workaround = section.lines | selectattr("label", "eq", rubric.impact_lines[1]) | first -%}
-{{ collapsed(part.label, workaround.text ~ "\n" ~ part.text) }}
+{{ collapsed(part.label, workaround.text ~ "\n" ~ (section.lines | selectattr("label", "in", rubric.workaround_costs) | map(attribute="text") | join("\n"))) }}
 {%- endfor %}
 
 {{ collapsed("Priority calculation", (section.lines | selectattr("label", "in", [rubric.impact_lines[0], rubric.impact_lines[-1]]) | map(attribute="text") | join("\n")) ~ "\n" ~ estimate_line.line) }}
 {%- elif section.name == "Suggested fix" -%}
-{{ section.lead | split("**Contributing locations.**") | first | trim }}
+{{ section.lead }}
 {%- for part in section.parts if part.label == "Contributing locations" %}
 
 {{ collapsed(part.label, part.text) }}

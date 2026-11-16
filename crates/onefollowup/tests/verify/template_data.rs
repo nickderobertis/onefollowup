@@ -24,7 +24,13 @@ comment_templates:
   reply: vars/reply.md.j2
 kinds:
   - {name: root-cause, description: One root cause., render_template: vars/render.md.j2}
-  - {name: symptom, description: One symptom., render_template: vars/render.md.j2}
+  - name: symptom
+    description: One symptom.
+    render_template: vars/render.md.j2
+    projections:
+      fix_lead: '{{ ticket.section(\"Suggested fix\").lead }}'
+      fix_parts: '{{ ticket.section(\"Suggested fix\").parts | tojson }}'
+      fix_lines: '{{ ticket.section(\"Suggested fix\").lines | tojson }}'
 relations:
   - {name: caused-by, from: symptom, to: root-cause, cardinality: many-to-many, decided_by: agent, store: link}
 ";
@@ -55,6 +61,7 @@ VAR section.content: {{ impact.content | length }}
 VAR section.lead: {{ fix.lead | length }}
 VAR section.parts: {{ impact.parts[0].label }}={{ impact.parts[0].text }}
 VAR section.lines: {{ impact.lines[0].label }}={{ impact.lines[0].value }}|{{ impact.lines[0].text }}
+VAR fix.parts: {{ fix.parts | map(attribute="label") | join(",") }}
 VAR section.subsections: {{ fix.subsections[0].heading }}={{ fix.subsections[0].content }}
 VAR record: {{ record | tojson }}
 VAR record.edges: {{ record.edges | tojson }}
@@ -98,6 +105,25 @@ VAR reply.verdict: {{ comment.verdict }}
 VAR reply.url: {{ comment.url }}
 VAR reply.author: {{ comment.author }}
 VAR reply.response: {{ comment.response }}
+";
+
+/// The symptom's `## Suggested fix` content.
+const FIX: &str = "Read the window size once per save.
+
+It is one change.
+
+**Contributing locations.** The save path.
+
+It reads the size twice.
+- widgets `src/layout.rs`: reads the size twice
+
+### widgets — `github.com/example/widgets`
+
+Read the size once.
+
+**Interface.** None changes.
+
+Behaviour only.
 ";
 
 /// Every `VAR <name>: <value>` line of `text`.
@@ -204,7 +230,8 @@ fn every_documented_variable_reaches_its_template_populated() {
     for ticket in [&symptom, &cause] {
         world.ticket(BATCH, ticket);
     }
-    // A `###` subsection in the symptom's suggested fix.
+    // The symptom's suggested fix: introductory prose, a part of two paragraphs and a labelled
+    // line, and a `###` subsection holding another part.
     let path = world
         .work()
         .join(format!("tasks/{BATCH}/tickets/{}.md", symptom.slug));
@@ -212,8 +239,8 @@ fn every_documented_variable_reaches_its_template_populated() {
     std::fs::write(
         &path,
         text.replacen(
-            "reads the size twice\n",
-            "reads the size twice\n\n### widgets — `github.com/example/widgets`\n\nRead the size once.\n",
+            "Read the window size once per save.\n\n**Contributing locations.**\n- widgets `src/layout.rs`: reads the size twice\n",
+            FIX,
             1,
         ),
     )
@@ -309,6 +336,30 @@ fn every_documented_variable_reaches_its_template_populated() {
         "widgets — `github.com/example/widgets`=Read the size once."
     );
     assert!(found["record.edges"].contains("caused-by"), "{text}");
+    // The section's lead, its parts (every paragraph, the subsection's included) and its
+    // labelled line, as the render template and the projections are given them.
+    assert_eq!(found["fix.parts"], "Contributing locations,Interface");
+    let projected = &crate::journey::record(&text)["projected"];
+    assert_eq!(
+        projected["fix_lead"], "Read the window size once per save.\n\nIt is one change.",
+        "{projected}"
+    );
+    let parse = |key: &str| -> serde_json::Value {
+        serde_json::from_str(projected[key].as_str().expect("a rendered value")).expect("JSON")
+    };
+    assert_eq!(
+        parse("fix_parts"),
+        json!([
+            {"label": "Contributing locations",
+             "text": "The save path.\n\nIt reads the size twice.\n- widgets `src/layout.rs`: reads the size twice"},
+            {"label": "Interface", "text": "None changes.\n\nBehaviour only."},
+        ])
+    );
+    assert_eq!(
+        parse("fix_lines"),
+        json!([{"label": "widgets `src/layout.rs`", "value": "reads the size twice",
+                "text": "- widgets `src/layout.rs`: reads the size twice"}])
+    );
     assert_eq!(found["record.witnesses"], json!([witness]).to_string());
     assert_eq!(found["estimate_line.frequency"], "intermittent");
     assert!(

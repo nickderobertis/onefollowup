@@ -51,8 +51,8 @@ pub static WITNESS: LazyLock<Regex> = LazyLock::new(|| {
 pub struct Part {
     /// Its label, without the bold markers and the full stop.
     pub label: String,
-    /// What follows the label: to the next part, the first blank line once it has begun, or
-    /// the end of the section's lead, trimmed.
+    /// What follows the label, every paragraph of it: to the next part, the next `###`
+    /// subsection, or the end of the section, trimmed.
     pub text: String,
 }
 
@@ -83,9 +83,10 @@ pub struct Section {
     pub name: String,
     /// Its content, trimmed.
     pub content: String,
-    /// Its content before the first `###` subsection, trimmed.
+    /// Its content before the first `**Label.**` part, `- Label: value` line or `###`
+    /// subsection, trimmed.
     pub lead: String,
-    /// Every `**Label.**` part of its lead, in order.
+    /// Every `**Label.**` part of it, those within its subsections included, in order.
     pub parts: Vec<Part>,
     /// Every `- Label: value` line of its content, in order.
     pub lines: Vec<Line>,
@@ -134,35 +135,60 @@ pub fn sections(body: &str) -> Vec<Section> {
 
 fn section(name: &str, content: &str) -> Section {
     let lines = fenced(content);
-    let mut subsections: Vec<(String, Vec<&str>)> = Vec::new();
     let mut lead: Vec<&str> = Vec::new();
+    // The lead ends at the first part, labelled line or subsection outside a fence.
+    let mut lead_open = true;
+    let mut parts: Vec<(String, Vec<&str>)> = Vec::new();
+    // Whether the last part found still takes lines: until the next part or subsection.
+    let mut part_open = false;
+    let mut subsections: Vec<(String, Vec<&str>)> = Vec::new();
+    let mut labelled: Vec<Line> = Vec::new();
     for (line, inside) in &lines {
-        if !inside && let Some(captured) = SUBHEADING.captures(line) {
+        let heading = (!inside).then(|| SUBHEADING.captures(line)).flatten();
+        if let Some(captured) = heading {
+            lead_open = false;
+            part_open = false;
             subsections.push((captured["heading"].to_owned(), Vec::new()));
             continue;
         }
-        match subsections.last_mut() {
-            Some((_, held)) => held.push(line),
-            None => lead.push(line),
+        if let Some((_, held)) = subsections.last_mut() {
+            held.push(line);
+        }
+        let part = (!inside).then(|| PART.captures(line)).flatten();
+        let pair = (!inside).then(|| LINE.captures(line)).flatten();
+        if let Some(captured) = &pair {
+            labelled.push(Line {
+                label: captured["label"].trim().to_owned(),
+                value: captured["value"].trim().to_owned(),
+                text: (*line).to_owned(),
+            });
+        }
+        if part.is_some() || pair.is_some() {
+            lead_open = false;
+        }
+        if lead_open {
+            lead.push(line);
+        }
+        if let Some(captured) = part {
+            let rest = captured.name("rest").map_or("", |rest| rest.as_str());
+            parts.push((captured["label"].trim().to_owned(), vec![rest]));
+            part_open = true;
+        } else if part_open && let Some((_, text)) = parts.last_mut() {
+            text.push(line);
         }
     }
-    let lead_text = lead.join("\n").trim().to_owned();
     Section {
         name: name.to_owned(),
         content: content.to_owned(),
-        parts: parts(&lead_text),
-        lines: lines
-            .iter()
-            .filter(|(_, inside)| !inside)
-            .filter_map(|(line, _)| {
-                LINE.captures(line).map(|captured| Line {
-                    label: captured["label"].trim().to_owned(),
-                    value: captured["value"].trim().to_owned(),
-                    text: (*line).to_owned(),
-                })
+        lead: lead.join("\n").trim().to_owned(),
+        parts: parts
+            .into_iter()
+            .map(|(label, text)| Part {
+                label,
+                text: text.join("\n").trim().to_owned(),
             })
             .collect(),
-        lead: lead_text,
+        lines: labelled,
         subsections: subsections
             .into_iter()
             .map(|(heading, held)| Subsection {
@@ -171,45 +197,6 @@ fn section(name: &str, content: &str) -> Section {
             })
             .collect(),
     }
-}
-
-fn parts(lead: &str) -> Vec<Part> {
-    let mut found: Vec<(String, Vec<String>, bool)> = Vec::new();
-    for (line, inside) in fenced(lead) {
-        if !inside && let Some(captured) = PART.captures(line) {
-            let rest = captured["rest"].trim();
-            let begun = !rest.is_empty();
-            found.push((
-                captured["label"].trim().to_owned(),
-                if begun {
-                    vec![rest.to_owned()]
-                } else {
-                    Vec::new()
-                },
-                false,
-            ));
-            continue;
-        }
-        let Some((_, text, closed)) = found.last_mut() else {
-            continue;
-        };
-        if *closed {
-            continue;
-        }
-        if line.trim().is_empty() && !inside {
-            // A blank line ends a part once its text has begun.
-            *closed = !text.is_empty();
-            continue;
-        }
-        text.push(line.to_owned());
-    }
-    found
-        .into_iter()
-        .map(|(label, text, _)| Part {
-            label,
-            text: text.join("\n").trim().to_owned(),
-        })
-        .collect()
 }
 
 /// Every line of authored text only the renderer or onefollowup writes: a `<details>` or
@@ -543,4 +530,117 @@ pub fn visible(common: &Common<'_>, located: &Located, comment: &Value) -> Resul
         return Err(marker_line.clone());
     }
     Ok(visible.to_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Line, Part, Subsection, sections};
+
+    const BODY: &str = "## Suggested fix
+
+Read the window size once per save.
+
+It is one change.
+
+**Contributing locations.** The save path.
+
+It reads the size twice.
+- Layer: widgets `src/layout.rs`
+
+**Why now.** Saves are lost.
+
+```text
+**Fenced.** not a part
+- Fenced: not a line
+```
+
+### widgets — `github.com/example/widgets`
+
+Read the size once.
+
+**Interface.** None changes.
+
+Behaviour only.
+
+### gadgets — `github.com/example/gadgets`
+
+Nothing to do.
+
+## Evidence
+
+**Seen.** Twice.
+";
+
+    fn part(label: &str, text: &str) -> Part {
+        Part {
+            label: label.to_owned(),
+            text: text.to_owned(),
+        }
+    }
+
+    #[test]
+    fn the_lead_ends_at_the_first_part_line_or_subsection() {
+        let found = sections(BODY);
+        assert_eq!(
+            found[0].lead,
+            "Read the window size once per save.\n\nIt is one change."
+        );
+        assert_eq!(
+            found[1].lead, "",
+            "a section opening with a part has no lead"
+        );
+        let lined = sections("## Impact\n\nIntro.\n- Severity: high\n\nAfter.\n");
+        assert_eq!(lined[0].lead, "Intro.", "a labelled line ends the lead");
+        let sub = sections("## Fix\n\nIntro.\n\n### unit\n\nBody.\n");
+        assert_eq!(sub[0].lead, "Intro.", "a subsection ends the lead");
+    }
+
+    #[test]
+    fn every_part_keeps_each_paragraph_and_parts_in_subsections_are_collected() {
+        let found = sections(BODY);
+        assert_eq!(
+            found[0].parts,
+            [
+                part(
+                    "Contributing locations",
+                    "The save path.\n\nIt reads the size twice.\n- Layer: widgets `src/layout.rs`"
+                ),
+                part(
+                    "Why now",
+                    "Saves are lost.\n\n```text\n**Fenced.** not a part\n- Fenced: not a line\n```"
+                ),
+                part("Interface", "None changes.\n\nBehaviour only."),
+            ],
+            "a part runs to the next part or subsection, fenced lines its own text"
+        );
+        assert_eq!(found[1].parts, [part("Seen", "Twice.")]);
+    }
+
+    #[test]
+    fn labelled_lines_and_subsections_are_read_outside_fences() {
+        let found = sections(BODY);
+        assert_eq!(
+            found[0].lines,
+            [Line {
+                label: "Layer".to_owned(),
+                value: "widgets `src/layout.rs`".to_owned(),
+                text: "- Layer: widgets `src/layout.rs`".to_owned(),
+            }]
+        );
+        assert_eq!(
+            found[0].subsections,
+            [
+                Subsection {
+                    heading: "widgets — `github.com/example/widgets`".to_owned(),
+                    content:
+                        "Read the size once.\n\n**Interface.** None changes.\n\nBehaviour only."
+                            .to_owned(),
+                },
+                Subsection {
+                    heading: "gadgets — `github.com/example/gadgets`".to_owned(),
+                    content: "Nothing to do.".to_owned(),
+                },
+            ]
+        );
+    }
 }

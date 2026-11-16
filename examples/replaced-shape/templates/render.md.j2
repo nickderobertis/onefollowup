@@ -1,7 +1,7 @@
 {#-
   The destination body: the authored sections, the record's host, basis and witnesses shown
-  in a `## Provenance` section, and the workaround's cost and the contributing locations each
-  collapsed. Given every variable README.md's "Templates" documents.
+  in a `## Provenance` section, and the workaround's cost (its cost lines) and the contributing
+  locations each collapsed. Given every variable README.md's "Templates" documents.
 -#}
 {%- set impact = ticket.section("Impact") -%}
 {%- set fix = ticket.section("Suggested fix") -%}
@@ -24,7 +24,7 @@
 **{{ part.label }}.** {{ part.text }}
 {% endfor %}
 {% for part in impact.parts if part.label == rubric.impact_parts[-1] -%}
-{{ collapsed(part.label, part.text) }}
+{{ collapsed(part.label, impact.lines | selectattr("label", "in", rubric.workaround_costs) | map(attribute="text") | join("\n")) }}
 {% endfor %}
 {% for line in impact.lines if line.label in rubric.impact_lines -%}
 {{ line.text }}
@@ -35,7 +35,7 @@
 ## {{ section.name }}
 
 {% if section.name == "Suggested fix" -%}
-{{ section.lead | split("**Contributing locations.**") | first | trim }}
+{{ section.lead }}
 {% for part in section.parts if part.label == "Contributing locations" %}
 {{ collapsed(part.label, part.text) }}
 {% endfor %}

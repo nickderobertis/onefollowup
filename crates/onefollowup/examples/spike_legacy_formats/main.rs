@@ -1366,42 +1366,103 @@ fn status_role(status: &str) -> &'static str {
     }
 }
 
+/// The text a `metadata_fields` entry projects from `record[key]`, as the board's own projected
+/// values spell it: a string as it is, a list one entry a line in order, a map `key: value` a
+/// line sorted by key.
+/// `main` holds this rule to every value already on the board before relying on it.
 fn field_value(record: &Value, key: &str) -> Option<String> {
+    let text = |value: &Value| value.as_str().map_or_else(|| value.to_string(), str::to_owned);
     match record.get(key)? {
-        Value::String(text) if !text.is_empty() => Some(text.clone()),
-        Value::Array(list) if !list.is_empty() => Some(Value::Array(list.clone()).to_string()),
-        Value::Object(map) if !map.is_empty() => Some(Value::Object(map.clone()).to_string()),
+        Value::String(one) if !one.is_empty() => Some(one.clone()),
+        Value::Array(list) if !list.is_empty() => Some(list.iter().map(text).collect::<Vec<_>>().join("\n")),
+        Value::Object(map) if !map.is_empty() => {
+            let mut pairs: Vec<(&String, &Value)> = map.iter().collect();
+            pairs.sort_by_key(|(name, _)| *name);
+            Some(pairs.iter().map(|(name, value)| format!("{name}: {}", text(value))).collect::<Vec<_>>().join("\n"))
+        }
         _ => None,
     }
 }
 
-fn plan_writes(left: &[&Item], evaluated: &HashMap<String, Result<Evaluated, Vec<String>>>, comment_edits: &HashMap<String, usize>) -> Plan {
+/// One migrating ticket's writes.
+#[derive(Debug, Clone, Default, serde::Serialize)]
+struct Row {
+    url: String,
+    /// Each board field the migration fills, with the exact value written.
+    fields_new: Vec<(String, String)>,
+    /// Each board field holding a value other than the one projected: (field, board, new).
+    fields_changed: Vec<(String, String, String)>,
+    /// The board's Priority and the estimate's, when they differ.
+    priority: Option<(String, String)>,
+    /// The ids of the evidence comments it edits.
+    comment_ids: Vec<String>,
+}
+
+impl Row {
+    fn writes(&self) -> usize {
+        1 + self.fields_new.len() + self.fields_changed.len() + usize::from(self.priority.is_some()) + self.comment_ids.len()
+    }
+}
+
+fn plan_writes(left: &[&Item], evaluated: &HashMap<String, Result<Evaluated, Vec<String>>>, comment_edits: &HashMap<String, Vec<String>>) -> Plan {
     let mut plan = Plan::default();
     for item in left {
         let Some(Ok((_, _, record, level))) = evaluated.get(&item.url) else {
             continue;
         };
+        let mut row = Row { url: item.url.clone(), ..Row::default() };
         plan.tickets += 1;
         plan.body_writes += 1;
         let value: Value = serde_json::from_str(&record.render()).expect("record");
         for (field, key) in METADATA_FIELDS {
-            if field_value(&value, key).is_some() && !item.fields.contains_key(*field) {
-                plan.fields_new += 1;
-                *plan.fields_new_by.entry((*field).to_owned()).or_default() += 1;
+            let Some(projected) = field_value(&value, key) else { continue };
+            match item.fields.get(*field) {
+                None => {
+                    plan.fields_new += 1;
+                    *plan.fields_new_by.entry((*field).to_owned()).or_default() += 1;
+                    row.fields_new.push(((*field).to_owned(), projected));
+                }
+                Some(board) if *board != projected => {
+                    plan.fields_changed += 1;
+                    row.fields_changed.push(((*field).to_owned(), board.clone(), projected));
+                }
+                Some(_) => {}
             }
         }
-        let board = item.fields.get("Priority").map(|one| one.to_lowercase());
-        if board.as_deref() != Some(level.as_str()) {
+        let board = item.fields.get("Priority").cloned();
+        if board.as_deref().map(str::to_lowercase).as_deref() != Some(level.as_str()) {
             plan.priority_writes += 1;
+            let mut new = level.clone();
+            new[..1].make_ascii_uppercase();
+            row.priority = Some((board.unwrap_or_else(|| "(none)".to_owned()), new));
         }
-        plan.comment_edits += comment_edits.get(&item.url).copied().unwrap_or(0);
+        let ids = comment_edits.get(&item.url).cloned().unwrap_or_default();
+        plan.comment_edits += ids.len();
+        row.comment_ids = ids;
+        plan.rows.push(row);
     }
     plan
 }
 
+/// Every row's writes summed, against the aggregate: the inventory reconciles or the run fails.
+fn reconcile(plan: &Plan) -> Result<String, String> {
+    let sum = |each: fn(&Row) -> usize| plan.rows.iter().map(each).sum::<usize>();
+    let checks = [
+        ("tickets", plan.rows.len(), plan.tickets),
+        ("body updates", plan.rows.len(), plan.body_writes),
+        ("field values newly set", sum(|row| row.fields_new.len()), plan.fields_new),
+        ("field values changed", sum(|row| row.fields_changed.len()), plan.fields_changed),
+        ("Priority changes", sum(|row| usize::from(row.priority.is_some())), plan.priority_writes),
+        ("evidence-comment edits", sum(|row| row.comment_ids.len()), plan.comment_edits),
+        ("migration writes", sum(Row::writes), plan.writes()),
+    ];
+    let line = checks.iter().map(|(name, rows, total)| format!("{name} {rows} = {total}")).collect::<Vec<_>>().join("; ");
+    if checks.iter().all(|(_, rows, total)| rows == total) { Ok(line) } else { Err(line) }
+}
+
 impl Plan {
     fn writes(&self) -> usize {
-        self.body_writes + self.comment_edits + self.fields_new + self.priority_writes
+        self.body_writes + self.comment_edits + self.fields_new + self.fields_changed + self.priority_writes
     }
 }
 
@@ -1413,6 +1474,8 @@ struct Plan {
     fields_new_by: BTreeMap<String, usize>,
     priority_writes: usize,
     body_writes: usize,
+    fields_changed: usize,
+    rows: Vec<Row>,
 }
 
 fn table(out: &mut String, header: &[&str], rows: &[Vec<String>]) {
@@ -1544,7 +1607,7 @@ fn main() {
     let mut comment_layouts: BTreeMap<CommentLayout, (usize, usize)> = BTreeMap::new();
     let mut comment_tally: BTreeMap<CommentLayout, Tally> = BTreeMap::new();
     let mut comment_leaked = 0usize;
-    let mut comment_edits_by_item: HashMap<String, usize> = HashMap::new();
+    let mut comment_edits_by_item: HashMap<String, Vec<String>> = HashMap::new();
     let mut renders: HashMap<String, (String, String)> = HashMap::new();
     let mut unmappable_notes: Vec<(String, String)> = Vec::new();
     let mut comment_fallback = 0usize;
@@ -1598,7 +1661,7 @@ fn main() {
                         if back.as_deref() != Ok(text.as_str()) {
                             comment_tally.entry(layout).or_default().classes.entry("NOT IDEMPOTENT: the rendered comment does not read back to itself".to_owned()).or_insert((0, link.clone())).0 += 1;
                         }
-                        *comment_edits_by_item.entry(item.url.clone()).or_default() += 1;
+                        comment_edits_by_item.entry(item.url.clone()).or_default().push(comment.id.clone());
                     }
                     renders.insert(comment.id.clone(), (comment.body.clone(), text.clone()));
                 }
@@ -1811,14 +1874,31 @@ fn main() {
         table(&mut out, &["Failure class", "Open tickets left", "Example"], &rows);
     }
     let _ = writeln!(out, "Closure writes: {} closures × 3 (marked comment, Status field, issue state) = {closure_writes}.\n", closes.len());
+    // The projection rule, held to every value the board already carries.
+    let mut agree = 0usize;
+    let mut disagree: Vec<String> = Vec::new();
+    for item in &items {
+        let Some(record) = &item.record else { continue };
+        for (field, key) in METADATA_FIELDS {
+            if let (Some(board), Some(projected)) = (item.fields.get(*field), field_value(record, key)) {
+                if *board == projected {
+                    agree += 1;
+                } else {
+                    disagree.push(format!("{} {field}", short(&item.url)));
+                }
+            }
+        }
+    }
+    let _ = writeln!(out, "The projection rule (string as is, list one entry a line in order, map `key: value` a line sorted by key) against every projected value already on the board: {agree} agree, {} differ {:?}.\n", disagree.len(), disagree.iter().take(10).collect::<Vec<_>>());
     let mut rows = Vec::new();
     for (at, plan) in &plans {
         let writes = plan.writes();
         rows.push(vec![
-            scenarios[*at].0.to_owned(),
+            format!("{}{}", if *at == 0 { "DECIDED: " } else { "COUNTERFACTUAL: " }, scenarios[*at].0),
             plan.tickets.to_string(),
             plan.body_writes.to_string(),
             format!("{} {:?}", plan.fields_new, plan.fields_new_by),
+            plan.fields_changed.to_string(),
             plan.priority_writes.to_string(),
             plan.comment_edits.to_string(),
             format!("{writes} ({:.2} a ticket)", writes as f64 / plan.tickets.max(1) as f64),
@@ -1826,7 +1906,44 @@ fn main() {
             format!("{:.1}", (writes + closure_writes) as f64 / WRITES_PER_HOUR),
         ]);
     }
-    table(&mut out, &["Rule set", "Tickets migrated", "Body updates", "Field values newly set (by field)", "Priority changes", "Evidence-comment edits", "Migration writes", "With closures", "Hours at 250/h"], &rows);
+    table(&mut out, &["Rule set", "Tickets migrated", "Body updates", "Field values newly set (by field)", "Field values changed", "Priority changes", "Evidence-comment edits", "Migration writes", "With closures", "Hours at 250/h"], &rows);
+    // The per-ticket inventory of each rule set, reconciled with its aggregate row above.
+    let mut unreconciled = false;
+    for (at, plan) in &plans {
+        let label = if *at == 0 { "DECIDED" } else { "COUNTERFACTUAL" };
+        let name = format!("inventory-{at}.md");
+        let mut text = format!("# Per-ticket writes — {label}: {}\n\n", scenarios[*at].0);
+        let mut jsonl = String::new();
+        for row in &plan.rows {
+            let _ = writeln!(text, "## {}\n\n- writes: {}", short(&row.url), row.writes());
+            let _ = writeln!(text, "- body and record update: 1");
+            for (field, value) in &row.fields_new {
+                let _ = writeln!(text, "- set `{field}`:\n\n````text\n{value}\n````");
+            }
+            for (field, board, new) in &row.fields_changed {
+                let _ = writeln!(text, "- change `{field}` from `{board}` to `{new}`");
+            }
+            match &row.priority {
+                Some((board, new)) => { let _ = writeln!(text, "- Priority: {board} → {new}"); }
+                None => { let _ = writeln!(text, "- Priority: unchanged"); }
+            }
+            let _ = writeln!(text, "- evidence comments edited: {}\n", if row.comment_ids.is_empty() { "none".to_owned() } else { row.comment_ids.join(", ") });
+            jsonl.push_str(&serde_json::to_string(row).expect("json"));
+            jsonl.push('\n');
+        }
+        let verdict = reconcile(plan);
+        let line = match &verdict { Ok(line) => format!("reconciled: {line}"), Err(line) => { unreconciled = true; format!("DOES NOT RECONCILE: {line}") } };
+        let _ = writeln!(text, "{line}");
+        std::fs::write(out_dir.join(&name), text).expect("writes");
+        std::fs::write(out_dir.join(format!("inventory-{at}.jsonl")), jsonl).expect("writes");
+        let _ = writeln!(out, "- {label} `{}` — `{name}` (+ `.jsonl`), {} rows; {line}", scenarios[*at].0, plan.rows.len());
+    }
+    out.push('\n');
+    if unreconciled {
+        eprintln!("the per-ticket inventory does not reconcile with the aggregate; see report.md");
+        std::fs::write(out_dir.join("report.md"), &out).expect("writes");
+        std::process::exit(1);
+    }
     let total = migration_writes + closure_writes;
 
     let _ = writeln!(out, "## Edit histories\n");

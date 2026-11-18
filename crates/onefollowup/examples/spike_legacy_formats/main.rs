@@ -458,10 +458,10 @@ fn extract_block(block: &str, out: &mut Extracted) {
         .map(|found| clean_token(found.as_str()))
         .collect();
     let mut kept: Vec<String> = Vec::new();
-    // `<draft id> (<run, author, node, transcript>): <prose>` and `<draft id>, from run R, node N:
-    // <prose>` open with a metadata clause up to the first `: ` outside backticks.
-    let mut text = text.to_owned();
     let mut headed = false;
+    // The same clause opening the whole block, which may run over `; ` (`<id>; run R; author A,
+    // node N. Verified at P:L: <prose>`), is taken before the block splits into sentences.
+    let mut text = text.to_owned();
     if DRAFT_LEAD.is_match(&text)
         && let Some(colon) = clause_end(&text)
         && residue_words(&text[..colon]) == 0
@@ -478,6 +478,22 @@ fn extract_block(block: &str, out: &mut Extracted) {
     }
     for sentence in sentences(&text) {
         let mut sentence = sentence;
+        // `<draft id> (<run, author, node, transcript>): <prose>` and `Draft <id>, run R, node N:
+        // <prose>` open with a metadata clause up to the first `: ` outside backticks.
+        if DRAFT_LEAD.is_match(&sentence)
+            && let Some(colon) = clause_end(&sentence)
+            && residue_words(&sentence[..colon]) == 0
+        {
+            let head = sentence[..colon].to_owned();
+            extract_values(&head, &block_drafts, out);
+            for found in VERIFIED_AT.captures_iter(&head) {
+                for path in PATH_LINE.captures_iter(&found["list"]) {
+                    out.witnesses.push((None, path["path"].to_owned(), path["line"].to_owned()));
+                }
+            }
+            sentence = sentence[colon + 1..].trim().to_owned();
+            headed = true;
+        }
         // `Verified at P:L; P:L: prose` keeps the prose after the list.
         if let Some(captured) = VERIFIED_AT.captures(&sentence) {
             for found in PATH_LINE.captures_iter(&captured["list"]) {
@@ -1472,8 +1488,13 @@ fn main() {
                 && let Ok(mapped) = map_ticket(item, &item.visible, record, Variant::default())
             {
                 eprintln!("=== MAPPED {}\n{}\n=== RECORD {}\n=== NOTES {:?}", item.url, mapped.body, mapped.record.render(), mapped.notes);
-                if let Ok((body, ..)) = env.render(&mapped) {
+                if let Ok((body, record, _)) = env.render(&mapped) {
                     eprintln!("=== RENDERED\n{body}");
+                    let again = map_ticket(item, &body, &serde_json::from_str(&record.render()).expect("record"), Variant::default())
+                        .and_then(|mapped| env.render(&mapped));
+                    if let Ok((twice, ..)) = again {
+                        eprintln!("=== RENDERED TWICE\n{twice}");
+                    }
                 }
             }
             eprintln!("=== PROBLEMS {problems:#?}");
@@ -1714,7 +1735,21 @@ fn main() {
     }
     let header: Vec<&str> = header.iter().map(String::as_str).collect();
     table(&mut out, &header, &rows);
-    let _ = writeln!(out, "Not idempotent (the rendered body, mapped again, renders differently): {} {:?}\n", not_idempotent.len(), not_idempotent.iter().take(10).collect::<Vec<_>>());
+    let _ = writeln!(out, "Not idempotent (the rendered body, mapped again, renders differently), of the {} validating under the decided checks: {} {:?}\n", total_clean, not_idempotent.len(), not_idempotent.iter().take(10).collect::<Vec<_>>());
+    let structural_at = scenarios.len() - 1;
+    let mut structural_checked = 0usize;
+    let mut structural_drift: Vec<String> = Vec::new();
+    for item in &items {
+        if let Some(Ok((_, body, record, _))) = scenario_ok[structural_at].get(&item.url) {
+            structural_checked += 1;
+            let again = map_ticket(item, body, &serde_json::from_str(&record.render()).expect("record"), Variant::default())
+                .and_then(|mapped| structural.render(&mapped));
+            if !matches!(again, Ok((twice, _, _)) if twice == *body) {
+                structural_drift.push(short(&item.url));
+            }
+        }
+    }
+    let _ = writeln!(out, "Not idempotent, of the {structural_checked} validating without `evidence-prose` and `witnesses`: {} {:?}\n", structural_drift.len(), structural_drift.iter().take(10).collect::<Vec<_>>());
     let _ = writeln!(out, "Current-shape tickets whose mapped render differs from the board body (whitespace aside): {} {:?}\n", current_changed.len(), current_changed.iter().take(10).collect::<Vec<_>>());
     let _ = writeln!(out, "What the decided mapping did, over every ticket it maps (checks aside):\n");
     let rows: Vec<Vec<String>> = notes.iter().map(|(note, (count, open))| vec![note.clone(), count.to_string(), open.to_string()]).collect();

@@ -78,7 +78,13 @@ re!(DICT_VALUE, r#"['"](?P<key>kind|node|member)['"]\s*:\s*['"]?(?P<value>[^'",}
 re!(VERIFIED_AT, r"(?i)\bverified at\s+(?P<list>`?[\w./-]+\.\w+:\d+(?:[-,]\d+)*`?(?:\s*[;,]\s*`?[\w./-]+\.\w+:\d+(?:[-,]\d+)*`?)*)(?P<tail>\s*:\s*)?");
 re!(PATH_LINE, r"(?P<path>[\w./-]+\.\w+):(?P<line>\d+)");
 re!(RUN_CLAUSE, r"(?i)\b(?:from )?run\s+`?[\w.@+-]+`?");
-re!(OCCURRENCES, r"(\d+) occurrences?");
+re!(TICKED, r"`[^`]*`");
+re!(RUN_START, r"(?i)^\W*(?:from )?run\b");
+re!(DRAFT_LEAD, r"(?i)^(?:(?:occurrence from |from )?drafts?(?: evidence)?\s*:?\s*)?`?drafts:");
+re!(METADATA_START, r"(?i)^\W*(verification host|verified on\b|host\b|basis\b)");
+re!(HOST_START, r"(?i)^\W*(verification host|verified on\b|host\b|on host\b)");
+re!(UNITS, r"\d+ units");
+re!(NAMED_BASIS, r"(?i)\b(?P<name>[a-z][a-z0-9_.-]+)\s+basis\b\W{0,4}(?:commit\W{0,3})?`?(?P<commit>[0-9a-f]{40})");
 re!(WORD, r"[A-Za-z][A-Za-z'/-]*");
 
 /// Words a metadata sentence carries besides its values.
@@ -89,13 +95,12 @@ const METADATA_WORDS: &[&str] = &[
     "this", "occurrence", "evidence", "origin/main", "fetched", "repository", "repositories",
     "recorded", "record", "is", "with", "by", "its", "both", "each", "a", "an", "dispatch",
     "dispatched", "commit", "sha", "head", "main", "origin", "checkout", "local", "verifying",
-    "was", "were", "this", "batch",
+    "was", "were", "this", "batch", "as",
 ];
 
 #[derive(Debug, Clone)]
 struct Comment {
     id: String,
-    author: String,
     body: String,
     created_at: Option<DateTime<Utc>>,
 }
@@ -109,7 +114,6 @@ struct Item {
     fields: BTreeMap<String, String>,
     visible: String,
     record: Option<Value>,
-    metadata: Option<Value>,
     comments: Vec<Comment>,
 }
 
@@ -173,7 +177,6 @@ fn load(dump: &Path, extras: &Value) -> Vec<Item> {
                     Comment {
                         created_at: created.get(&id).copied(),
                         id,
-                        author: one["author"]["login"].as_str().unwrap_or("ghost").to_owned(),
                         body: one["body"].as_str().unwrap_or_default().to_owned(),
                     }
                 })
@@ -189,7 +192,6 @@ fn load(dump: &Path, extras: &Value) -> Vec<Item> {
                 fields,
                 visible,
                 record,
-                metadata,
                 comments,
             });
         }
@@ -416,7 +418,7 @@ fn residue_words(sentence: &str) -> usize {
     ] {
         text = pattern.replace_all(&text, " ").into_owned();
     }
-    let text = Regex::new(r"`[^`]*`").expect("valid").replace_all(&text, " ");
+    let text = TICKED.replace_all(&text, " ");
     WORD.find_iter(&text)
         .map(|word| word.as_str().to_lowercase())
         .filter(|word| !METADATA_WORDS.contains(&word.as_str()))
@@ -428,9 +430,7 @@ fn holds_metadata(sentence: &str) -> bool {
         || COMMIT.is_match(sentence)
         || VERIFIED_AT.is_match(sentence)
         || TRANSCRIPT.is_match(sentence)
-        || Regex::new(r"(?i)^\W*(verification host|verified on\b|host\b|basis\b)")
-            .expect("valid")
-            .is_match(sentence)
+        || METADATA_START.is_match(sentence)
 }
 
 /// Pair each commit in `text` with the origin nearest before it (or the only origin there).
@@ -462,7 +462,7 @@ fn extract_block(block: &str, out: &mut Extracted) {
     // <prose>` open with a metadata clause up to the first `: ` outside backticks.
     let mut text = text.to_owned();
     let mut headed = false;
-    if text.trim_start_matches('`').starts_with("drafts:")
+    if DRAFT_LEAD.is_match(&text)
         && let Some(colon) = clause_end(&text)
         && residue_words(&text[..colon]) == 0
     {
@@ -498,7 +498,9 @@ fn extract_block(block: &str, out: &mut Extracted) {
             }
         }
         extract_values(&sentence, &block_drafts, out);
-        if !holds_metadata(&sentence) || residue_words(&sentence) > 0 {
+        // A clause naming only the run (`run R`), split off a draft line, is metadata too.
+        let run_only = RUN_START.is_match(&sentence) && residue_words(&sentence) == 0;
+        if !run_only && (!holds_metadata(&sentence) || residue_words(&sentence) > 0) {
             if holds_metadata(&sentence) {
                 out.leaked += 1;
             }
@@ -532,9 +534,7 @@ fn clause_end(text: &str) -> Option<usize> {
 
 fn extract_values(sentence: &str, block_drafts: &[String], out: &mut Extracted) {
     if let Some(captured) = HOST_PHRASE.captures(sentence)
-        && Regex::new(r"(?i)^\W*(verification host|verified on\b|host\b|on host\b)")
-            .expect("valid")
-            .is_match(sentence)
+        && HOST_START.is_match(sentence)
     {
         let host = clean_token(&captured["host"]);
         if !out.hosts.contains(&host) {
@@ -1121,8 +1121,8 @@ fn evaluate(env: &Env, item: &Item, variant: Variant) -> Result<Evaluated, Vec<S
 }
 
 fn failure_class(problem: &str) -> String {
-    let text = Regex::new(r"`[^`]*`").expect("valid").replace_all(problem, "`…`");
-    let text = Regex::new(r"\d+ units").expect("valid").replace_all(&text, "N units");
+    let text = TICKED.replace_all(problem, "`…`");
+    let text = UNITS.replace_all(&text, "N units");
     text.chars().take(260).collect()
 }
 
@@ -1170,9 +1170,7 @@ fn map_comment_05(body: &str, ticket_basis: &IndexMap<String, String>) -> Result
     if found.basis.is_empty() {
         // A commit named under a bare repository name the ticket's basis holds, or — when the
         // ticket has one basis origin — a commit naming no origin at all.
-        let named = Regex::new(r"(?i)\b(?P<name>[a-z][a-z0-9_.-]+)\s+basis\b\W{0,4}(?:commit\W{0,3})?`?(?P<commit>[0-9a-f]{40})")
-            .expect("valid");
-        for found_name in named.captures_iter(body) {
+        for found_name in NAMED_BASIS.captures_iter(body) {
             if let Some(origin) = ticket_basis.keys().find(|origin| origin.rsplit('/').next() == Some(&found_name["name"])) {
                 found.basis.entry(origin.clone()).or_insert_with(|| found_name["commit"].to_owned());
             }
@@ -1361,10 +1359,10 @@ fn field_value(record: &Value, key: &str) -> Option<String> {
     }
 }
 
-fn plan_writes(left: &[&Item], evaluated: &HashMap<String, Option<Evaluated>>, comment_edits: &HashMap<String, usize>) -> Plan {
+fn plan_writes(left: &[&Item], evaluated: &HashMap<String, Result<Evaluated, Vec<String>>>, comment_edits: &HashMap<String, usize>) -> Plan {
     let mut plan = Plan::default();
     for item in left {
-        let Some(Some((_, _, record, level))) = evaluated.get(&item.url) else {
+        let Some(Ok((_, _, record, level))) = evaluated.get(&item.url) else {
             continue;
         };
         plan.tickets += 1;
@@ -1436,7 +1434,7 @@ fn main() {
         ("decided rules, without the `evidence-prose` and `witnesses` checks", &structural, Variant::default()),
     ];
     let mut scenario_clean: BTreeMap<(usize, String), (usize, usize)> = BTreeMap::new();
-    let mut scenario_ok: Vec<HashMap<String, Option<Evaluated>>> = vec![HashMap::new(); scenarios.len()];
+    let mut scenario_ok: Vec<HashMap<String, Result<Evaluated, Vec<String>>>> = vec![HashMap::new(); scenarios.len()];
     let delivered: BTreeSet<String> = extras["delivers"]
         .as_array()
         .into_iter()
@@ -1460,10 +1458,10 @@ fn main() {
         let link = item.url.clone();
         let result = evaluate(&env, item, Variant::default());
         for (at, (_, scenario_env, variant)) in scenarios.iter().enumerate() {
-            let evaluated = evaluate(scenario_env, item, *variant).ok();
+            let evaluated = evaluate(scenario_env, item, *variant);
             let entry = scenario_clean.entry((at, key.0.clone())).or_default();
             entry.0 += 1;
-            entry.1 += usize::from(evaluated.is_some());
+            entry.1 += usize::from(evaluated.is_ok());
             scenario_ok[at].insert(item.url.clone(), evaluated);
         }
         let problems = match &result {
@@ -1708,8 +1706,8 @@ fn main() {
             row.push(format!("{clean} / {total}"));
         }
         row.push(all.to_string());
-        let open_clean = items.iter().filter(|item| item.open && scenario_ok[at].get(&item.url).is_some_and(Option::is_some)).count();
-        let left_clean = left.iter().filter(|item| scenario_ok[at].get(&item.url).is_some_and(Option::is_some)).count();
+        let open_clean = items.iter().filter(|item| item.open && scenario_ok[at].get(&item.url).is_some_and(Result::is_ok)).count();
+        let left_clean = left.iter().filter(|item| scenario_ok[at].get(&item.url).is_some_and(Result::is_ok)).count();
         row.push(open_clean.to_string());
         row.push(format!("{left_clean} / {}", left.len()));
         rows.push(row);
@@ -1753,15 +1751,30 @@ fn main() {
     let _ = writeln!(out, "- `verified_at` alone {STALE_DAYS}+ days old: {verified_only_stale}");
     let _ = writeln!(out, "- Newest evidence (later of `verified_at` and newest evidence comment) {STALE_DAYS}+ days old: {stale}; fresher: {fresh}; no evidence time: {no_time}");
     let _ = writeln!(out, "- Exempt: {} — by reason (a ticket may hold several): {:?}; by first reason: {:?}", exempt_urls.len(), exempt_by, exempt_first);
+    let delivered_open = items.iter().filter(|item| item.open && delivered.contains(&item.url)).count();
+    let _ = writeln!(out, "- Tickets a task's `delivers` names in the local plan store: {} ({delivered_open} open, none of them stale unless counted above)", delivered.len());
     let _ = writeln!(out, "- Close-stale closes: {}", closes.len());
     let _ = writeln!(out, "- Open tickets left to migrate: {}\n", open_total - closes.len());
     let _ = writeln!(out, "Sample closures: {:?}\n", closes.iter().take(8).map(|one| short(one)).collect::<Vec<_>>());
 
     let _ = writeln!(out, "## Writes\n");
-    let left = open_total - closes.len();
-    let _ = writeln!(out, "Of the {left} open tickets left, {} map and validate (the rest are skipped and written nothing). Their failure classes:\n", migrate_tally.clean);
+    let left_count = open_total - closes.len();
+    let _ = writeln!(out, "Of the {left_count} open tickets left, {} map and validate (the rest are skipped and written nothing). Their failure classes:\n", migrate_tally.clean);
     let rows: Vec<Vec<String>> = migrate_tally.classes.iter().map(|(class, (count, link))| vec![class.clone(), count.to_string(), short(link)]).collect();
     table(&mut out, &["Failure class", "Open tickets left", "Example"], &rows);
+    for (at, (name, _, _)) in scenarios.iter().enumerate().skip(1) {
+        let mut tally = Tally::default();
+        for item in &left {
+            let problems = match &scenario_ok[at][&item.url] {
+                Ok(_) => Vec::new(),
+                Err(problems) => problems.clone(),
+            };
+            tally.add(true, &problems, &item.url);
+        }
+        let _ = writeln!(out, "Under \"{name}\", {} of the {} left map and validate; the rest:\n", tally.clean, left.len());
+        let rows: Vec<Vec<String>> = tally.classes.iter().map(|(class, (count, link))| vec![class.clone(), count.to_string(), short(link)]).collect();
+        table(&mut out, &["Failure class", "Open tickets left", "Example"], &rows);
+    }
     let _ = writeln!(out, "Closure writes: {} closures × 3 (marked comment, Status field, issue state) = {closure_writes}.\n", closes.len());
     let mut rows = Vec::new();
     for (at, plan) in &plans {
@@ -1802,7 +1815,22 @@ fn main() {
                 let _ = writeln!(out, "- {name}: maps and validates; {} unit(s); estimate {level}; notes {:?}", mapped.units, mapped.notes);
             }
             None => {
-                let _ = writeln!(out, "- {name}: FAILS: {problems:?}");
+                let units = item
+                    .record
+                    .as_ref()
+                    .and_then(|record| map_ticket(item, &item.visible, record, Variant::default()).ok())
+                    .map_or(0, |mapped| mapped.units);
+                let _ = writeln!(out, "- {name}: FAILS ({units} unit(s)): {problems:?}");
+                // What the mapping renders, though the checks refuse it, so the plan can read it.
+                if let Some(Ok((body, record, _))) = item.record.as_ref().map(|record| {
+                    map_ticket(item, &item.visible, record, Variant::default()).and_then(|mapped| env.render(&mapped))
+                }) {
+                    std::fs::write(out_dir.join("before-after").join(format!("{name}-after-refused.md")), body).expect("writes");
+                    std::fs::write(out_dir.join("before-after").join(format!("{name}-after-refused-record.json")), record.render()).expect("writes");
+                }
+                for (at, (scenario, _, _)) in scenarios.iter().enumerate() {
+                    let _ = writeln!(out, "  - under \"{scenario}\": {}", if scenario_ok[at][&item.url].is_ok() { "maps and validates" } else { "fails" });
+                }
             }
         }
     }
@@ -1813,15 +1841,69 @@ fn main() {
     } else {
         let _ = writeln!(out, "- onepipeline#774 comment IC_kwDOTx8aUc8AAAABhjme-g: FAILS");
     }
-    // Substitutes of each kind, should a trial ticket fail.
-    for units in [1usize, 2] {
-        let found = items.iter().filter(|item| item.open && !closed_now.contains(&item.url)).find(|item| {
-            let (_, ok, _) = &outcomes[&item.url];
-            ok.as_ref().is_some_and(|(mapped, ..)| if units == 1 { mapped.units == 1 } else { mapped.units >= 2 })
-                && item.comments.iter().any(|comment| renders.contains_key(&comment.id) && comment_layout(&comment.body).0 == CommentLayout::Evidence05)
-                && item.comments.iter().any(|comment| comment_layout(&comment.body).0 == CommentLayout::Unmarked)
-        });
-        let _ = writeln!(out, "- first clean open ticket left with {} unit(s), a mapped evidence comment and a person's comment: {}", if units == 1 { "one" } else { "two or more" }, found.map_or("none".to_owned(), |item| short(&item.url)));
+    // Substitutes of each kind, should a trial ticket fail: open, left after the closures, with a
+    // mapped 0.5 evidence comment and a person's comment.
+    for (at, (scenario, _, _)) in scenarios.iter().enumerate() {
+        for several in [false, true] {
+            let found: Vec<String> = left
+                .iter()
+                .filter(|item| {
+                    let Some(Ok((mapped, ..))) = scenario_ok[at].get(&item.url) else {
+                        return false;
+                    };
+                    (if several { mapped.units >= 2 } else { mapped.units == 1 })
+                        && item.comments.iter().any(|comment| renders.contains_key(&comment.id) && comment_layout(&comment.body).0 == CommentLayout::Evidence05)
+                        && item.comments.iter().any(|comment| comment_layout(&comment.body).0 == CommentLayout::Unmarked)
+                })
+                .map(|item| short(&item.url))
+                .collect();
+            let _ = writeln!(out, "- substitutes under \"{scenario}\" with {}, a mapped evidence comment and a person's comment: {} {:?}", if several { "two or more units" } else { "one unit" }, found.len(), found.iter().take(6).collect::<Vec<_>>());
+        }
+        let several: Vec<String> = left
+            .iter()
+            .filter(|item| {
+                matches!(scenario_ok[at].get(&item.url), Some(Ok((mapped, ..))) if mapped.units >= 2)
+                    && item.comments.iter().any(|comment| renders.contains_key(&comment.id) && comment_layout(&comment.body).0 == CommentLayout::Evidence05)
+            })
+            .map(|item| short(&item.url))
+            .collect();
+        let _ = writeln!(out, "  - with two or more units and a mapped evidence comment (#823 carries the person's comment): {} {:?}", several.len(), several.iter().take(6).collect::<Vec<_>>());
+    }
+    // The multi-unit substitute's before and after under the decided mapping (the last rule set
+    // keeps its prose as the board holds it), else the first rule set that validates it.
+    if let Some(item) = trial("oneharness-ui/issues/82") {
+        std::fs::write(out_dir.join("before-after").join("oneharness-ui-82-before.md"), format!("{}\n", item.visible)).expect("writes");
+        for (at, (scenario, _, _)) in scenarios.iter().enumerate().rev() {
+            if let Ok((mapped, body, record, level)) = &scenario_ok[at][&item.url] {
+                std::fs::write(out_dir.join("before-after").join("oneharness-ui-82-after.md"), body).expect("writes");
+                std::fs::write(out_dir.join("before-after").join("oneharness-ui-82-after-record.json"), record.render()).expect("writes");
+                let _ = writeln!(out, "- oneharness-ui#82 validates under \"{scenario}\": {} units; estimate {level}; notes {:?}", mapped.units, mapped.notes);
+                break;
+            }
+        }
+        for comment in &item.comments {
+            if let Some((before, after)) = renders.get(&comment.id)
+                && comment_layout(before).0 == CommentLayout::Evidence05
+            {
+                std::fs::write(out_dir.join("before-after").join("oneharness-ui-82-comment-before.md"), before).expect("writes");
+                std::fs::write(out_dir.join("before-after").join("oneharness-ui-82-comment-after.md"), after).expect("writes");
+                let _ = writeln!(out, "- oneharness-ui#82 evidence comment {} maps and validates", comment.id);
+                break;
+            }
+        }
+    }
+    let _ = writeln!(out, "\nThe six provenance-lost tickets of ai-orchestrator#2548:\n");
+    for path in ["onetaskgraph/issues/3696", "onepipeline/issues/1319", "onepipeline/issues/820", "onepipeline/issues/648", "ai-orchestrator/issues/2319", "ai-orchestrator/issues/1886"] {
+        let Some(item) = trial(path) else { continue };
+        let verdicts: Vec<String> = scenarios
+            .iter()
+            .enumerate()
+            .map(|(at, _)| match &scenario_ok[at][&item.url] {
+                Ok(_) => "validates".to_owned(),
+                Err(problems) => format!("fails: {}", problems.iter().map(|one| failure_class(one)).collect::<Vec<_>>().join("; ")),
+            })
+            .collect();
+        let _ = writeln!(out, "- {} ({}, {}): {}", short(&item.url), if item.open { "open" } else { "closed" }, if closed_now.contains(&item.url) { "close-stale closes it" } else { "left" }, verdicts.join(" | "));
     }
     out.push('\n');
 

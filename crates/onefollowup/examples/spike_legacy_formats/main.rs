@@ -1445,10 +1445,9 @@ fn main() {
     // Formats and the ticket mapping.
     let mut formats: BTreeMap<(String, String), Tally> = BTreeMap::new();
     let mut by_schema: BTreeMap<String, Tally> = BTreeMap::new();
-    let mut notes: BTreeMap<String, usize> = BTreeMap::new();
+    let mut notes: BTreeMap<String, (usize, usize)> = BTreeMap::new();
     let mut not_idempotent: Vec<String> = Vec::new();
     let mut current_changed: Vec<String> = Vec::new();
-    let mut lead_by_open: BTreeMap<String, usize> = BTreeMap::new();
     let mut witnesses_only: usize = 0;
     let mut witnesses_only_open: usize = 0;
     let mut title_refusals: Vec<(String, String)> = Vec::new();
@@ -1495,14 +1494,15 @@ fn main() {
         formats.entry(key.clone()).or_default().add(item.open, &problems, &link);
         by_schema.entry(key.0.clone()).or_default().add(item.open, &problems, &link);
         let ok = result.as_ref().ok().cloned();
-        if let Some((mapped, body, record, _)) = &ok {
-            for note in &mapped.notes {
-                let note = failure_class(note);
-                *notes.entry(note.clone()).or_default() += 1;
-                if item.open && note.contains("lead") {
-                    *lead_by_open.entry(note).or_default() += 1;
-                }
+        if let Some(Ok(mapped)) = item.record.as_ref().map(|record| map_ticket(item, &item.visible, record, Variant::default())) {
+            let distinct: BTreeSet<String> = mapped.notes.iter().map(|note| failure_class(note)).collect();
+            for note in distinct {
+                let entry = notes.entry(note).or_default();
+                entry.0 += 1;
+                entry.1 += usize::from(item.open);
             }
+        }
+        if let Some((_, body, record, _)) = &ok {
             // Idempotency: the rendered body, mapped again, renders the same.
             let again = map_ticket(item, body, &serde_json::from_str(&record.render()).expect("record"), Variant::default())
                 .and_then(|mapped| env.render(&mapped));
@@ -1716,9 +1716,9 @@ fn main() {
     table(&mut out, &header, &rows);
     let _ = writeln!(out, "Not idempotent (the rendered body, mapped again, renders differently): {} {:?}\n", not_idempotent.len(), not_idempotent.iter().take(10).collect::<Vec<_>>());
     let _ = writeln!(out, "Current-shape tickets whose mapped render differs from the board body (whitespace aside): {} {:?}\n", current_changed.len(), current_changed.iter().take(10).collect::<Vec<_>>());
-    let _ = writeln!(out, "Mapping notes over the tickets that map cleanly:\n");
-    let rows: Vec<Vec<String>> = notes.iter().map(|(note, count)| vec![note.clone(), count.to_string()]).collect();
-    table(&mut out, &["Note", "Tickets"], &rows);
+    let _ = writeln!(out, "What the decided mapping did, over every ticket it maps (checks aside):\n");
+    let rows: Vec<Vec<String>> = notes.iter().map(|(note, (count, open))| vec![note.clone(), count.to_string(), open.to_string()]).collect();
+    table(&mut out, &["Note", "Tickets", "Open"], &rows);
     let _ = writeln!(out, "Title refusals: {}\n", title_refusals.len());
     for (link, problem) in title_refusals.iter().take(40) {
         let _ = writeln!(out, "- {link}: {problem}");

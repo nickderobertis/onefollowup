@@ -158,6 +158,14 @@ cases:
     key: 'hooks.batch_settled'
     message: 'empty argv'
   - document: |
+      comments: {launch_command: []}
+    key: 'comments.launch_command'
+    message: 'empty argv'
+  - document: |
+      comments: {launch_on: [x]}
+    key: 'comments.launch_on'
+    message: 'unknown field'
+  - document: |
       default_dispositions: []
     key: 'default_dispositions'
     message: 'is empty'

@@ -1,7 +1,8 @@
 //! Every verb of the v1 surface but `config show` and `kinds`, driven through the built
 //! binary: each parses its arguments — a malformed invocation is a usage error. A verb the
 //! verify loop or the comment pass implements then needs its store, and fails naming the
-//! onetaskgraph configuration it did not find; every other verb refuses with exit 2 and `not
+//! onetaskgraph configuration it did not find — but for `comments answer`, which is refused
+//! first without its `comments.launch_command`; every other verb refuses with exit 2 and `not
 //! implemented in this release`.
 
 mod support;
@@ -27,6 +28,10 @@ const IMPLEMENTED: &[&str] = &[
     "comments check",
     "comments settle",
 ];
+
+/// The verbs refused, exit 2, by the default configuration before they need their store,
+/// with the key the refusal names.
+const UNCONFIGURED: &[(&str, &str)] = &[("comments answer", "`comments.launch_command`")];
 
 /// Each verb: a well-formed invocation, and a malformed one.
 const VERBS: &[(&[&str], &[&str])] = &[
@@ -190,6 +195,10 @@ const VERBS: &[(&[&str], &[&str])] = &[
         ],
         &["comments", "settle", "--snapshot", "s", "--launched", "b1"],
     ),
+    (
+        &["comments", "answer", "--dry-run"],
+        &["comments", "answer", "--snapshot", "s"],
+    ),
     (&["statuses"], &["statuses", "--bogus"]),
 ];
 
@@ -211,7 +220,10 @@ fn every_verb_parses_its_arguments_then_needs_its_store_or_refuses_as_not_implem
             .output()
             .expect("it runs");
         let stderr = String::from_utf8_lossy(&output.stderr);
-        if IMPLEMENTED.contains(&verb.as_str()) {
+        if let Some((_, key)) = UNCONFIGURED.iter().find(|(name, _)| *name == verb) {
+            assert_eq!(output.status.code(), Some(2), "{well_formed:?}: {stderr}");
+            assert!(stderr.contains(key), "{well_formed:?}: {stderr}");
+        } else if IMPLEMENTED.contains(&verb.as_str()) {
             assert_eq!(output.status.code(), Some(1), "{well_formed:?}: {stderr}");
             assert!(
                 stderr.contains("no onetaskgraph.yaml was found"),
@@ -244,7 +256,7 @@ fn every_verb_parses_its_arguments_then_needs_its_store_or_refuses_as_not_implem
     }
     assert_eq!(
         verbs.len(),
-        17,
+        18,
         "every verb but `config show` and `kinds`: {verbs:?}"
     );
 }

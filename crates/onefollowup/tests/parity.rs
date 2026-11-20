@@ -57,7 +57,7 @@ fn every_verb_has_a_library_function_and_a_thin_handler() {
     let mut paths = Vec::new();
     leaves(&Cli::command(), &mut Vec::new(), &mut paths);
     let verbs: BTreeSet<String> = paths.iter().map(|path| function_for(path)).collect();
-    assert_eq!(verbs.len(), 20, "the v1 surface's verbs: {verbs:?}");
+    assert_eq!(verbs.len(), 21, "the v1 surface's verbs: {verbs:?}");
 
     let dispatch = function_body(CLI_SOURCE, "pub fn dispatch(");
     let arm = Regex::new(
@@ -123,6 +123,7 @@ fn the_surface_is_the_v1_surface_and_has_no_re_key() {
         "comments launches",
         "comments check",
         "comments settle",
+        "comments answer",
         "statuses",
         "kinds",
         "config show",

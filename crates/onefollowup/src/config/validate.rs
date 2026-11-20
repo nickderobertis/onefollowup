@@ -337,6 +337,17 @@ pub fn validate(config: &Config) -> Result<(), Refusal> {
             );
         }
     }
+    if config
+        .comments
+        .launch_command
+        .as_ref()
+        .is_some_and(Vec::is_empty)
+    {
+        return refuse(
+            "comments.launch_command".to_owned(),
+            "is an empty argv".to_owned(),
+        );
+    }
     if let Some(owner) = &config.hooks.owner {
         for (part, value) in [
             ("session", Some(&owner.session)),

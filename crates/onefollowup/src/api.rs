@@ -5,7 +5,8 @@
 //!
 //! The verify loop — [`draft`], [`snapshot`], [`prepare`], the agent's `ticket_*` tools, [`check`],
 //! [`publish`] and [`settle`] — the comment pass — [`comments_gather`],
-//! [`comments_launches`], [`comments_check`] and [`comments_settle`] — and [`config_show`]
+//! [`comments_launches`], [`comments_check`], [`comments_settle`] and [`comments_answer`],
+//! which runs gather, launches and settle in sequence — and [`config_show`]
 //! and [`kinds`] are implemented; every other verb refuses with [`Error::NotImplemented`],
 //! after its arguments are parsed.
 
@@ -399,6 +400,44 @@ pub struct CommentsSettled {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub watermark: Option<String>,
     /// Each store operation it made.
+    #[serde(default, skip_serializing_if = "no_operations")]
+    pub store_operations: Vec<StoreOperation>,
+}
+
+/// One batch `comments answer` launched, and how its `comments.launch_command` exited.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct AnsweredLaunch {
+    /// The batch that answered.
+    pub batch: String,
+    /// Its feedback file.
+    pub feedback: PathBuf,
+    /// The command's exit code: 0, since a pass that settled had every batch's command exit 0.
+    pub exit: i32,
+}
+
+/// What `comments answer` did.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(untagged)]
+pub enum CommentsAnswered {
+    /// A dry run: exactly what `comments gather --dry-run` prints; nothing was launched.
+    DryRun(Gathered),
+    /// A pass that gathered, launched every batch and settled.
+    Settled(AnsweredPass),
+}
+
+/// A `comments answer` pass that settled.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct AnsweredPass {
+    /// [`SCHEMA_VERSION`].
+    pub schema_version: u32,
+    /// The snapshot gathered.
+    pub snapshot: PathBuf,
+    /// Each launched batch, in the launch list's order.
+    pub launches: Vec<AnsweredLaunch>,
+    /// What the settle settled, as `comments settle` prints it but for its store operations,
+    /// which are in this pass's own.
+    pub settled: CommentsSettled,
+    /// Each store operation the pass made: the gathering's, then the settle's.
     #[serde(default, skip_serializing_if = "no_operations")]
     pub store_operations: Vec<StoreOperation>,
 }
@@ -869,6 +908,30 @@ pub fn comments_settle(
     args: CommentsSettleArgs,
 ) -> Result<CommentsSettled, Error> {
     comments::settle::run(settings, args)
+}
+
+/// `onefollowup comments answer`: gather, launch every batch's answering, and settle.
+#[derive(Debug, Clone, PartialEq, Eq, Args)]
+pub struct CommentsAnswerArgs {
+    /// Print what `comments gather --dry-run` prints, launching and settling nothing.
+    #[arg(long)]
+    pub dry_run: bool,
+}
+
+/// Gather as `comments gather`, plan the launches as `comments launches`, run
+/// `comments.launch_command` once per launch in order, and — only when every one exited 0 —
+/// settle as `comments settle`.
+///
+/// # Errors
+///
+/// No `comments.launch_command` (refused before anything is gathered); what gather, launches
+/// or settle refuses with; or a batch whose command did not exit 0, naming every such batch,
+/// with nothing settled.
+pub fn comments_answer(
+    settings: &Settings,
+    args: CommentsAnswerArgs,
+) -> Result<CommentsAnswered, Error> {
+    comments::answer::run(settings, args)
 }
 
 /// The arguments of a verb that takes none.

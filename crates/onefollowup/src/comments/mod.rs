@@ -1,5 +1,6 @@
 //! The comment-answering pass: `comments gather`, `comments launches`, `comments check` and
-//! `comments settle`, which answer people's comments on a host's follow-up tickets, each once,
+//! `comments settle` — and `comments answer`, which runs gather, launches and settle in
+//! sequence — which answer people's comments on a host's follow-up tickets, each once,
 //! by the batch that owns the ticket, on any destination the store reaches.
 //!
 //! **Its destination work is three store calls.** Gathering is one comments-since listing of
@@ -19,6 +20,7 @@
 //! batch's account was sound and whose every reply was verified. So a comment no verified
 //! reply answers is listed again, and one a verified reply answers is left out as answered.
 
+pub mod answer;
 pub mod check;
 pub mod gather;
 pub mod launch;

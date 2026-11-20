@@ -135,6 +135,8 @@ pub enum CommentsCommand {
     Check(api::CommentsCheckArgs),
     /// Settle a snapshot's answers.
     Settle(api::CommentsSettleArgs),
+    /// Gather, run `comments.launch_command` per batch, and settle when every batch succeeded.
+    Answer(api::CommentsAnswerArgs),
 }
 
 /// `onefollowup config …`.
@@ -207,6 +209,9 @@ pub fn dispatch(command: Command, config: &ConfigArgs) -> Result<String, Error> 
         }
         Command::Comments(CommentsCommand::Settle(args)) => {
             handle(config, args, api::comments_settle)
+        }
+        Command::Comments(CommentsCommand::Answer(args)) => {
+            handle(config, args, api::comments_answer)
         }
         Command::Statuses(args) => handle(config, args, api::statuses),
         Command::Kinds(args) => handle(config, args, api::kinds),

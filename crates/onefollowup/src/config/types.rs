@@ -32,6 +32,7 @@ pub const KEYS: &[&str] = &[
     "routes",
     "hooks",
     "snapshot",
+    "comments",
 ];
 
 /// The effective configuration of onefollowup.
@@ -81,6 +82,8 @@ pub struct Config {
     pub hooks: Hooks,
     /// The comment snapshot's settings.
     pub snapshot: SnapshotSettings,
+    /// How `comments answer` launches each batch's answering.
+    pub comments: CommentsSettings,
 }
 
 /// A status role: what a ticket's status means to the loop.
@@ -945,6 +948,20 @@ pub struct SnapshotSettings {
     /// How long a snapshot stays launchable: a whole number of `s`, `m`, `h` or `d`.
     pub launchable_for: String,
 }
+
+/// How `comments answer` launches each batch's answering.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CommentsSettings {
+    /// The argv `comments answer` runs once per launched batch, each argument's
+    /// [`LAUNCH_PLACEHOLDERS`] replaced with that launch's values; `None` refuses the verb.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub launch_command: Option<Vec<String>>,
+}
+
+/// The placeholders `comments.launch_command` is given, each replaced wherever an argument
+/// holds it: the batch, its feedback file's path, and the snapshot directory's path.
+pub const LAUNCH_PLACEHOLDERS: [&str; 3] = ["{batch}", "{feedback}", "{snapshot}"];
 
 fn strings(value: &Value) -> Option<Vec<String>> {
     value

@@ -664,6 +664,9 @@ fn verb(settings: &Settings, command: Command, stdin: &str) -> Result<String, Er
         Command::Comments(CommentsCommand::Settle(args)) => {
             call(settings, args, api::comments_settle)
         }
+        Command::Comments(CommentsCommand::Answer(args)) => {
+            call(settings, args, api::comments_answer)
+        }
         Command::Statuses(args) => call(settings, args, api::statuses),
         Command::Kinds(args) => call(settings, args, api::kinds),
         Command::Config(ConfigCommand::Show(args)) => call(settings, args, api::config_show),

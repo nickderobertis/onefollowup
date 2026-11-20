@@ -77,6 +77,7 @@ fn with_nothing_configured_it_prints_every_default() {
         ("routes", json!([])),
         ("hooks", json!({})),
         ("snapshot", json!({"launchable_for": "24h"})),
+        ("comments", json!({})),
     ] {
         assert_eq!(config[key], expected, "{key}");
     }
@@ -430,6 +431,17 @@ fn case(key: &str) -> Option<Case> {
             "snapshot.launchable_for=3h",
             "/snapshot/launchable_for",
             [json!("1h"), json!("2h"), json!("3h")],
+        ),
+        "comments" => simple(
+            "comments: {launch_command: [f, '{batch}']}",
+            ("ONEFOLLOWUP_COMMENTS__LAUNCH_COMMAND", "[e, '{feedback}']"),
+            "comments.launch_command=[s, '{snapshot}']",
+            "/comments/launch_command",
+            [
+                json!(["f", "{batch}"]),
+                json!(["e", "{feedback}"]),
+                json!(["s", "{snapshot}"]),
+            ],
         ),
         _ => return None,
     })

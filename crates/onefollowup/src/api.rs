@@ -411,8 +411,19 @@ pub struct AnsweredLaunch {
     pub batch: String,
     /// Its feedback file.
     pub feedback: PathBuf,
-    /// The command's exit code: 0, since a pass that settled had every batch's command exit 0.
-    pub exit: i32,
+    /// The command's exit code, `-1` when a signal ended it; `null` when it could not start.
+    pub exit: Option<i32>,
+    /// Why the command could not start, when it could not.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+impl AnsweredLaunch {
+    /// Whether the batch's command exited 0.
+    #[must_use]
+    pub fn succeeded(&self) -> bool {
+        self.exit == Some(0)
+    }
 }
 
 /// What `comments answer` did.
@@ -421,22 +432,25 @@ pub struct AnsweredLaunch {
 pub enum CommentsAnswered {
     /// A dry run: exactly what `comments gather --dry-run` prints; nothing was launched.
     DryRun(Gathered),
-    /// A pass that gathered, launched every batch and settled.
-    Settled(AnsweredPass),
+    /// A pass that gathered and launched every batch: settled when every command exited 0.
+    Pass(AnsweredPass),
 }
 
-/// A `comments answer` pass that settled.
+/// A `comments answer` pass: what it launched and, when every batch succeeded, what it settled.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct AnsweredPass {
     /// [`SCHEMA_VERSION`].
     pub schema_version: u32,
     /// The snapshot gathered.
     pub snapshot: PathBuf,
-    /// Each launched batch, in the launch list's order.
+    /// Each launched batch, in the launch list's order, with its command's exit status.
     pub launches: Vec<AnsweredLaunch>,
+    /// Each batch whose command did not exit 0, in launch order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub failed: Vec<String>,
     /// What the settle settled, as `comments settle` prints it but for its store operations,
-    /// which are in this pass's own.
-    pub settled: CommentsSettled,
+    /// which are in this pass's own; `null` when a batch failed, since then nothing was settled.
+    pub settled: Option<CommentsSettled>,
     /// Each store operation the pass made: the gathering's, then the settle's.
     #[serde(default, skip_serializing_if = "no_operations")]
     pub store_operations: Vec<StoreOperation>,
@@ -925,8 +939,8 @@ pub struct CommentsAnswerArgs {
 /// # Errors
 ///
 /// No `comments.launch_command` (refused before anything is gathered); what gather, launches
-/// or settle refuses with; or a batch whose command did not exit 0, naming every such batch,
-/// with nothing settled.
+/// or settle refuses with; or [`Error::Unsettled`], carrying the pass's answer, when a batch's
+/// command did not exit 0: then nothing was settled.
 pub fn comments_answer(
     settings: &Settings,
     args: CommentsAnswerArgs,

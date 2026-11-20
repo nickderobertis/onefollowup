@@ -45,7 +45,7 @@ library is the `onefollowup` crate.
 | `comments launches --snapshot <S>` | Claim the snapshot once and write one feedback file per batch it selected comments for, reading no destination; refused for a snapshot already launched, a dry run's older than `snapshot.launchable_for`, or one gathered before another sharing a comment was launched. |
 | `comments check --feedback <F>` | Hold a feedback dispatch's response account to its snapshot, and its batch's tickets to changing only quoted issues' tickets; `sound` says whether it breaks no rule. |
 | `comments settle --snapshot <S> [--launched <BATCH>=<FEEDBACK>]...` | Verify every reply in one batched read, send every ticket change in one `update-many`, record what did not certainly land in `pending.json`, and move the watermark when it may. Without `--launched`, every batch the snapshot launched. |
-| `comments answer [--dry-run]` | The comment pass in one verb: gather exactly as `comments gather`, plan the launches exactly as `comments launches --snapshot` that snapshot, run `comments.launch_command` once per launch in the launch list's order, and — only when every batch's command exited 0, an empty launch list included — settle exactly as `comments settle --snapshot` that snapshot. A batch whose command exits non-zero does not stop the others; then nothing is settled, so the watermark holds, and the verb exits 1 naming every failed batch; a re-run gathers afresh. Refused (exit 2) without `comments.launch_command`, before anything is gathered. `--dry-run` prints exactly what `comments gather --dry-run` prints and launches and settles nothing. |
+| `comments answer [--dry-run]` | The comment pass in one verb: gather exactly as `comments gather`, plan the launches exactly as `comments launches --snapshot` that snapshot, run `comments.launch_command` once per launch in the launch list's order, and — only when every batch's command exited 0, an empty launch list included — settle exactly as `comments settle --snapshot` that snapshot. A batch whose command exits non-zero does not stop the others; then nothing is settled, so the watermark holds, and the verb exits 1, still printing its document — every batch's exit status, `failed` naming every failed batch, `settled` `null` — and naming the failed batches on stderr; a re-run gathers afresh. Refused (exit 2) without `comments.launch_command`, before anything is gathered. `--dry-run` prints exactly what `comments gather --dry-run` prints and launches and settles nothing. |
 | `statuses` | Read the destination's statuses against the configured status roles. |
 | `kinds` | Print the effective kinds, relations, dispositions and routes, as the verifying agent reads them. |
 | `config show [--sources]` | Print the effective configuration as JSON; `--sources` names the layer each key came from. |
@@ -99,7 +99,11 @@ field declared here is a contract change agreed with the manager first. `kinds` 
 
 #### `comments answer`
 
-Without `--dry-run`; with it, exactly the `comments gather --dry-run` document.
+Without `--dry-run`; with it, exactly the `comments gather --dry-run` document. `launches`
+names every launched batch in launch order with its command's `exit` (`-1` when a signal ended
+it; `null`, with an `error`, when it could not start). When a batch's command did not exit 0
+the verb still prints this document, exiting 1: `failed` lists each such batch in launch order
+and `settled` is `null`, since nothing was settled.
 
 ```json
 {

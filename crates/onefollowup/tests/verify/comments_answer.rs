@@ -2,7 +2,8 @@
 //! comment each; `comments.launch_command` is a scratch `answer-batch` script that records its
 //! arguments and, playing the answering agent, posts the reply its batch's feedback file shapes
 //! and writes the account. Both batches succeeding settle as `comments settle` does; one
-//! failing settles nothing, and a re-run gathers afresh and settles; `--dry-run` is
+//! failing settles nothing, its answer naming every batch's exit, and a re-run gathers afresh
+//! and settles; `--dry-run` is
 //! `comments gather --dry-run`; and a configuration without the key is refused before anything
 //! is gathered.
 
@@ -216,7 +217,43 @@ fn a_failed_batch_settles_nothing_and_a_re_run_gathers_afresh() {
     let (mut world, commented) = answering_world(CONFIG);
     std::fs::write(world.root.join(format!("fail-{B}")), "").expect("the failure");
 
-    let refused = world.fails(1, &["comments", "answer"], "");
+    let (printed, refused) = world.fails_printing(1, &["comments", "answer"], "");
+    let recorded = calls(&world.root);
+    assert_eq!(recorded.len(), 2, "the other batch's command still ran");
+    assert_eq!(
+        printed["snapshot"],
+        recorded[0].snapshot.as_str(),
+        "the answer names the snapshot the commands were given: {printed}"
+    );
+    let statuses: Vec<(&str, &str, i64)> = printed["launches"]
+        .as_array()
+        .expect("launches")
+        .iter()
+        .map(|one| {
+            (
+                one["batch"].as_str().expect("a batch"),
+                one["feedback"].as_str().expect("a feedback file"),
+                one["exit"].as_i64().expect("an exit"),
+            )
+        })
+        .collect();
+    assert_eq!(
+        statuses,
+        recorded
+            .iter()
+            .map(|call| (
+                call.batch.as_str(),
+                call.feedback.as_str(),
+                if call.batch == B { 3 } else { 0 }
+            ))
+            .collect::<Vec<_>>(),
+        "every batch's exit status, in launch order: {printed}"
+    );
+    assert_eq!(printed["failed"], serde_json::json!([B]), "{printed}");
+    assert!(
+        printed.get("settled").is_some_and(Value::is_null),
+        "the answer says nothing was settled: {printed}"
+    );
     assert!(
         refused.contains(&format!(
             "failed for batch `{B}` (exit 3: the answering dispatch of {B} failed)"
@@ -227,12 +264,6 @@ fn a_failed_batch_settles_nothing_and_a_re_run_gathers_afresh() {
         !refused.contains(&format!("`{A}`")),
         "only the failed batch is named: {refused}"
     );
-    let batches: Vec<String> = calls(&world.root)
-        .into_iter()
-        .map(|call| call.batch)
-        .collect();
-    assert_eq!(batches.len(), 2, "the other batch's command still ran");
-    assert!(batches.contains(&A.to_owned()) && batches.contains(&B.to_owned()));
     assert!(
         watermark(&world, DESTINATION).is_none(),
         "nothing was settled, so the watermark is unmoved"
@@ -259,6 +290,32 @@ fn a_failed_batch_settles_nothing_and_a_re_run_gathers_afresh() {
     assert_eq!(
         answered["settled"]["watermark"], moved["since"],
         "{answered}"
+    );
+}
+
+#[test]
+fn a_command_that_cannot_start_fails_its_batch_with_no_exit_and_settles_nothing() {
+    let (world, _) = answering_world(
+        "host_label: build-host-1\ncomments:\n  launch_command: [/nonexistent/answer-batch, '{batch}']\n",
+    );
+    let (printed, refused) = world.fails_printing(1, &["comments", "answer"], "");
+    let launches = printed["launches"].as_array().expect("launches");
+    assert_eq!(launches.len(), 2, "every batch was tried: {printed}");
+    for launch in launches {
+        assert_eq!(launch["exit"], Value::Null, "{printed}");
+        assert!(
+            launch["error"]
+                .as_str()
+                .is_some_and(|error| error.contains("could not be started")),
+            "{printed}"
+        );
+    }
+    assert_eq!(printed["failed"], serde_json::json!([A, B]), "{printed}");
+    assert_eq!(printed["settled"], Value::Null, "{printed}");
+    assert!(refused.contains(&format!("`{A}`")) && refused.contains(&format!("`{B}`")));
+    assert!(
+        watermark(&world, DESTINATION).is_none(),
+        "nothing was settled"
     );
 }
 

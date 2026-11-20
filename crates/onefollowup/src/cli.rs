@@ -162,6 +162,11 @@ pub fn main() -> ExitCode {
             ExitCode::from(EXIT_OK)
         }
         Err(error) => {
+            if let Some(answer) = error.answer() {
+                let mut out = std::io::stdout().lock();
+                // The exit code says the verb failed whether or not the document is written.
+                let _ignored = writeln!(out, "{}", print(answer)).and_then(|()| out.flush());
+            }
             match error {
                 Error::NotImplemented { .. } => eprintln!("onefollowup {error}"),
                 _ => eprintln!("onefollowup: {error}"),

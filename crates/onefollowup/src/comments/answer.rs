@@ -4,8 +4,9 @@
 //!
 //! Each step is the verb it names, so its state is the snapshot those verbs keep in this
 //! host's working files and nothing is held between them in the host. A batch whose command
-//! fails does not stop the others; the pass then settles nothing, so the watermark holds and a
-//! re-run gathers afresh, as a re-run of the three verbs does.
+//! fails does not stop the others; the pass then settles nothing — its answer still names
+//! every launch's exit status, with `settled` null — so the watermark holds and a re-run
+//! gathers afresh, as a re-run of the three verbs does.
 
 use serde_json::json;
 
@@ -22,7 +23,8 @@ use crate::verify::command;
 /// # Errors
 ///
 /// No `comments.launch_command`, refused before anything is gathered; what gather, launches
-/// or settle refuses with; or, with nothing settled, a batch whose command did not exit 0.
+/// or settle refuses with; or, with nothing settled, [`Error::Unsettled`] carrying the pass's
+/// answer — every launch's exit status and no settle — when a batch's command did not exit 0.
 pub fn run(settings: &Settings, args: CommentsAnswerArgs) -> Result<CommentsAnswered, Error> {
     let Some(argv) = settings.config().comments.launch_command.clone() else {
         return Err(Error::Refused(format!(
@@ -52,33 +54,61 @@ pub fn run(settings: &Settings, args: CommentsAnswerArgs) -> Result<CommentsAnsw
     )?;
 
     let mut launches = Vec::new();
-    let mut failed = Vec::new();
+    let mut failures = Vec::new();
     for launch in &planned.launches {
-        match launched(settings, &argv, launch, &planned.snapshot) {
-            Ok(ran) if ran.exit == 0 => launches.push(AnsweredLaunch {
-                batch: launch.batch.clone(),
-                feedback: launch.feedback.clone(),
-                exit: ran.exit,
-            }),
+        let outcome = match launched(settings, &argv, launch, &planned.snapshot) {
             Ok(ran) => {
-                let said = ran
-                    .stderr
-                    .lines()
-                    .rev()
-                    .find(|line| !line.trim().is_empty())
-                    .map(|line| format!(": {}", line.trim()))
-                    .unwrap_or_default();
-                failed.push(format!("`{}` (exit {}{said})", launch.batch, ran.exit));
+                if ran.exit != 0 {
+                    let said = ran
+                        .stderr
+                        .lines()
+                        .rev()
+                        .find(|line| !line.trim().is_empty())
+                        .map(|line| format!(": {}", line.trim()))
+                        .unwrap_or_default();
+                    failures.push(format!("`{}` (exit {}{said})", launch.batch, ran.exit));
+                }
+                AnsweredLaunch {
+                    batch: launch.batch.clone(),
+                    feedback: launch.feedback.clone(),
+                    exit: Some(ran.exit),
+                    error: None,
+                }
             }
-            Err(error) => failed.push(format!("`{}` ({error})", launch.batch)),
-        }
+            Err(error) => {
+                failures.push(format!("`{}` ({error})", launch.batch));
+                AnsweredLaunch {
+                    batch: launch.batch.clone(),
+                    feedback: launch.feedback.clone(),
+                    exit: None,
+                    error: Some(error),
+                }
+            }
+        };
+        launches.push(outcome);
     }
+    let failed: Vec<String> = launches
+        .iter()
+        .filter(|launch| !launch.succeeded())
+        .map(|launch| launch.batch.clone())
+        .collect();
     if !failed.is_empty() {
-        return Err(Error::Failed(format!(
+        let message = format!(
             "`comments.launch_command` failed for batch {}; nothing was settled from the snapshot {}, so the watermark holds: run `onefollowup comments answer` again to gather afresh",
-            failed.join(", batch "),
+            failures.join(", batch "),
             planned.snapshot.display()
-        )));
+        );
+        return Err(Error::Unsettled {
+            message,
+            answer: Box::new(CommentsAnswered::Pass(AnsweredPass {
+                schema_version: SCHEMA_VERSION,
+                snapshot: planned.snapshot,
+                launches,
+                failed,
+                settled: None,
+                store_operations: gathered.store_operations,
+            })),
+        });
     }
 
     let mut settled = crate::api::comments_settle(
@@ -90,11 +120,12 @@ pub fn run(settings: &Settings, args: CommentsAnswerArgs) -> Result<CommentsAnsw
     )?;
     let mut store_operations = gathered.store_operations;
     store_operations.append(&mut settled.store_operations);
-    Ok(CommentsAnswered::Settled(AnsweredPass {
+    Ok(CommentsAnswered::Pass(AnsweredPass {
         schema_version: SCHEMA_VERSION,
         snapshot: planned.snapshot,
         launches,
-        settled,
+        failed: Vec::new(),
+        settled: Some(settled),
         store_operations,
     }))
 }

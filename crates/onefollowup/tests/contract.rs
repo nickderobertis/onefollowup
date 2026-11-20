@@ -266,15 +266,17 @@ fn examples() -> BTreeMap<&'static str, Value> {
         ),
         (
             "comments answer",
-            json(to_value(CommentsAnswered::Settled(AnsweredPass {
+            json(to_value(CommentsAnswered::Pass(AnsweredPass {
                 schema_version: 1,
                 snapshot: snapshot.clone(),
                 launches: vec![AnsweredLaunch {
                     batch: BATCH.to_owned(),
                     feedback: feedback.clone(),
-                    exit: 0,
+                    exit: Some(0),
+                    error: None,
                 }],
-                settled: CommentsSettled {
+                failed: Vec::new(),
+                settled: Some(CommentsSettled {
                     schema_version: 1,
                     snapshot: snapshot.clone(),
                     settled: vec![SettledLaunch {
@@ -290,7 +292,7 @@ fn examples() -> BTreeMap<&'static str, Value> {
                     needs_attention: false,
                     watermark: Some("2026-11-01T12:00:00Z".to_owned()),
                     store_operations: Vec::new(),
-                },
+                }),
                 store_operations: Vec::new(),
             }))),
         ),

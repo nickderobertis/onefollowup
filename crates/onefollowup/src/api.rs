@@ -5,7 +5,8 @@
 //!
 //! The verify loop — [`draft`], [`snapshot`], [`prepare`], the agent's `ticket_*` tools, [`check`],
 //! [`publish`] and [`settle`] — the comment pass — [`comments_gather`],
-//! [`comments_launches`], [`comments_check`] and [`comments_settle`] — and [`config_show`]
+//! [`comments_launches`], [`comments_check`], [`comments_settle`] and [`comments_answer`],
+//! which runs gather, launches and settle in sequence — and [`config_show`]
 //! and [`kinds`] are implemented; every other verb refuses with [`Error::NotImplemented`],
 //! after its arguments are parsed.
 
@@ -399,6 +400,58 @@ pub struct CommentsSettled {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub watermark: Option<String>,
     /// Each store operation it made.
+    #[serde(default, skip_serializing_if = "no_operations")]
+    pub store_operations: Vec<StoreOperation>,
+}
+
+/// One batch `comments answer` launched, and how its `comments.launch_command` exited.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct AnsweredLaunch {
+    /// The batch that answered.
+    pub batch: String,
+    /// Its feedback file.
+    pub feedback: PathBuf,
+    /// The command's exit code, `-1` when a signal ended it; `null` when it could not start.
+    pub exit: Option<i32>,
+    /// Why the command could not start, when it could not.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+impl AnsweredLaunch {
+    /// Whether the batch's command exited 0.
+    #[must_use]
+    pub fn succeeded(&self) -> bool {
+        self.exit == Some(0)
+    }
+}
+
+/// What `comments answer` did.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(untagged)]
+pub enum CommentsAnswered {
+    /// A dry run: exactly what `comments gather --dry-run` prints; nothing was launched.
+    DryRun(Gathered),
+    /// A pass that gathered and launched every batch: settled when every command exited 0.
+    Pass(AnsweredPass),
+}
+
+/// A `comments answer` pass: what it launched and, when every batch succeeded, what it settled.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct AnsweredPass {
+    /// [`SCHEMA_VERSION`].
+    pub schema_version: u32,
+    /// The snapshot gathered.
+    pub snapshot: PathBuf,
+    /// Each launched batch, in the launch list's order, with its command's exit status.
+    pub launches: Vec<AnsweredLaunch>,
+    /// Each batch whose command did not exit 0, in launch order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub failed: Vec<String>,
+    /// What the settle settled, as `comments settle` prints it but for its store operations,
+    /// which are in this pass's own; `null` when a batch failed, since then nothing was settled.
+    pub settled: Option<CommentsSettled>,
+    /// Each store operation the pass made: the gathering's, then the settle's.
     #[serde(default, skip_serializing_if = "no_operations")]
     pub store_operations: Vec<StoreOperation>,
 }
@@ -869,6 +922,30 @@ pub fn comments_settle(
     args: CommentsSettleArgs,
 ) -> Result<CommentsSettled, Error> {
     comments::settle::run(settings, args)
+}
+
+/// `onefollowup comments answer`: gather, launch every batch's answering, and settle.
+#[derive(Debug, Clone, PartialEq, Eq, Args)]
+pub struct CommentsAnswerArgs {
+    /// Print what `comments gather --dry-run` prints, launching and settling nothing.
+    #[arg(long)]
+    pub dry_run: bool,
+}
+
+/// Gather as `comments gather`, plan the launches as `comments launches`, run
+/// `comments.launch_command` once per launch in order, and — only when every one exited 0 —
+/// settle as `comments settle`.
+///
+/// # Errors
+///
+/// No `comments.launch_command` (refused before anything is gathered); what gather, launches
+/// or settle refuses with; or [`Error::Unsettled`], carrying the pass's answer, when a batch's
+/// command did not exit 0: then nothing was settled.
+pub fn comments_answer(
+    settings: &Settings,
+    args: CommentsAnswerArgs,
+) -> Result<CommentsAnswered, Error> {
+    comments::answer::run(settings, args)
 }
 
 /// The arguments of a verb that takes none.

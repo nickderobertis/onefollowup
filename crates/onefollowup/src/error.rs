@@ -44,9 +44,27 @@ pub enum Error {
     /// The verb failed while running.
     #[error("{0}")]
     Failed(String),
+    /// `comments answer` launched every batch and at least one command failed, so nothing was
+    /// settled; the CLI prints `answer` on stdout as the verb's document.
+    #[error("{message}")]
+    Unsettled {
+        /// What failed, naming every failed batch.
+        message: String,
+        /// The pass's answer: every launch's exit status, and no settle.
+        answer: Box<crate::api::CommentsAnswered>,
+    },
 }
 
 impl Error {
+    /// The document a failure still prints on stdout, when it has one.
+    #[must_use]
+    pub fn answer(&self) -> Option<&crate::api::CommentsAnswered> {
+        match self {
+            Self::Unsettled { answer, .. } => Some(answer),
+            _ => None,
+        }
+    }
+
     /// The exit code the CLI ends with.
     #[must_use]
     pub fn exit_code(&self) -> u8 {
@@ -56,7 +74,8 @@ impl Error {
             | Self::Store(_)
             | Self::Work(_)
             | Self::Template(_)
-            | Self::Failed(_) => EXIT_FAILED,
+            | Self::Failed(_)
+            | Self::Unsettled { .. } => EXIT_FAILED,
         }
     }
 }

@@ -12,6 +12,7 @@ mod comment_budgets;
 mod comment_forms;
 mod comment_refusals;
 mod comments;
+mod comments_answer;
 mod configuration;
 mod default_shape;
 mod duplicates;

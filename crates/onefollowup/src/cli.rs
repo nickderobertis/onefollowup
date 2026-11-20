@@ -135,6 +135,8 @@ pub enum CommentsCommand {
     Check(api::CommentsCheckArgs),
     /// Settle a snapshot's answers.
     Settle(api::CommentsSettleArgs),
+    /// Gather, run `comments.launch_command` per batch, and settle when every batch succeeded.
+    Answer(api::CommentsAnswerArgs),
 }
 
 /// `onefollowup config …`.
@@ -160,6 +162,11 @@ pub fn main() -> ExitCode {
             ExitCode::from(EXIT_OK)
         }
         Err(error) => {
+            if let Some(answer) = error.answer() {
+                let mut out = std::io::stdout().lock();
+                // The exit code says the verb failed whether or not the document is written.
+                let _ignored = writeln!(out, "{}", print(answer)).and_then(|()| out.flush());
+            }
             match error {
                 Error::NotImplemented { .. } => eprintln!("onefollowup {error}"),
                 _ => eprintln!("onefollowup: {error}"),
@@ -207,6 +214,9 @@ pub fn dispatch(command: Command, config: &ConfigArgs) -> Result<String, Error> 
         }
         Command::Comments(CommentsCommand::Settle(args)) => {
             handle(config, args, api::comments_settle)
+        }
+        Command::Comments(CommentsCommand::Answer(args)) => {
+            handle(config, args, api::comments_answer)
         }
         Command::Statuses(args) => handle(config, args, api::statuses),
         Command::Kinds(args) => handle(config, args, api::kinds),

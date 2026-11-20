@@ -210,7 +210,10 @@ impl World {
             },
             Err(error) => Ran {
                 code: error.exit_code().into(),
-                stdout: String::new(),
+                stdout: error
+                    .answer()
+                    .map(onefollowup::cli::print)
+                    .unwrap_or_default(),
                 stderr: format!("onefollowup: {error}"),
             },
         }
@@ -257,6 +260,27 @@ impl World {
             output.stdout
         );
         output.stderr
+    }
+
+    /// Run `args`, require it to exit `code` having printed one JSON document on stdout, and
+    /// answer that document and its stderr.
+    pub fn fails_printing(&self, code: i32, args: &[&str], stdin: &str) -> (Value, String) {
+        let output = self.run(args, stdin);
+        assert_eq!(
+            output.code,
+            code,
+            "`onefollowup {}`: {}",
+            args.join(" "),
+            output.stderr
+        );
+        let printed = serde_json::from_str(&output.stdout).unwrap_or_else(|error| {
+            panic!(
+                "`onefollowup {}` printed no one JSON document ({error}): {:?}",
+                args.join(" "),
+                output.stdout
+            )
+        });
+        (printed, output.stderr)
     }
 
     /// The destination operations of every phase kept so far, as `(phase, op, source, items)`.
@@ -663,6 +687,9 @@ fn verb(settings: &Settings, command: Command, stdin: &str) -> Result<String, Er
         }
         Command::Comments(CommentsCommand::Settle(args)) => {
             call(settings, args, api::comments_settle)
+        }
+        Command::Comments(CommentsCommand::Answer(args)) => {
+            call(settings, args, api::comments_answer)
         }
         Command::Statuses(args) => call(settings, args, api::statuses),
         Command::Kinds(args) => call(settings, args, api::kinds),

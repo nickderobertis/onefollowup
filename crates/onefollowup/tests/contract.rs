@@ -13,10 +13,10 @@ use std::path::PathBuf;
 use clap::CommandFactory as _;
 use indexmap::IndexMap;
 use onefollowup::api::{
-    BoardComment, BoardStatus, Checked, CommentsChecked, CommentsSettled, Drafted, Gathered,
-    HookRun, ItemStatus, Launch, Launches, Prepared, Problem, PublishOutcome, Published,
-    RoleStatus, SearchHit, SearchResults, Settled, SettledLaunch, Snapshotted, Staged, StagedOp,
-    StatusesShown, TicketValidated,
+    AnsweredLaunch, AnsweredPass, BoardComment, BoardStatus, Checked, CommentsAnswered,
+    CommentsChecked, CommentsSettled, Drafted, Gathered, HookRun, ItemStatus, Launch, Launches,
+    Prepared, Problem, PublishOutcome, Published, RoleStatus, SearchHit, SearchResults, Settled,
+    SettledLaunch, Snapshotted, Staged, StagedOp, StatusesShown, TicketValidated,
 };
 use onefollowup::cli::Cli;
 use onefollowup::config::StatusRole;
@@ -263,6 +263,38 @@ fn examples() -> BTreeMap<&'static str, Value> {
                     feedback: feedback.clone(),
                 }],
             })),
+        ),
+        (
+            "comments answer",
+            json(to_value(CommentsAnswered::Pass(AnsweredPass {
+                schema_version: 1,
+                snapshot: snapshot.clone(),
+                launches: vec![AnsweredLaunch {
+                    batch: BATCH.to_owned(),
+                    feedback: feedback.clone(),
+                    exit: Some(0),
+                    error: None,
+                }],
+                failed: Vec::new(),
+                settled: Some(CommentsSettled {
+                    schema_version: 1,
+                    snapshot: snapshot.clone(),
+                    settled: vec![SettledLaunch {
+                        batch: BATCH.to_owned(),
+                        feedback: feedback.clone(),
+                        writes: 2,
+                        pending: 0,
+                        verified: 2,
+                        outstanding: 0,
+                        problems: Vec::new(),
+                    }],
+                    pending: 0,
+                    needs_attention: false,
+                    watermark: Some("2026-11-01T12:00:00Z".to_owned()),
+                    store_operations: Vec::new(),
+                }),
+                store_operations: Vec::new(),
+            }))),
         ),
         (
             "comments check",

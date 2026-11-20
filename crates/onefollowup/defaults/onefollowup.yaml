@@ -252,3 +252,6 @@ hooks: {}
 snapshot:
   # How long a comment snapshot stays launchable after it is taken.
   launchable_for: 24h
+# The `launch_command` argv `comments answer` runs once per launched batch, with `{batch}`,
+# `{feedback}` and `{snapshot}` replaced: none by default, which refuses `comments answer`.
+comments: {}

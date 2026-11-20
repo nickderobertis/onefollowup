@@ -45,6 +45,7 @@ library is the `onefollowup` crate.
 | `comments launches --snapshot <S>` | Claim the snapshot once and write one feedback file per batch it selected comments for, reading no destination; refused for a snapshot already launched, a dry run's older than `snapshot.launchable_for`, or one gathered before another sharing a comment was launched. |
 | `comments check --feedback <F>` | Hold a feedback dispatch's response account to its snapshot, and its batch's tickets to changing only quoted issues' tickets; `sound` says whether it breaks no rule. |
 | `comments settle --snapshot <S> [--launched <BATCH>=<FEEDBACK>]...` | Verify every reply in one batched read, send every ticket change in one `update-many`, record what did not certainly land in `pending.json`, and move the watermark when it may. Without `--launched`, every batch the snapshot launched. |
+| `comments answer [--dry-run]` | The comment pass in one verb: gather exactly as `comments gather`, plan the launches exactly as `comments launches --snapshot` that snapshot, run `comments.launch_command` once per launch in the launch list's order, and — only when every batch's command exited 0, an empty launch list included — settle exactly as `comments settle --snapshot` that snapshot. A batch whose command exits non-zero does not stop the others; then nothing is settled, so the watermark holds, and the verb exits 1, still printing its document — every batch's exit status, `failed` naming every failed batch, `settled` `null` — and naming the failed batches on stderr; a re-run gathers afresh. Refused (exit 2) without `comments.launch_command`, before anything is gathered. `--dry-run` prints exactly what `comments gather --dry-run` prints and launches and settles nothing. |
 | `statuses` | Read the destination's statuses against the configured status roles. |
 | `kinds` | Print the effective kinds, relations, dispositions and routes, as the verifying agent reads them. |
 | `config show [--sources]` | Print the effective configuration as JSON; `--sources` names the layer each key came from. |
@@ -93,6 +94,42 @@ field declared here is a contract change agreed with the manager first. `kinds` 
       "message": "the input has no disposition; give it exactly one"
     }
   ]
+}
+```
+
+#### `comments answer`
+
+Without `--dry-run`; with it, exactly the `comments gather --dry-run` document. `launches`
+names every launched batch in launch order with its command's `exit` (`-1` when a signal ended
+it; `null`, with an `error`, when it could not start). When a batch's command did not exit 0
+the verb still prints this document, exiting 1: `failed` lists each such batch in launch order
+and `settled` is `null`, since nothing was settled.
+
+```json
+{
+  "schema_version": 1,
+  "snapshot": "feedback/.snapshots/20261101T120000Z",
+  "launches": [
+    {
+      "batch": "nightly-2026-11-01",
+      "feedback": "feedback/nightly-2026-11-01/20261101T120000Z.md",
+      "exit": 0
+    }
+  ],
+  "settled": {
+    "schema_version": 1,
+    "snapshot": "feedback/.snapshots/20261101T120000Z",
+    "settled": [
+      {
+        "batch": "nightly-2026-11-01",
+        "feedback": "feedback/nightly-2026-11-01/20261101T120000Z.md",
+        "writes": 2,
+        "pending": 0,
+        "verified": 2
+      }
+    ],
+    "watermark": "2026-11-01T12:00:00Z"
+  }
 }
 ```
 
@@ -444,6 +481,7 @@ key, the layer its value came from.
 | `routes` | `[]` | Ordered routes (below). |
 | `hooks` | none | Commands run at named moments, and the `owner` a context file names (below). |
 | `snapshot` | `launchable_for: 24h` | How long a dry run's comment snapshot stays launchable. |
+| `comments` | none | `launch_command`: the argv `comments answer` runs once per launched batch, in onefollowup's working directory and environment, with `{"schema_version": 1, "batch", "feedback", "snapshot"}` on its stdin and, wherever an argument holds one, `{batch}` replaced with the batch, `{feedback}` with the path of the feedback file `comments launches` rendered for it, and `{snapshot}` with the snapshot directory. Its stdout and stderr are not printed; its exit code decides whether the pass settles. Without it `comments answer` is refused. |
 
 No key says *when* the loop runs; that is the host's schedule.
 
@@ -948,6 +986,11 @@ back by its consistency window — and only for an unscoped snapshot whose every
 settled a sound account and whose every reply was verified. So a comment no verified reply
 answers is listed again by the next pass, and one a verified reply answers is left as answered.
 A pass scoped by `--item` or `--batch` reads every comment of its items and moves nothing.
+
+**`comments answer`** is the pass in one verb, so a host keeps no state between its steps: it
+gathers unscoped, launches that snapshot, runs `comments.launch_command` as each batch's
+answering dispatch, and settles only when every one exited 0. A failed batch settles nothing
+and moves no watermark, so the next `comments answer` gathers its comments again.
 
 ## Record formats
 

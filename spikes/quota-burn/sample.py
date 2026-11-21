@@ -12,6 +12,9 @@ sampler spends nothing, so it is always 0 here (the trace shape is shared with t
 converted from the follow-up loop's own logs, where it is not).
 
 Usage: python3 sample.py --env-file PATH --out trace.jsonl [--interval 30] [--duration 3600]
+Throwaway spike code on the spike's branch, never landed: a committed suite would guard
+nothing, so it is proved by the one-off runs its spike report quotes (a hand-built trace
+with known answers, and the rule arithmetic worked by hand).
 """
 
 from __future__ import annotations

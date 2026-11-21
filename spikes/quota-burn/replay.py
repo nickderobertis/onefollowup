@@ -26,6 +26,9 @@ Rules: none | floor:<fraction> | adaptive:<factor> | pace
 
 The replay runs on a 30 s grid. Past the trace's end, others' spend repeats the trace
 cyclically and the window resets hourly after its last known reset.
+Throwaway spike code on the spike's branch, never landed: a committed suite would guard
+nothing, so it is proved by the one-off runs its spike report quotes (a hand-built trace
+with known answers, and the rule arithmetic worked by hand).
 """
 
 from __future__ import annotations

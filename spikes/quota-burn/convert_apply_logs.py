@@ -18,6 +18,9 @@ A reading that cannot belong to one pool (a resource would have to reset twice w
 an hour) is kept with `excluded` naming why.
 
 Usage: python3 convert_apply_logs.py GROOM_DIR > trace.jsonl
+Throwaway spike code on the spike's branch, never landed: a committed suite would guard
+nothing, so it is proved by the one-off runs its spike report quotes (a hand-built trace
+with known answers, and the rule arithmetic worked by hand).
 """
 
 from __future__ import annotations

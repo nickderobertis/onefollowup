@@ -17,6 +17,7 @@ Commands:
                                   one rule over one trace; prints the result as JSON
   table TRACE...                  every rule x pass x trace, for the report (markdown)
   stress TRACE...                 the full pass with others' spend x3 and x5 (markdown)
+  report SAMPLE PASS              the spike report's burn, replay and x3 stress tables
 
 Rules: none | floor:<fraction> | adaptive:<factor> | pace
   floor:F       wait (re-read every step) while remaining - batch < F * limit
@@ -258,18 +259,23 @@ def peak_rate(s: Series, minutes: int = 5) -> float:
 
 
 def replay(s: Series, rule: str, points: float, offset: float = 0.0) -> dict:
+    """Replay one pass under one rule; remaining is checked at every point it can be least.
+
+    Others' spend is linear between readings, so inside one window the least remaining
+    falls at an instant the pass spends (just after its batch), just before a reset, or at
+    a step's end. Each is checked. The pass's window spend clears at the reset itself, and
+    the replay runs on past completion to the reset after it, which is when the pass's
+    spend leaves the pool.
+    """
     c = cumulative(s)
     limit = s.limit
     t = s.start + offset
     horizon = t + 24 * 3600
     resets = resets_from(s, t, horizon)
 
-    def next_reset(now: float) -> float:
-        return resets[bisect.bisect_right(resets, now)]
-
-    # others-only remaining at t: replay the trace from its start
-    def others_remaining(at: float) -> float:
-        prev = [x for x in resets if s.start < x <= at]
+    def others_remaining(at: float, before_reset: bool = False) -> float:
+        """Others-only remaining at `at`; with `before_reset`, the window ending at `at`."""
+        prev = [x for x in resets if s.start < x and (x < at if before_reset else x <= at)]
         if prev:
             return limit - (c(at) - c(prev[-1]))
         return s.remaining0 - c(at)
@@ -277,50 +283,48 @@ def replay(s: Series, rule: str, points: float, offset: float = 0.0) -> dict:
     peak = peak_rate(s, int(rule.split(":")[2]) if rule.count(":") == 2 else 5)
     left, own_window, waited, first_wait_left = points, 0.0, 0.0, None
     lowest = alone = others_remaining(t)
-    window_end = next_reset(t)
-    pass_end = None
-    while t < horizon:
-        if t >= window_end:
-            own_window = 0.0
-            window_end = next_reset(t)
-        rem = others_remaining(t) - own_window
-        if left <= 1e-9:
-            # the pass's spend stays off the pool until this window resets
-            if pass_end is None:
-                pass_end = t
-            if t + STEP >= window_end:
-                break
-        else:
+    done = False
+
+    def see(at: float, before_reset: bool = False) -> None:
+        nonlocal lowest, alone
+        others = others_remaining(at, before_reset)
+        lowest = min(lowest, others - own_window)
+        alone = min(alone, others)
+
+    while t < horizon and not done:
+        until = t + STEP
+        if left > 1e-9:
             batch = min(PASS_RATE * STEP, left)
-            go, wait_until = decide(rule, rem, batch, limit, t, window_end, peak)
+            window_end = resets[bisect.bisect_right(resets, t)]
+            go, wait_until = decide(rule, others_remaining(t) - own_window, batch, limit, t,
+                                    window_end, peak)
             if go:
                 own_window += batch
                 left -= batch
+                see(t)
             else:
                 if first_wait_left is None:
                     first_wait_left = left
-                if wait_until is not None and wait_until > t + STEP:
-                    # pace waits to the reset; track the lowest the others see meanwhile
-                    while t + STEP < wait_until:
-                        t += STEP
-                        waited += STEP
-                        if t >= window_end:
-                            own_window = 0.0
-                            window_end = next_reset(t)
-                        lowest = min(lowest, others_remaining(t) - own_window)
-                        alone = min(alone, others_remaining(t))
-                    continue
-                waited += STEP
-        t += STEP
-        lowest = min(lowest, others_remaining(t) - own_window)
-        alone = min(alone, others_remaining(t))
+                if wait_until is not None:
+                    until = max(until, wait_until)  # pace waits to the reset, then re-reads
+                waited += until - t
+        finished = left <= 1e-9
+        for tau in resets[bisect.bisect_right(resets, t):bisect.bisect_right(resets, until)]:
+            see(tau, before_reset=True)
+            own_window = 0.0
+            if finished:
+                done = True  # the pass's spend has left the pool
+                break
+        if not done:
+            see(until)
+        t = until
     no_wait = points - (first_wait_left if first_wait_left is not None else 0.0)
     return {"rule": rule, "resource": s.resource, "points": points, "offset_s": offset,
             "wait_min": round(waited / 60, 1), "lowest_remaining": round(lowest),
             "lowest_fraction": round(lowest / limit, 3), "crossed_20pct": lowest < FLOOR * limit,
             "starved": lowest < 0, "others_alone_lowest": round(alone),
-            "pass_crossed_20pct": lowest < FLOOR * limit <= alone, "no_wait_fraction": round(no_wait / points, 3),
-            "finished": left <= 1e-9}
+            "pass_crossed_20pct": lowest < FLOOR * limit <= alone,
+            "no_wait_fraction": round(no_wait / points, 3), "finished": left <= 1e-9}
 
 
 def decide(rule: str, rem: float, batch: float, limit: int, now: float, reset: float,
@@ -401,6 +405,53 @@ def stress(paths: list[Path], scales: tuple[float, ...] = (3.0, 5.0)) -> str:
     return "\n".join(lines)
 
 
+def report(sample: Path, pass_trace: Path) -> str:
+    """The spike report's three tables: burn, replay over real usage, stress at x3."""
+    traces = [("60-minute sample", sample), ("2026-11-20 pass", pass_trace)]
+    out = ["| Trace | Resource | Mean /min | 1 min mean / peak | 5 min mean / peak "
+           "| 15 min mean / peak |", "| --- | --- | --- | --- | --- | --- |"]
+    for name, p in traces:
+        rows = load(p)
+        for res in RESOURCES:
+            b = burn(series(rows, res))
+            w = b["windows"]
+            out.append(f"| {name} | {res} | {b['mean_per_min']} | "
+                       + " | ".join(f"{w[m]['mean']} / {w[m]['peak']}" for m in ("1m", "5m", "15m"))
+                       + " |")
+    out += ["", "| Trace | Rule | Full: wait min at trace start (worst start) "
+            "| Full: lowest remaining (worst) | Full: anyone under 20%? | Full: share with no wait "
+            "| Weekly: wait min (worst) | Weekly: lowest (worst) | Weekly: under 20%? "
+            "| Weekly: share with no wait |", "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"]
+    for name, p in traces:
+        rows = load(p)
+        for res in RESOURCES:
+            s = series(rows, res)
+            offs = [k * 300.0 for k in range(int((s.end - s.start) // 300) + 1)]
+            for rule in RULES[1:]:
+                cells = []
+                for pts in (PASSES["full"], PASSES["weekly"]):
+                    rs = [replay(s, rule, pts, o) for o in offs]
+                    cells += [f"{rs[0]['wait_min']} ({max(r['wait_min'] for r in rs)})",
+                              f"{rs[0]['lowest_remaining']} ({min(r['lowest_remaining'] for r in rs)})",
+                              "yes" if any(r["crossed_20pct"] for r in rs) else "no",
+                              f"{rs[0]['no_wait_fraction']:.0%}"]
+                out.append(f"| {name}, {res} | `{rule}` | " + " | ".join(cells) + " |")
+    out += ["", "| Trace | Rule | Wait min (worst / mean over starts) | Lowest remaining (worst) "
+            "| Starts under 20% | Under 20% only because of the pass |",
+            "| --- | --- | --- | --- | --- | --- |"]
+    for name, p in traces:
+        s = series(load(p), "graphql", scale=3.0)
+        offs = [k * 300.0 for k in range(int((s.end - s.start) // 300) + 1)]
+        for rule in STRESS_RULES:
+            rs = [replay(s, rule, PASSES["full"], o) for o in offs]
+            waits = [r["wait_min"] for r in rs]
+            out.append(f"| {name} | `{rule}` | {max(waits)} / {statistics.mean(waits):.1f} "
+                       f"| {min(r['lowest_remaining'] for r in rs)} "
+                       f"| {sum(r['crossed_20pct'] for r in rs)}/{len(rs)} "
+                       f"| {sum(r['pass_crossed_20pct'] for r in rs)}/{len(rs)} |")
+    return "\n".join(out)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="quota-burn spike: burn rates and governor replay")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -417,6 +468,9 @@ def main() -> int:
     t.add_argument("traces", type=Path, nargs="+")
     st = sub.add_parser("stress")
     st.add_argument("traces", type=Path, nargs="+")
+    rp = sub.add_parser("report")
+    rp.add_argument("sample", type=Path)
+    rp.add_argument("pass_trace", type=Path)
     args = ap.parse_args()
     if args.cmd == "burn":
         rows = load(args.trace)
@@ -426,6 +480,8 @@ def main() -> int:
         print(json.dumps(replay(s, args.rule, PASSES[args.pass_], args.offset)))
     elif args.cmd == "stress":
         print(stress(args.traces))
+    elif args.cmd == "report":
+        print(report(args.sample, args.pass_trace))
     else:
         print(table(args.traces))
     return 0

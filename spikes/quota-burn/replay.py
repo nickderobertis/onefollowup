@@ -16,11 +16,13 @@ Commands:
   replay --trace T --rule R --pass full|weekly [--resource graphql|core] [--offset S]
                                   one rule over one trace; prints the result as JSON
   table TRACE...                  every rule x pass x trace, for the report (markdown)
+  stress TRACE...                 the full pass with others' spend x3 and x5 (markdown)
 
 Rules: none | floor:<fraction> | adaptive:<factor> | pace
   floor:F       wait (re-read every step) while remaining - batch < F * limit
-  adaptive:K    wait while remaining - batch < 0.2 * limit + K * peak5 * (reset - now),
-                peak5 = the trace's peak 5-minute others' burn rate, re-read before each batch
+  adaptive:K[:W] wait while remaining - batch < 0.2 * limit + K * peak * (reset - now),
+                peak = the trace's peak W-minute (default 5) others' burn rate, re-read
+                before each batch
   pace          onetaskgraph_live::pace: go at or above 40%; under it go only if
                 used * to_reset / elapsed + batch < remaining, else wait until the reset
 
@@ -69,6 +71,8 @@ class Series:
     resets: list[float]
     own_per_write: float
     clipped: int  # intervals whose own estimate exceeded the fall (others' spend set to 0)
+    readings: int
+    dropped: int  # excluded or foreign readings left out
 
 
 def load(path: Path) -> list[dict]:
@@ -90,11 +94,26 @@ def load(path: Path) -> list[dict]:
     return rows
 
 
+def foreign(rows: list[dict], k: int) -> bool:
+    """A reading whose reset disagrees with both neighbours, which agree, is another pool's.
+
+    GET /rate_limit now and then answers with figures of a different window for the same
+    token (seen in both traces), so a reading is trusted only when its window matches.
+    """
+    if not 0 < k < len(rows) - 1:
+        return False
+    for r in RESOURCES:
+        before, here, after = (rows[i][r].get("reset") for i in (k - 1, k, k + 1))
+        if None not in (before, here, after) and before == after != here:
+            return True
+    return False
+
+
 def kept(rows: list[dict]) -> list[dict]:
-    """Drop excluded readings, folding their own writes into the next kept reading."""
+    """Drop excluded and foreign readings, folding their own writes into the next kept one."""
     out, carry = [], 0
-    for rec in rows:
-        if "excluded" in rec:
+    for k, rec in enumerate(rows):
+        if "excluded" in rec or foreign(rows, k):
             carry += rec.get("own_writes", 0)
             continue
         rec = dict(rec, own_writes=rec.get("own_writes", 0) + carry)
@@ -114,7 +133,10 @@ def own_bound(rows: list[dict], res: str) -> float:
     return best or 0.0
 
 
-def series(rows: list[dict], res: str, own_per_write: float | None = None) -> Series:
+def series(rows: list[dict], res: str, own_per_write: float | None = None,
+           scale: float = 1.0) -> Series:
+    """Others' spend per interval; `scale` multiplies it, to stress a rule past the trace."""
+    total_rows = len(rows)
     rows = kept(rows)
     if own_per_write is None:
         own_per_write = own_bound(rows, res)
@@ -148,8 +170,11 @@ def series(rows: list[dict], res: str, own_per_write: float | None = None) -> Se
         resets.insert(0, float(first_reset))
     if not resets and rows[-1][res].get("reset") is not None:
         resets.append(float(rows[-1][res]["reset"]))
+    for iv in intervals:
+        iv.spend *= scale
     return Series(res, limit, float(rows[0]["t"]), float(rows[-1]["t"]), int(rows[0][res]["remaining"]),
-                  intervals, sorted(set(resets)), own_per_write, clipped)
+                  intervals, sorted(set(resets)), own_per_write, clipped, total_rows,
+                  total_rows - len(rows))
 
 
 def cumulative(s: Series):
@@ -197,7 +222,8 @@ def burn(s: Series) -> dict:
     total_min = (s.end - s.start) / 60
     total = sum(iv.spend for iv in s.intervals)
     mean = total / total_min
-    out = {"resource": s.resource, "minutes": round(total_min, 1), "others_spend": round(total),
+    out = {"resource": s.resource, "minutes": round(total_min, 1), "readings": s.readings,
+           "dropped": s.dropped, "others_spend": round(total),
            "own_per_write": round(s.own_per_write, 3), "clipped_intervals": s.clipped,
            "mean_per_min": round(mean, 1), "windows": {}}
     for m in (1, 5, 15):
@@ -248,9 +274,9 @@ def replay(s: Series, rule: str, points: float, offset: float = 0.0) -> dict:
             return limit - (c(at) - c(prev[-1]))
         return s.remaining0 - c(at)
 
-    peak = peak_rate(s)
+    peak = peak_rate(s, int(rule.split(":")[2]) if rule.count(":") == 2 else 5)
     left, own_window, waited, first_wait_left = points, 0.0, 0.0, None
-    lowest = others_remaining(t)
+    lowest = alone = others_remaining(t)
     window_end = next_reset(t)
     pass_end = None
     while t < horizon:
@@ -282,15 +308,18 @@ def replay(s: Series, rule: str, points: float, offset: float = 0.0) -> dict:
                             own_window = 0.0
                             window_end = next_reset(t)
                         lowest = min(lowest, others_remaining(t) - own_window)
+                        alone = min(alone, others_remaining(t))
                     continue
                 waited += STEP
         t += STEP
         lowest = min(lowest, others_remaining(t) - own_window)
+        alone = min(alone, others_remaining(t))
     no_wait = points - (first_wait_left if first_wait_left is not None else 0.0)
     return {"rule": rule, "resource": s.resource, "points": points, "offset_s": offset,
             "wait_min": round(waited / 60, 1), "lowest_remaining": round(lowest),
             "lowest_fraction": round(lowest / limit, 3), "crossed_20pct": lowest < FLOOR * limit,
-            "starved": lowest < 0, "no_wait_fraction": round(no_wait / points, 3),
+            "starved": lowest < 0, "others_alone_lowest": round(alone),
+            "pass_crossed_20pct": lowest < FLOOR * limit <= alone, "no_wait_fraction": round(no_wait / points, 3),
             "finished": left <= 1e-9}
 
 
@@ -301,7 +330,7 @@ def decide(rule: str, rem: float, batch: float, limit: int, now: float, reset: f
     if rule.startswith("floor:"):
         return rem - batch >= float(rule.split(":", 1)[1]) * limit, None
     if rule.startswith("adaptive:"):
-        k = float(rule.split(":", 1)[1])
+        k = float(rule.split(":")[1])
         reserve = k * peak * max(0.0, reset - now)
         return rem - batch >= FLOOR * limit + reserve, None
     if rule == "pace":
@@ -318,6 +347,7 @@ def decide(rule: str, rem: float, batch: float, limit: int, now: float, reset: f
 
 
 RULES = ["none", "floor:0.2", "floor:0.6", "adaptive:1", "adaptive:1.5", "adaptive:2", "pace"]
+STRESS_RULES = RULES + ["adaptive:1:15", "adaptive:1.5:15"]
 
 
 def table(paths: list[Path]) -> str:
@@ -349,6 +379,28 @@ def table(paths: list[Path]) -> str:
     return "\n".join(lines)
 
 
+def stress(paths: list[Path], scales: tuple[float, ...] = (3.0, 5.0)) -> str:
+    """The full pass on GraphQL with others' spend scaled up, worst case over start offsets."""
+    lines = ["| trace | others x | rule | wait min (worst / mean) | lowest (worst) | <20% (offsets) "
+             "| <20% only with the pass (offsets) | others refused (offsets) |",
+             "|---|---|---|---|---|---|---|---|"]
+    for p in paths:
+        rows = load(p)
+        for k in scales:
+            s = series(rows, "graphql", scale=k)
+            offsets = [o * 300.0 for o in range(int((s.end - s.start) // 300) + 1)]
+            for rule in STRESS_RULES:
+                rs = [replay(s, rule, PASSES["full"], o) for o in offsets]
+                waits = [r["wait_min"] for r in rs]
+                lines.append(
+                    f"| {p.name} | {k:g} | {rule} | {max(waits)} / {statistics.mean(waits):.1f} "
+                    f"| {min(r['lowest_remaining'] for r in rs)} "
+                    f"| {sum(r['crossed_20pct'] for r in rs)}/{len(rs)} "
+                    f"| {sum(r['pass_crossed_20pct'] for r in rs)}/{len(rs)} "
+                    f"| {sum(r['starved'] for r in rs)}/{len(rs)} |")
+    return "\n".join(lines)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="quota-burn spike: burn rates and governor replay")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -360,15 +412,20 @@ def main() -> int:
     r.add_argument("--pass", dest="pass_", choices=sorted(PASSES), required=True)
     r.add_argument("--resource", choices=RESOURCES, default="graphql")
     r.add_argument("--offset", type=float, default=0.0, help="seconds after the trace's start")
+    r.add_argument("--scale", type=float, default=1.0, help="multiply others' spend (stress)")
     t = sub.add_parser("table")
     t.add_argument("traces", type=Path, nargs="+")
+    st = sub.add_parser("stress")
+    st.add_argument("traces", type=Path, nargs="+")
     args = ap.parse_args()
     if args.cmd == "burn":
         rows = load(args.trace)
         print(json.dumps([burn(series(rows, res)) for res in RESOURCES], indent=1))
     elif args.cmd == "replay":
-        s = series(load(args.trace), args.resource)
+        s = series(load(args.trace), args.resource, scale=args.scale)
         print(json.dumps(replay(s, args.rule, PASSES[args.pass_], args.offset)))
+    elif args.cmd == "stress":
+        print(stress(args.traces))
     else:
         print(table(args.traces))
     return 0

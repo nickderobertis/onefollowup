@@ -89,7 +89,8 @@ def main() -> int:
                for r, up in rises.items()):
             excluded[k] = (
                 "a resource rises within half an hour of its last reset, which one pool's "
-                "hourly window never allows: this reading came from another gh account"
+                "hourly window never allows: another pool's figures, as GET /rate_limit "
+                "now and then reports for the same token"
             )
             continue
         for r, up in rises.items():

@@ -90,7 +90,7 @@ fn a_new_tickets_route_assigns_it_and_a_route_commands_answer_overrides_the_rout
         &["drafts", "followups"],
         &assigning("alice"),
     );
-    let root = world.root.display().to_string();
+    let root = world.shell_root();
     world.script(
         "rotation-today",
         &format!("cat > {root}/rotation.json\necho '{{\"assignee\": \"bob\"}}'"),
@@ -449,7 +449,7 @@ fn a_bound_ticket_whose_route_now_names_another_person_is_reassigned_with_the_ba
         &["drafts", "followups"],
         &assigning("alice"),
     );
-    let root = world.root.display().to_string();
+    let root = world.shell_root();
     world.script(
         "rotation-today",
         &format!("cat >/dev/null\necho \"{{\\\"assignee\\\": \\\"$(cat {root}/on-call)\\\"}}\""),
@@ -590,7 +590,7 @@ fn rotating_world() -> World {
         &["drafts", "followups"],
         &assigning("alice"),
     );
-    let root = world.root.display().to_string();
+    let root = world.shell_root();
     world.script(
         "rotation-today",
         &format!(

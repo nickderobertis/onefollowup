@@ -98,7 +98,7 @@ fn kinds_destinations_dispositions_and_ordered_routes_drive_the_loop() {
         ),
     )
     .expect("the store");
-    let root = world.root.display().to_string();
+    let root = world.shell_root();
     world.script(
         "notify",
         &format!("cat >> {root}/notify.log\necho >> {root}/notify.log"),

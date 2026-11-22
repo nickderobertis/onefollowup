@@ -39,7 +39,10 @@ fn local_repository(world: &World) {
             .current_dir(&path)
             .env_clear()
             .env("HOME", world.root.join("home"))
-            .env("PATH", "/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin")
+            .env(
+                "PATH",
+                crate::groom::world::search_path(None, crate::groom::world::UNIX_TOOLS),
+            )
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .output()
             .expect("git runs");

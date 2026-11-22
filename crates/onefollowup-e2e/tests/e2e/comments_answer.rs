@@ -34,7 +34,7 @@ struct Call {
 /// `A` and `B` carrying one person's comment: `(world, [(item, comment id)])`.
 fn answering_world(config: &str) -> (World, Vec<(String, String)>) {
     let mut world = World::new(&[DESTINATION], config);
-    let root = world.root.display().to_string();
+    let root = world.shell_root();
     // The answering agent, as a shell script: it records the call, fails where `fail-<batch>`
     // exists, and otherwise answers the one comment its feedback file quotes as that file says.
     world.script(

@@ -32,7 +32,7 @@ const README_ROOT: &str = "/srv/follow-ups";
 /// `--context` names, under `raised/<n>/`.
 fn raising_world(config: &str) -> World {
     let mut world = World::new(&["followups"], config);
-    let root = world.root.display().to_string();
+    let root = world.shell_root();
     std::fs::create_dir_all(world.root.join("raised")).expect("raised");
     // A `wc` that pads its count as BSD's (macOS's) does, so the recorder below is held to
     // what every platform's `wc` prints and not to GNU's bare number.

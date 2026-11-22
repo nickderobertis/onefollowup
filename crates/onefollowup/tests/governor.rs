@@ -787,3 +787,96 @@ fn within_one_process_own_spend_crosses_the_floor_by_at_most_one_requests_estima
         );
     });
 }
+
+/// Readings taken as a GitHub source takes them: its own `GET /rate_limit` asks the request
+/// gate first (`core`, hinted at 0), then answers.
+struct GatedRefresh {
+    clock: Arc<support::Virtual>,
+    governor: std::sync::OnceLock<std::sync::Weak<Governor>>,
+    script: Box<support::Script>,
+    asked: Mutex<Vec<(DateTime<Utc>, DateTime<Utc>)>>,
+}
+
+impl onefollowup::governor::Readings for GatedRefresh {
+    fn read<'a>(
+        &'a self,
+        _: &'a str,
+    ) -> onefollowup::governor::Pending<'a, Result<Vec<Reading>, String>> {
+        Box::pin(async move {
+            let governor = self
+                .governor
+                .get()
+                .and_then(std::sync::Weak::upgrade)
+                .unwrap();
+            let before = self.clock.now();
+            governor
+                .before_request(&Request {
+                    resource: "core".to_owned(),
+                    cost_hint: Some(0),
+                })
+                .await;
+            self.asked.lock().unwrap().push((before, self.clock.now()));
+            Ok((self.script)(self.clock.now()))
+        })
+    }
+}
+
+#[test]
+fn a_refresh_s_own_rate_limit_read_passes_the_gate_without_waiting_on_the_admission_it_serves() {
+    // Core is under its floor throughout, so a core request taking the normal test would wait
+    // an hour; graphql recovers at the window reset at 60 s. Core is seeded nowhere, so the
+    // call boundary governs graphql alone and the case reaches the gate.
+    let clock = support::Virtual::at(instant(T0));
+    let readings = Arc::new(GatedRefresh {
+        clock: Arc::clone(&clock),
+        governor: std::sync::OnceLock::new(),
+        script: Box::new(|at| {
+            let graphql = if at < instant(T0 + 60) {
+                reading("graphql", 900, T0 + 60)
+            } else {
+                reading("graphql", 5000, T0 + 3660)
+            };
+            vec![graphql, reading("core", 10, T0 + 3600)]
+        }),
+        asked: Mutex::new(Vec::new()),
+    });
+    let mut settings = shipped();
+    settings.min_peak_per_minute.remove("core");
+    let governor = Arc::new(Governor::new(
+        settings,
+        clock.clone(),
+        readings.clone(),
+        Arc::new(|_: &str| {}),
+    ));
+    readings.governor.set(Arc::downgrade(&governor)).unwrap();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        governor
+            .admit_call(&[DESTINATION.to_owned()], Kind::Read)
+            .await;
+        governor
+            .before_request(&Request {
+                resource: "graphql".to_owned(),
+                cost_hint: Some(1),
+            })
+            .await;
+    });
+    assert_eq!(
+        clock.now(),
+        instant(T0 + 60),
+        "the graphql request waited for its reset"
+    );
+    let asked = readings.asked.lock().unwrap().clone();
+    assert!(asked.len() >= 3, "every refresh asked the gate: {asked:?}");
+    assert!(
+        asked.iter().all(|(before, after)| before == after),
+        "each refresh's own request went at once, its core window under the floor: {asked:?}"
+    );
+    let waits = governor.report().unwrap().waits;
+    assert!(
+        waits.iter().all(|wait| wait.resource == "graphql"),
+        "nothing waited on core: {waits:?}"
+    );
+}

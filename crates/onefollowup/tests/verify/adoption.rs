@@ -8,12 +8,14 @@ use crate::world::{COMMIT, HOST, REPOSITORY, Ticket, World, answer, filed_body, 
 
 const BATCH: &str = "nightly-2026-11-07";
 
-/// Make the file `path` writable or read-only, as every host can: a read-only file refuses
-/// to be opened for writing on Unix and Windows alike.
-fn writable(path: &std::path::Path, writable: bool) {
-    let mut permissions = std::fs::metadata(path).expect("the file").permissions();
-    permissions.set_readonly(!writable);
-    std::fs::set_permissions(path, permissions).expect("permissions");
+/// Make the file `path` read-only, as every host can — a read-only file refuses to be opened
+/// for writing on Unix and Windows alike — and answer the permissions it had.
+fn read_only(path: &std::path::Path) -> std::fs::Permissions {
+    let writable = std::fs::metadata(path).expect("the file").permissions();
+    let mut read_only = writable.clone();
+    read_only.set_readonly(true);
+    std::fs::set_permissions(path, read_only).expect("read-only");
+    writable
 }
 
 #[test]
@@ -127,9 +129,9 @@ fn settle_reads_back_exactly_the_write_whose_answer_was_lost() {
     );
     world.ok("check", &["check", "--batch", BATCH], "");
     let journal = world.work().join(format!("receipts/{BATCH}.jsonl"));
-    writable(&journal, false);
+    let writable = read_only(&journal);
     let failed = world.fails(1, &["publish", "--batch", BATCH], "");
-    writable(&journal, true);
+    std::fs::set_permissions(&journal, writable).expect("writable again");
     assert!(
         failed.contains("could not record their 1 receipts"),
         "{failed}"

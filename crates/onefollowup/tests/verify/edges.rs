@@ -817,11 +817,8 @@ fn a_route_commands_override_is_applied_and_a_malformed_one_withholds_its_ticket
     assert!(quiet.filed("followups").is_empty());
 }
 
-#[cfg(unix)]
 #[test]
 fn settle_reads_back_every_write_whose_answer_was_lost_and_pends_one_that_never_landed() {
-    use std::os::unix::fs::PermissionsExt as _;
-
     let mut world = World::new(&["followups"], "host_label: build-host-1\n");
     world.item(
         "followups",
@@ -952,15 +949,21 @@ fn settle_reads_back_every_write_whose_answer_was_lost_and_pends_one_that_never_
     );
     world.ok("check", &["check", "--batch", BATCH], "");
 
-    // A person deletes one item, and no receipt can be written: every other write lands and
-    // no answer is recorded.
+    // A person deletes one item, and no receipt can be written — the batch's journal is a
+    // read-only file, which refuses to be opened for writing on every host: every other write
+    // lands and no answer is recorded.
     std::fs::remove_file(world.root.join("followups-root/tasks/gone-later.md")).expect("removed");
-    let receipts = world.work().join("receipts");
-    std::fs::create_dir_all(&receipts).expect("the receipts directory");
-    std::fs::set_permissions(&receipts, std::fs::Permissions::from_mode(0o555)).expect("read-only");
+    let journal = world.work().join("receipts").join(format!("{BATCH}.jsonl"));
+    std::fs::create_dir_all(journal.parent().expect("a parent")).expect("the receipts directory");
+    std::fs::write(&journal, "").expect("an empty journal");
+    let writable = std::fs::metadata(&journal)
+        .expect("the journal")
+        .permissions();
+    let mut read_only = writable.clone();
+    read_only.set_readonly(true);
+    std::fs::set_permissions(&journal, read_only).expect("read-only");
     let failed = world.fails(1, &["publish", "--batch", BATCH], "");
-    std::fs::set_permissions(&receipts, std::fs::Permissions::from_mode(0o755))
-        .expect("writable again");
+    std::fs::set_permissions(&journal, writable).expect("writable again");
     assert!(failed.contains("run `onefollowup settle"), "{failed}");
     assert_eq!(world.filed("followups").len(), 2, "the copy landed");
 

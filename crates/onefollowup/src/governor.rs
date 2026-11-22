@@ -20,11 +20,15 @@
 //! batch it paces completes, however long it takes.
 //!
 //! **One request in flight.** A request on a metered resource holds the process's one slot
-//! from admission until its response's reading is told, so requests a destination sends at
-//! once (a GitHub source joins some) go one after another, each against the reading the one
-//! before it refreshed. A response that failed in transport tells nothing: its request is
-//! presumed over after [`IN_FLIGHT_LEASE`], its estimate still counted against the reading
-//! held.
+//! from admission until its response's reading is told or its call ends — nothing else, and
+//! no time bound, presumes it over — so requests a destination sends at once (a GitHub source
+//! joins some) go one after another, each against the reading the one before it refreshed.
+//! A request that ends without a reading (failed in transport, or answered without rate-limit
+//! headers) therefore holds the slot to its call's end, and a later request of the same call
+//! waits until then — a hang that `quota-governor-writes` closes by releasing on the
+//! request-ended signal onetaskgraph's `request-completion` adds (manager ruling `a4`). The
+//! slot is only for requests to a backend whose responses report readings: a source's write
+//! to its own files (`local`, local-md's) neither takes nor waits for it (manager ruling `a5`).
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -44,11 +48,9 @@ use crate::config::GovernorSettings;
 /// ruling repair-20 as amended by ruling `a7`), whatever `sample_seconds` says.
 pub const HELD_REFRESH: Duration = Duration::from_secs(30);
 
-/// How long a request sent and not yet answered holds this process's one slot before it is
-/// presumed over: a response that failed in transport reports no reading, so nothing else
-/// says it ended. The request after it is admitted against the reading held less every
-/// estimate admitted since, the presumed request's included.
-pub const IN_FLIGHT_LEASE: Duration = HELD_REFRESH;
+/// The resource a source names a write to its own files by (onetaskgraph's `GatedRequest`
+/// vocabulary): no response to it reports a reading.
+const OWN_FILES: &str = "local";
 
 /// What one request is estimated to cost when nothing better is known: no hint was given and
 /// no response has shown what a request of its kind costs.
@@ -139,10 +141,6 @@ pub struct Parts {
     pub readings: Option<Arc<dyn Readings>>,
     /// Where its wait lines go.
     pub notices: Notices,
-    /// How long a request sent and never reported holds the one slot ([`IN_FLIGHT_LEASE`] in
-    /// a verb). Zero presumes each over at the next request, which is what a test doubling a
-    /// reading of a destination that never reports one (local-md) sends one after another.
-    pub in_flight_lease: Duration,
 }
 
 impl Parts {
@@ -153,7 +151,6 @@ impl Parts {
             clock: Arc::new(SystemClock),
             readings: None,
             notices: Arc::new(|line: &str| eprintln!("{line}")),
-            in_flight_lease: IN_FLIGHT_LEASE,
         }
     }
 }
@@ -258,8 +255,7 @@ struct Metered {
     /// Every point onefollowup was admitted to spend, cumulative, by estimate.
     own: f64,
     /// What of [`Self::own`] is in a request no response has reported yet, which a reading
-    /// taken meanwhile cannot show: cleared by its response and by its call's end, and kept
-    /// when a request sent [`IN_FLIGHT_LEASE`] ago without one is presumed over.
+    /// taken meanwhile cannot show: cleared by its response and by its call's end.
     unanswered: f64,
     history: VecDeque<Interval>,
     /// The observed cost of one request, by [`Kind`].
@@ -310,10 +306,8 @@ struct State {
 /// The one metered request of this process in flight, or being admitted.
 #[derive(Debug, Clone, Copy)]
 struct Slot {
-    /// When it was sent, on the runtime's timer: the lease bounds a real request's flight,
-    /// whatever clock the governor reads quota time by. `None` while it is still being
-    /// admitted (refreshing or held).
-    sent_at: Option<tokio::time::Instant>,
+    /// Whether it was sent; not while it is still being admitted (refreshing or held).
+    sent: bool,
 }
 
 /// Why one window refuses a request, with what its wait line names.
@@ -341,7 +335,6 @@ pub struct Governor {
     state: Mutex<State>,
     /// Woken whenever the slot is given up.
     released: Notify,
-    in_flight_lease: Duration,
 }
 
 fn seconds(from: DateTime<Utc>, to: DateTime<Utc>) -> f64 {
@@ -389,15 +382,7 @@ impl Governor {
             notices,
             state: Mutex::new(State::default()),
             released: Notify::new(),
-            in_flight_lease: IN_FLIGHT_LEASE,
         }
-    }
-
-    /// The same governor, presuming a request sent and never reported over after `lease`.
-    #[must_use]
-    pub const fn with_in_flight_lease(mut self, lease: Duration) -> Self {
-        self.in_flight_lease = lease;
-        self
     }
 
     /// Replace the settings, keeping everything learned.
@@ -558,10 +543,15 @@ impl Governor {
             (sources, kind)
         };
         let settings = self.settings().clone();
-        if !settings.enabled || !self.metered(&sources, &request.resource) {
+        if !settings.enabled {
             return;
         }
-        self.take_slot().await;
+        // A source's write to its own files (local-md) is answered by nothing that reports a
+        // reading, so it neither takes nor waits for the slot; it is admitted all the same.
+        let slotted = request.resource != OWN_FILES;
+        if slotted {
+            self.take_slot().await;
+        }
         let cost = request.cost_hint.map_or_else(
             || self.request_estimate(&sources, &request.resource, kind),
             points,
@@ -591,81 +581,26 @@ impl Governor {
             }
         }
         state.in_flight = Some((request.resource.clone(), kind, cost));
-        state.slot = Some(Slot {
-            sent_at: Some(tokio::time::Instant::now()),
-        });
-        // A request waiting on the slot now waits out this one's lease instead.
-        self.released.notify_waiters();
+        if slotted {
+            state.slot = Some(Slot { sent: true });
+        }
     }
 
-    /// Whether a request on `resource` to any of `sources` is metered by a reading: a
-    /// destination not yet read might be, and one whose readings name no window of the
-    /// resource (local-md's own files, a peer reporting nothing) is not.
-    fn metered(&self, sources: &[String], resource: &str) -> bool {
-        let state = self.state();
-        sources.iter().any(|source| {
-            state.destinations.get(source).is_none_or(|held| {
-                held.read_at.is_none()
-                    || held
-                        .resources
-                        .get(resource)
-                        .is_some_and(|metered| !metered.windows.is_empty())
-            })
-        })
-    }
-
-    /// Wait for this process's one slot and take it: once its holder's response is told, its
-    /// call ends, or it was sent the in-flight lease ago with no response reported, presumed
-    /// over — its estimate stays in own spend since the reading held, and a reading taken from
-    /// then on is what shows what it cost.
+    /// Wait for this process's one slot and take it: once its holder's response reading is
+    /// told or its call ends, which are the only proofs the gate is given that it is over.
     async fn take_slot(&self) {
         loop {
             let released = self.released.notified();
             tokio::pin!(released);
             released.as_mut().enable();
-            let now = tokio::time::Instant::now();
-            let lease_ends = {
+            {
                 let mut state = self.state();
-                match state.slot {
-                    None => {
-                        state.slot = Some(Slot { sent_at: None });
-                        return;
-                    }
-                    Some(Slot {
-                        sent_at: Some(sent_at),
-                    }) if now >= sent_at + self.in_flight_lease => {
-                        state.slot = Some(Slot { sent_at: None });
-                        state.in_flight = None;
-                        // Presumed over, what it spent is a later reading's to show.
-                        for metered in state
-                            .destinations
-                            .values_mut()
-                            .flat_map(|held| held.resources.values_mut())
-                        {
-                            metered.unanswered = 0.0;
-                        }
-                        return;
-                    }
-                    Some(Slot {
-                        sent_at: Some(sent_at),
-                    }) => Some(sent_at + self.in_flight_lease),
-                    // Still being admitted: it is given up, or sent, with a notification.
-                    Some(Slot { sent_at: None }) => None,
+                if state.slot.is_none() {
+                    state.slot = Some(Slot { sent: false });
+                    return;
                 }
-            };
-            let mut lapse = lease_ends.map(|at| Box::pin(tokio::time::sleep_until(at)));
-            std::future::poll_fn(|context| {
-                if released.as_mut().poll(context).is_ready()
-                    || lapse
-                        .as_mut()
-                        .is_some_and(|lapse| lapse.as_mut().poll(context).is_ready())
-                {
-                    std::task::Poll::Ready(())
-                } else {
-                    std::task::Poll::Pending
-                }
-            })
-            .await;
+            }
+            released.await;
         }
     }
 
@@ -683,7 +618,7 @@ impl Governor {
         let in_flight = state.in_flight.take();
         // The response to the request holding the slot gives it up. A refresh's own read,
         // answered while its holder is still being admitted, does not.
-        if in_flight.is_some() && state.slot.is_some_and(|slot| slot.sent_at.is_some()) {
+        if in_flight.is_some() && state.slot.is_some_and(|slot| slot.sent) {
             self.release(&mut state);
         }
         let sources: Vec<String> = match &state.call {

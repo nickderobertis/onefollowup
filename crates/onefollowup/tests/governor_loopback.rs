@@ -126,7 +126,6 @@ fn a_request_held_on_exhausted_headroom_goes_once_when_a_rate_limit_read_while_h
         clock: clock.clone(),
         readings: None,
         notices: Arc::new(move |line: &str| sink.lock().expect("notices").push(line.to_owned())),
-        in_flight_lease: governor::IN_FLIGHT_LEASE,
     };
     let mut settings = shipped();
     settings.reserve_factor = 0.0;

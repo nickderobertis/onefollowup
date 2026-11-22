@@ -8,6 +8,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use onefollowup::config::GovernorSettings;
@@ -815,12 +816,95 @@ fn two_requests_sent_at_once_are_never_in_flight_together_and_the_second_waits_f
 }
 
 #[test]
-fn a_request_whose_response_reports_nothing_is_presumed_over_after_its_lease_and_still_counted() {
-    // A response that failed in transport tells the gate nothing. The next request waits out
-    // the in-flight lease on the runtime's timer (paused here, so it costs no real time) and
-    // is admitted against the one reading less every estimate admitted since, the presumed
-    // ones included: with headroom for three at a hint of 1, the fourth is held, though no
-    // reading has said anything new. The backend charged each, as its later readings show.
+fn a_request_open_past_30_seconds_keeps_the_next_unsent_until_it_ends_then_admits_on_its_reading() {
+    // The first request is still in flight 45 s after it was sent, by the governor's clock and
+    // the runtime's timer alike (paused here, so the case costs no real time). Nothing but its
+    // end may let the second go: no time bound presumes it over. Its response then shows
+    // graphql at 998, under the floor of 1000, and the second is admitted on that reading —
+    // held until the reset's reading admits it.
+    let mut settings = shipped();
+    settings.reserve_factor = 0.0;
+    let answered = Arc::new(Mutex::new(false));
+    let spent = Arc::clone(&answered);
+    let harness = Harness::new(settings, instant(T0), move |at| {
+        let graphql = if at.timestamp() >= T0 + 600 {
+            reading("graphql", 5000, T0 + 4200)
+        } else if *spent.lock().unwrap() {
+            reading("graphql", 998, T0 + 600)
+        } else {
+            reading("graphql", 1001, T0 + 600)
+        };
+        vec![graphql, reading("core", 5000, T0 + 3600)]
+    });
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .start_paused(true)
+        .build()
+        .unwrap();
+    let log = Mutex::new(Vec::<String>::new());
+    let (log_at, governor, clock) = (&log, &harness.governor, &harness.clock);
+    let request = Request {
+        resource: "graphql".to_owned(),
+        cost_hint: Some(1),
+    };
+    let at = || clock.now().timestamp() - T0;
+    runtime.block_on(async {
+        governor
+            .admit_call(&[DESTINATION.to_owned()], Kind::Read)
+            .await;
+        let first = async {
+            governor.before_request(&request).await;
+            log_at
+                .lock()
+                .unwrap()
+                .push(format!("first sent at {}", at()));
+            // Open for 45 s on both clocks.
+            tokio::time::sleep(Duration::from_secs(45)).await;
+            clock.advance(45.0);
+            log_at
+                .lock()
+                .unwrap()
+                .push(format!("first answered at {}", at()));
+            *answered.lock().unwrap() = true;
+            governor.after_response(&[reading("graphql", 998, T0 + 600)]);
+        };
+        let second = async {
+            tokio::task::yield_now().await;
+            governor.before_request(&request).await;
+            log_at
+                .lock()
+                .unwrap()
+                .push(format!("second sent at {}", at()));
+        };
+        tokio::join!(first, second);
+    });
+    harness.end();
+    let log = log.lock().unwrap().clone();
+    assert_eq!(
+        log,
+        [
+            "first sent at 0",
+            "first answered at 45",
+            "second sent at 600"
+        ],
+        "the second sent nothing while the first was open, then waited on its reading"
+    );
+    let notices = harness.notices();
+    assert_eq!(notices.len(), 1, "{notices:?}");
+    assert!(
+        notices[0].contains("on graphql: remaining 998 of 5000, floor 1000"),
+        "held on the first's response reading: {notices:?}"
+    );
+    assert_eq!(harness.waits()[0].reason, Reason::Floor);
+}
+
+#[test]
+fn a_request_whose_response_reports_nothing_holds_the_slot_until_its_call_ends_and_is_counted() {
+    // A request failed in transport tells the gate nothing, so nothing but its call's end
+    // proves it over: a request of the next call goes once that call has ended, against the
+    // one reading less every estimate admitted since, the silent one included — with
+    // headroom for three at a hint of 1, the fourth is held, though no reading said anything
+    // new. The backend charged each, as the later readings show.
     let charged = Arc::new(Mutex::new(0_u64));
     let held = Arc::clone(&charged);
     let same = Harness::new(
@@ -838,42 +922,66 @@ fn a_request_whose_response_reports_nothing_is_presumed_over_after_its_lease_and
             vec![graphql, reading("core", 5000, T0 + 3600)]
         },
     );
+    for _ in 0..3 {
+        assert_eq!(same.request(Kind::Read, "graphql", Some(1)), 0.0);
+        *charged.lock().unwrap() += 1;
+        same.end();
+    }
+    assert_eq!(same.clock.now(), instant(T0), "three go against 1003");
+    assert_eq!(
+        same.readings.reads().len(),
+        1,
+        "no reading said anything new"
+    );
+    assert_eq!(
+        same.request(Kind::Read, "graphql", Some(1)),
+        600.0,
+        "the fourth waited for a reading that admits it"
+    );
+
+    // Within one call, a request after the silent one sends nothing until that call ends.
+    let call = Harness::new(shipped(), instant(T0), |_| {
+        vec![
+            reading("graphql", 5000, T0 + 3600),
+            reading("core", 5000, T0 + 3600),
+        ]
+    });
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .start_paused(true)
         .build()
         .unwrap();
+    let log = Mutex::new(Vec::<&str>::new());
+    let request = Request {
+        resource: "graphql".to_owned(),
+        cost_hint: Some(1),
+    };
     runtime.block_on(async {
-        same.governor
+        call.governor
             .admit_call(&[DESTINATION.to_owned()], Kind::Read)
             .await;
-        let request = Request {
-            resource: "graphql".to_owned(),
-            cost_hint: Some(1),
-        };
-        let started = tokio::time::Instant::now();
-        for sent in 1..=3_u32 {
-            same.governor.before_request(&request).await;
-            *charged.lock().unwrap() += 1;
-            assert_eq!(
-                tokio::time::Instant::now() - started,
-                onefollowup::governor::IN_FLIGHT_LEASE * (sent - 1),
-                "request {sent} waited out the lease of each one before it"
-            );
-        }
-        assert_eq!(same.clock.now(), instant(T0), "three go against 1003");
-        assert_eq!(
-            same.readings.reads().len(),
-            1,
-            "no reading said anything new"
-        );
-        same.governor.before_request(&request).await;
-        assert_eq!(
-            same.clock.now(),
-            instant(T0 + 600),
-            "the fourth waited for a reading that admits it"
+        tokio::join!(
+            async {
+                call.governor.before_request(&request).await;
+                log.lock().unwrap().push("silent sent");
+            },
+            async {
+                tokio::task::yield_now().await;
+                call.governor.before_request(&request).await;
+                log.lock().unwrap().push("next sent");
+            },
+            async {
+                tokio::time::sleep(Duration::from_secs(3600)).await;
+                log.lock().unwrap().push("call ended");
+                call.governor.end_call();
+            },
         );
     });
+    assert_eq!(
+        *log.lock().unwrap(),
+        ["silent sent", "call ended", "next sent"],
+        "no time bound presumed the silent request over"
+    );
 }
 
 /// Readings taken as a GitHub source takes them: its own `GET /rate_limit` asks the request

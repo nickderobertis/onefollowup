@@ -9,7 +9,6 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use onefollowup::governor::{self, Clock as _, Parts, Reading, Reason};
@@ -79,8 +78,6 @@ impl World {
             clock: clock.clone(),
             readings: Some(readings.clone()),
             notices: Arc::new(move |line: &str| sink.lock().unwrap().push(line.to_owned())),
-            // local-md reports no response, so each write is presumed over at the next.
-            in_flight_lease: Duration::ZERO,
         };
         governor::with_parts(parts, || self.store())
     }
@@ -600,7 +597,6 @@ fn one_follow_up_batch_over_local_md_which_reports_no_reading_is_admitted_withou
             clock: clock.clone(),
             readings: None,
             notices: Arc::new(move |line: &str| sink.lock().unwrap().push(line.to_owned())),
-            in_flight_lease: governor::IN_FLIGHT_LEASE,
         },
         || world.store(),
     );

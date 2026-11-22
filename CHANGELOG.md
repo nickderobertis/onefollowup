@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0](https://github.com/nickderobertis/onefollowup/compare/v0.12.0...v0.13.0) - 2026-11-22
+
+### Added
+
+- cap content-creating writes and share the quota governor's state across every onefollowup process on a host ([#68](https://github.com/nickderobertis/onefollowup/pull/68))
+
 ## [0.12.0](https://github.com/nickderobertis/onefollowup/compare/v0.11.1...v0.12.0) - 2026-11-22
 
 ### Added

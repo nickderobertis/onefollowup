@@ -282,6 +282,20 @@ fn a_crowded_destination_still_renders_and_relates_every_duplicate_within_a_hand
                 cluster.later
             );
         }
+        // The capped query found more than reached the task: the rest of its candidates rank
+        // below the bound, under the ones sharing more of the draft's terms and file.
+        for query in &capped {
+            let only_it = rendered
+                .iter()
+                .filter(|one| shared(one) == 0 && capped_by(one) > 0)
+                .count();
+            let hits = usize::try_from(query["hits"].as_u64().unwrap_or_default()).unwrap_or(0);
+            assert!(
+                hits > HIT_CAP && only_it < hits,
+                "{}: {query} ranks its candidates last: {search}",
+                cluster.later
+            );
+        }
         let matching = search["matching"].as_u64().unwrap_or_default();
         if usize::try_from(matching).unwrap_or_default() > BOUND {
             assert_eq!(rendered.len(), BOUND, "{search}");

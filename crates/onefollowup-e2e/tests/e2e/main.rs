@@ -36,3 +36,7 @@ mod telemetry;
 mod template_data;
 mod template_refusals;
 mod world;
+
+#[path = "../groom/mod.rs"]
+mod groom;
+mod grooming;

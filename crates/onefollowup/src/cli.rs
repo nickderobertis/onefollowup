@@ -96,6 +96,9 @@ pub enum Command {
     /// The comment-answering pass.
     #[command(subcommand)]
     Comments(CommentsCommand),
+    /// Verify, deduplicate and close a destination's open tickets.
+    #[command(subcommand)]
+    Groom(GroomCommand),
     /// Read the destination's statuses against the configured status roles.
     Statuses(api::NoArgs),
     /// Print the effective kinds, relations, dispositions and routes.
@@ -139,6 +142,17 @@ pub enum CommentsCommand {
     Answer(api::CommentsAnswerArgs),
 }
 
+/// `onefollowup groom …`.
+#[derive(Debug, Subcommand)]
+pub enum GroomCommand {
+    /// List the open tickets, fetch their repositories, select the tickets to verify, and
+    /// write one task per shard.
+    Prepare(api::GroomPrepareArgs),
+    /// Hold every shard's verdicts to the rules and plan what publish sends; exit 2 while any
+    /// problem stands.
+    Check(api::GroomCheckArgs),
+}
+
 /// `onefollowup config …`.
 #[derive(Debug, Subcommand)]
 pub enum ConfigCommand {
@@ -162,10 +176,10 @@ pub fn main() -> ExitCode {
             ExitCode::from(EXIT_OK)
         }
         Err(error) => {
-            if let Some(answer) = error.answer() {
+            if let Some(document) = error.document() {
                 let mut out = std::io::stdout().lock();
                 // The exit code says the verb failed whether or not the document is written.
-                let _ignored = writeln!(out, "{}", print(answer)).and_then(|()| out.flush());
+                let _ignored = writeln!(out, "{document}").and_then(|()| out.flush());
             }
             match error {
                 Error::NotImplemented { .. } => eprintln!("onefollowup {error}"),
@@ -218,6 +232,8 @@ pub fn dispatch(command: Command, config: &ConfigArgs) -> Result<String, Error> 
         Command::Comments(CommentsCommand::Answer(args)) => {
             handle(config, args, api::comments_answer)
         }
+        Command::Groom(GroomCommand::Prepare(args)) => handle(config, args, api::groom_prepare),
+        Command::Groom(GroomCommand::Check(args)) => handle(config, args, api::groom_check),
         Command::Statuses(args) => handle(config, args, api::statuses),
         Command::Kinds(args) => handle(config, args, api::kinds),
         Command::Config(ConfigCommand::Show(args)) => handle(config, args, api::config_show),

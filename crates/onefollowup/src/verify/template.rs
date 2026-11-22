@@ -51,6 +51,14 @@ const SHIPPED: &[(&str, &str)] = &[
         "ticket-render.md.j2",
         include_str!("../../defaults/ticket-render.md.j2"),
     ),
+    (
+        "groom-task.md.j2",
+        include_str!("../../defaults/groom-task.md.j2"),
+    ),
+    (
+        "groom-persona.yaml",
+        include_str!("../../defaults/groom-persona.yaml"),
+    ),
 ];
 
 /// One expandable block in the authored form: `<details>` alone, `<summary>…</summary>`, a blank

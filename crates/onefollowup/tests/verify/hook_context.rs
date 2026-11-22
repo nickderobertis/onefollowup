@@ -297,7 +297,7 @@ fn a_hook_naming_no_placeholder_is_handed_exactly_its_argv_and_the_settled_docum
     assert_eq!(argv, &["--plain", "{context}"], "argv as configured");
     assert!(context.is_none());
     let document: Value = serde_json::from_str(stdin).expect("stdin is JSON");
-    let receipts = world.work().join(format!("receipts/{BATCH}.jsonl"));
+    let receipts = world.work().join("receipts").join(format!("{BATCH}.jsonl"));
     assert_eq!(
         document,
         json!({

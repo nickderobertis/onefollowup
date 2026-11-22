@@ -174,10 +174,11 @@ pub fn shards_carry_each_agents_task(runner: &dyn Runner) {
                 .expect("a generated ticket");
             let repository = generated.repository.clone();
             let commit = &generated_commit(&generated_repositories(&record), &repository);
-            let clone = world
-                .root
-                .join(".onefollowup/groom/clones")
-                .join(&repository);
+            // The configured `groom.clones` as given, then one component per segment.
+            let clone = repository.split('/').fold(
+                world.root.join(".onefollowup/groom/clones"),
+                |path, part| path.join(part),
+            );
             assert!(
                 task.contains(&format!(
                     "`{repository}`: `{}` at `{commit}`",

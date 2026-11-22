@@ -134,14 +134,19 @@ fn every_batch_answering_settles_the_pass_as_comments_settle_does() {
         .iter()
         .map(|batch| Call {
             batch: batch.clone(),
-            feedback: format!(
-                "{}/feedback/{batch}/{}.md",
-                world.work().display(),
-                Path::new(&snapshot)
-                    .file_name()
-                    .expect("a stamp")
-                    .to_string_lossy()
-            ),
+            feedback: world
+                .work()
+                .join("feedback")
+                .join(batch)
+                .join(format!(
+                    "{}.md",
+                    Path::new(&snapshot)
+                        .file_name()
+                        .expect("a stamp")
+                        .to_string_lossy()
+                ))
+                .display()
+                .to_string(),
             snapshot: snapshot.clone(),
             feedback_present: true,
         })

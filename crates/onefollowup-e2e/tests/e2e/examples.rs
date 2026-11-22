@@ -360,8 +360,14 @@ fn single_root_cause() {
     let settled =
         std::fs::read_to_string(world.root.join("onepipeline.log")).expect("the settled hook ran");
     assert!(
-        settled.starts_with("human-items raise --phase follow-up-review --context /"),
-        "{settled}"
+        settled
+            .lines()
+            .next()
+            .and_then(
+                |line| line.strip_prefix("human-items raise --phase follow-up-review --context ")
+            )
+            .is_some_and(|path| std::path::Path::new(path).is_absolute()),
+        "the hook is handed the context file's absolute path: {settled}"
     );
     assert!(
         settled.contains("\"session\": \"follow-ups@build-host-1\""),

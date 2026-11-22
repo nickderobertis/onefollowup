@@ -423,11 +423,14 @@ fn a_snapshot_after_a_settled_pass_writes_nothing_and_prepare_opens_the_pass_as_
     );
     assert_eq!(hook_runs(&plain), 2);
     assert_eq!(after["drafts"], 2, "{after}");
+    // The root as it appears inside a JSON string, escaped: a Windows path's backslashes are
+    // doubled there.
     let normalized = |world: &World, printed: &Value| {
+        let quoted = Value::from(world.root.display().to_string()).to_string();
         serde_json::from_str::<Value>(
             &printed
                 .to_string()
-                .replace(&world.root.display().to_string(), "<root>"),
+                .replace(&quoted[1..quoted.len() - 1], "<root>"),
         )
         .expect("JSON")
     };

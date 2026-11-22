@@ -127,12 +127,11 @@ budgets:
       50: 520 kept, 50 fixed, 6 obsolete, 4 unresolved and 20 duplicates in 12 clusters. The
       detail gives each phase's operations and the tickets each read or wrote. It protects the
       shared GitHub points and the wait a pass spends on the real board. Its 88 grooming
-      comments (76 closes, 12 survivors) take 3 comment add-many calls of at most 40 where 1
-      call took them before the content-write caps: the 2nd and 3rd are inherent to those caps,
-      which let one call declare at most the lesser cap's items (40 per minute by default),
-      because the request gate cannot see how many comments a source batches into one request,
-      so a larger call would burst past the cap that keeps GitHub's secondary content-creation
-      limit unhit.
+      comments (76 closes, 12 survivors) are 3 comment add-many calls of at most 40 each: the
+      content-write caps let one call declare at most the lesser cap's items (40 per minute by
+      default), because the request gate cannot see how many comments a source batches into one
+      request, and a larger call would burst past the cap that keeps GitHub's secondary
+      content-creation limit unhit.
     measure: reported
     command: ["cargo", "test", "--quiet", "-p", "onefollowup-e2e", "--locked", "--test", "e2e", "--", "budget_runner::report", "--exact", "--nocapture", "../../target/debug/telemetry/onefollowup-e2e"]
     unit: operations

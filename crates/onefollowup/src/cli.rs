@@ -153,6 +153,13 @@ pub enum GroomCommand {
     Check(api::GroomCheckArgs),
     /// Send what the passing check planned, receipting every outcome; read back every ticket
     /// changed and write the batch's report. Run again, it sends only what no receipt confirms.
+    ///
+    /// Prints `{"batch", "confirmed", "mismatched": [{"ticket", "expected", "found"}],
+    /// "report", "report_json", "store_operations"}`: how many tickets the read-back confirmed,
+    /// each way one differs from its receipts, and the batch's `report.md` and `report.json`,
+    /// which list every ticket left for a person. Exits 0 when everything landed and read back,
+    /// 1 while a write the destination refused or a mismatch stands (still printing its
+    /// document), and 2 for a batch no passing `groom check` planned.
     Publish(api::GroomPublishArgs),
 }
 

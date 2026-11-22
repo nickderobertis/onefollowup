@@ -484,6 +484,13 @@ pub fn run(settings: &Settings, args: BatchArgs) -> Result<Settled, Error> {
         retired,
         pending: pending_count,
         needs_attention,
-        store_operations: store.map(|store| store.operations()).unwrap_or_default(),
+        store_operations: store
+            .as_ref()
+            .map(|store| store.operations())
+            .unwrap_or_default(),
+        governed: store
+            .as_ref()
+            .map(crate::api::Governed::of)
+            .unwrap_or_default(),
     })
 }

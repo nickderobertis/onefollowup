@@ -459,6 +459,7 @@ pub fn run(settings: &Settings, args: CommentsSettleArgs) -> Result<CommentsSett
         needs_attention: count > 0 || accounts.iter().any(|account| !account.sound()),
         watermark,
         store_operations: store.operations(),
+        governed: crate::api::Governed::of(&store),
     })
 }
 

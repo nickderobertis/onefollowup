@@ -255,3 +255,23 @@ snapshot:
 # The `launch_command` argv `comments answer` runs once per launched batch, with `{batch}`,
 # `{feedback}` and `{snapshot}` replaced: none by default, which refuses `comments answer`.
 comments: {}
+# How every destination call is paced against the quota its destination reports, so a pass
+# never spends a shared token's remaining quota under others' share (README.md, "The quota
+# governor"). The defaults are the spike-quota-burn recommendation.
+governor:
+  enabled: true
+  # No request is admitted that would take a window's remaining under this share of its limit.
+  floor_percent: 20
+  # The reserve kept for others: their peak burn rate times the seconds to the reset, times this.
+  reserve_factor: 1
+  # Others' peak burn is the most they spent over any span this long.
+  peak_window_seconds: 300
+  # How far back others' burn is remembered.
+  burn_history_seconds: 86400
+  # The least points a minute others are ever assumed to spend, just above the peaks measured
+  # on 2026-11-20 and 2026-11-21; a resource not named is assumed at 0.
+  min_peak_per_minute:
+    graphql: 40
+    core: 60
+  # A reading is taken again once it is this old.
+  sample_seconds: 30

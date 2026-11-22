@@ -15,14 +15,15 @@ use indexmap::IndexMap;
 use onefollowup::api::{
     AnsweredLaunch, AnsweredPass, BoardComment, BoardStatus, Checked, CommentsAnswered,
     CommentsChecked, CommentsSettled, Drafted, DuplicateCandidate, DuplicateQuery, DuplicateSearch,
-    Gathered, HookRun, ItemStatus, Launch, Launches, Prepared, Problem, PublishOutcome, Published,
-    QueryKind, RoleStatus, SearchHit, SearchResults, Settled, SettledLaunch, Snapshotted, Staged,
-    StagedOp, StatusesShown, TicketValidated,
+    Gathered, Governed, HookRun, ItemStatus, Launch, Launches, Prepared, Problem, PublishOutcome,
+    Published, QueryKind, RoleStatus, SearchHit, SearchResults, Settled, SettledLaunch,
+    Snapshotted, Staged, StagedOp, StatusesShown, TicketValidated,
 };
 use onefollowup::cli::Cli;
 use onefollowup::config::StatusRole;
 use onefollowup::formats::outbox::StagedWrite;
 use onefollowup::formats::{HeldPriority, Level};
+use onefollowup::governor::{Reason, Report, Wait};
 use onefollowup::store::StoreOperation;
 use serde_json::{Value, to_value};
 
@@ -44,6 +45,7 @@ fn staged(write: StagedWrite, index: usize) -> Value {
         write,
         matched: None,
         store_operations: Vec::new(),
+        governed: Governed::default(),
     })
     .expect("JSON")
 }
@@ -127,6 +129,7 @@ fn examples() -> BTreeMap<&'static str, Value> {
                     }],
                 }],
                 store_operations: Vec::new(),
+                governed: Governed::default(),
             })),
         ),
         (
@@ -144,6 +147,7 @@ fn examples() -> BTreeMap<&'static str, Value> {
                     items: 3,
                     searches: Some(1),
                 }],
+                governed: Governed::default(),
             })),
         ),
         (
@@ -159,6 +163,7 @@ fn examples() -> BTreeMap<&'static str, Value> {
                 ],
                 absent_targets: Vec::new(),
                 store_operations: Vec::new(),
+                governed: Governed::default(),
             })),
         ),
         (
@@ -200,6 +205,7 @@ fn examples() -> BTreeMap<&'static str, Value> {
                     url: Some("https://github.com/example/widgets/issues/42".to_owned()),
                 }],
                 store_operations: Vec::new(),
+                governed: Governed::default(),
             })),
         ),
         (
@@ -272,6 +278,17 @@ fn examples() -> BTreeMap<&'static str, Value> {
                     error: None,
                 }],
                 store_operations: Vec::new(),
+                governed: Governed {
+                    quota_reads: 3,
+                    governor: Some(Report {
+                        waits: vec![Wait {
+                            source: "followups".to_owned(),
+                            resource: "graphql".to_owned(),
+                            seconds: 60,
+                            reason: Reason::Reserve,
+                        }],
+                    }),
+                },
             })),
         ),
         (
@@ -289,6 +306,7 @@ fn examples() -> BTreeMap<&'static str, Value> {
                 pending: 0,
                 needs_attention: false,
                 store_operations: Vec::new(),
+                governed: Governed::default(),
             })),
         ),
         (
@@ -302,6 +320,7 @@ fn examples() -> BTreeMap<&'static str, Value> {
                 left: 1,
                 launch_command: None,
                 store_operations: Vec::new(),
+                governed: Governed::default(),
             })),
         ),
         (
@@ -343,8 +362,10 @@ fn examples() -> BTreeMap<&'static str, Value> {
                     needs_attention: false,
                     watermark: Some("2026-11-01T12:00:00Z".to_owned()),
                     store_operations: Vec::new(),
+                    governed: Governed::default(),
                 }),
                 store_operations: Vec::new(),
+                governed: Governed::default(),
             }))),
         ),
         (
@@ -374,6 +395,7 @@ fn examples() -> BTreeMap<&'static str, Value> {
                 needs_attention: false,
                 watermark: Some("2026-11-01T12:00:00Z".to_owned()),
                 store_operations: Vec::new(),
+                governed: Governed::default(),
             })),
         ),
         (

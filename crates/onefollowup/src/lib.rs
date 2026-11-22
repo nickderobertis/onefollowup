@@ -4,6 +4,7 @@
 //! - [`config`] — the configuration, its defaults and its layered resolution.
 //! - [`formats`] — the record formats, each with its parse and render.
 //! - [`store`] — the one module that calls onetaskgraph.
+//! - [`governor`] — the quota governor the store paces every destination call by.
 //! - [`comments`] — the comment-answering pass the `comments` verbs run.
 //! - [`verify`] — the verify loop the batch verbs run: tickets, templates, routes, commands.
 //! - [`work`] — where a batch's working files live.
@@ -17,6 +18,7 @@ pub mod comments;
 pub mod config;
 pub mod error;
 pub mod formats;
+pub mod governor;
 pub mod store;
 pub mod verify;
 pub mod work;

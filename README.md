@@ -289,7 +289,18 @@ and `settled` is `null`, since nothing was settled.
       "item": "followups:item-42",
       "outcome": "created"
     }
-  ]
+  ],
+  "quota_reads": 3,
+  "governor": {
+    "waits": [
+      {
+        "source": "followups",
+        "resource": "graphql",
+        "seconds": 60,
+        "reason": "reserve"
+      }
+    ]
+  }
 }
 ```
 

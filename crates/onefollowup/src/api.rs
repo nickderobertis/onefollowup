@@ -23,13 +23,57 @@ use crate::config::{
 use crate::error::Error;
 use crate::formats::outbox::StagedWrite;
 use crate::formats::{HeldPriority, Level};
-use crate::store::StoreOperation;
+use crate::governor::Report;
+use crate::store::{Store, StoreOperation};
 pub use crate::verify::candidates::{Candidate as DuplicateCandidate, QueryKind};
 pub use crate::verify::relations::{Absent, MissingLink};
 use crate::{comments, verify};
 
 fn no_operations(operations: &[StoreOperation]) -> bool {
     operations.is_empty()
+}
+
+fn no_reads(count: &u64) -> bool {
+    *count == 0
+}
+
+/// What the quota governor did for a verb, reported beside its store operations and counted
+/// in none of them: each is absent while the verb reached no destination.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct Governed {
+    /// How many quota readings the governor took, one per destination asked.
+    #[serde(skip_serializing_if = "no_reads")]
+    pub quota_reads: u64,
+    /// Every wait it made; `{"waits": []}` when quota was ample throughout.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub governor: Option<Report>,
+}
+
+impl Governed {
+    /// What `store`'s governor did so far.
+    #[must_use]
+    pub fn of(store: &Store) -> Self {
+        Self {
+            quota_reads: store.quota_reads(),
+            governor: store.governor_report(),
+        }
+    }
+
+    /// This and then `later`, as one verb's.
+    #[must_use]
+    pub fn and(self, later: Self) -> Self {
+        let governor = match (self.governor, later.governor) {
+            (Some(mut first), Some(second)) => {
+                first.waits.extend(second.waits);
+                Some(first)
+            }
+            (first, second) => first.or(second),
+        };
+        Self {
+            quota_reads: self.quota_reads + later.quota_reads,
+            governor,
+        }
+    }
 }
 
 fn is_zero(count: &usize) -> bool {
@@ -97,6 +141,9 @@ pub struct TicketValidated {
     /// Each store operation it made.
     #[serde(default, skip_serializing_if = "no_operations")]
     pub store_operations: Vec<StoreOperation>,
+    /// What the quota governor did, beside the store operations.
+    #[serde(flatten)]
+    pub governed: Governed,
 }
 
 /// One comment on a destination item.
@@ -175,6 +222,9 @@ pub struct SearchResults {
     /// Each store operation it made.
     #[serde(default, skip_serializing_if = "no_operations")]
     pub store_operations: Vec<StoreOperation>,
+    /// What the quota governor did, beside the store operations.
+    #[serde(flatten)]
+    pub governed: Governed,
 }
 
 /// What `ticket copy|comment|re-estimate|relate` staged.
@@ -195,6 +245,9 @@ pub struct Staged {
     /// Each store operation it made.
     #[serde(default, skip_serializing_if = "no_operations")]
     pub store_operations: Vec<StoreOperation>,
+    /// What the quota governor did, beside the store operations.
+    #[serde(flatten)]
+    pub governed: Governed,
 }
 
 /// One rule a batch breaks.
@@ -265,6 +318,9 @@ pub struct Published {
     /// Each store operation it made.
     #[serde(default, skip_serializing_if = "no_operations")]
     pub store_operations: Vec<StoreOperation>,
+    /// What the quota governor did, beside the store operations.
+    #[serde(flatten)]
+    pub governed: Governed,
 }
 
 /// A hook that ran.
@@ -300,6 +356,9 @@ pub struct Settled {
     /// Each store operation it made.
     #[serde(default, skip_serializing_if = "no_operations")]
     pub store_operations: Vec<StoreOperation>,
+    /// What the quota governor did, beside the store operations.
+    #[serde(flatten)]
+    pub governed: Governed,
 }
 
 /// What `comments gather` gathered.
@@ -324,6 +383,9 @@ pub struct Gathered {
     /// Each store operation it made.
     #[serde(default, skip_serializing_if = "no_operations")]
     pub store_operations: Vec<StoreOperation>,
+    /// What the quota governor did, beside the store operations.
+    #[serde(flatten)]
+    pub governed: Governed,
 }
 
 /// One answering dispatch a snapshot launches.
@@ -403,6 +465,9 @@ pub struct CommentsSettled {
     /// Each store operation it made.
     #[serde(default, skip_serializing_if = "no_operations")]
     pub store_operations: Vec<StoreOperation>,
+    /// What the quota governor did, beside the store operations.
+    #[serde(flatten)]
+    pub governed: Governed,
 }
 
 /// One batch `comments answer` launched, and how its `comments.launch_command` exited.
@@ -455,6 +520,9 @@ pub struct AnsweredPass {
     /// Each store operation the pass made: the gathering's, then the settle's.
     #[serde(default, skip_serializing_if = "no_operations")]
     pub store_operations: Vec<StoreOperation>,
+    /// What the quota governor did, beside the store operations.
+    #[serde(flatten)]
+    pub governed: Governed,
 }
 
 /// One status role against the destination.
@@ -541,6 +609,9 @@ pub struct Snapshotted {
     pub empty: bool,
     /// Each store operation it made.
     pub store_operations: Vec<StoreOperation>,
+    /// What the quota governor did, beside the store operations.
+    #[serde(flatten)]
+    pub governed: Governed,
 }
 
 /// Snapshot a batch's input set — its drafts and the `batch_preparing` hook's inputs —
@@ -599,6 +670,9 @@ pub struct Prepared {
     /// Each store operation it made.
     #[serde(default, skip_serializing_if = "no_operations")]
     pub store_operations: Vec<StoreOperation>,
+    /// What the quota governor did, beside the store operations.
+    #[serde(flatten)]
+    pub governed: Governed,
 }
 
 /// One input's search for its duplicates, inside `prepare`'s one batched search.

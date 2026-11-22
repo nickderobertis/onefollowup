@@ -7,8 +7,8 @@
 use std::io::Read as _;
 
 use crate::api::{
-    BoardComment, BoardStatus, ItemStatus, SCHEMA_VERSION, SearchHit, SearchResults, Staged,
-    TicketBoardStatusArgs, TicketCommentArgs, TicketCopyArgs, TicketReEstimateArgs,
+    BoardComment, BoardStatus, Governed, ItemStatus, SCHEMA_VERSION, SearchHit, SearchResults,
+    Staged, TicketBoardStatusArgs, TicketCommentArgs, TicketCopyArgs, TicketReEstimateArgs,
     TicketRelateArgs, TicketSearchArgs, TicketValidateArgs, TicketValidated,
 };
 use crate::config::{Cardinality, Check, DecidedBy, Duplicates, Settings};
@@ -166,9 +166,9 @@ pub fn validate(settings: &Settings, args: TicketValidateArgs) -> Result<TicketV
     let state = batch.read_state()?;
     let ticket = batch.ticket(&args.ticket)?;
     let problems = ticket_problems(&batch, state.as_ref(), &ticket)?;
-    let (absent_targets, store_operations) = match state {
+    let (absent_targets, asked) = match state {
         Some(mut state) if !batch.config.relations.is_empty() => {
-            let store_operations = ask_targets(&batch, &mut state, &ticket)?;
+            let asked = ask_targets(&batch, &mut state, &ticket)?;
             batch.save_state(&state)?;
             let journal = journal::read(&batch)?;
             let graph = Graph::of(
@@ -183,9 +183,9 @@ pub fn validate(settings: &Settings, args: TicketValidateArgs) -> Result<TicketV
                 .into_iter()
                 .filter(|absent| absent.ticket == ticket.slug)
                 .collect();
-            (absent, store_operations)
+            (absent, asked)
         }
-        _ => (Vec::new(), Vec::new()),
+        _ => (Vec::new(), Asked::default()),
     };
     Ok(TicketValidated {
         schema_version: SCHEMA_VERSION,
@@ -194,7 +194,8 @@ pub fn validate(settings: &Settings, args: TicketValidateArgs) -> Result<TicketV
         sound: problems.is_empty(),
         problems,
         absent_targets,
-        store_operations,
+        store_operations: asked.operations,
+        governed: asked.governed,
     })
 }
 
@@ -277,6 +278,7 @@ pub fn search(settings: &Settings, args: TicketSearchArgs) -> Result<SearchResul
         query: args.query,
         hits,
         store_operations: store.operations(),
+        governed: Governed::of(&store),
     })
 }
 
@@ -463,7 +465,10 @@ pub fn copy(settings: &Settings, args: TicketCopyArgs) -> Result<Staged, Error> 
                     )
                 })
                 .collect();
-            let store_operations = ask_values(&batch, &mut state, &asked, &destination)?;
+            let Asked {
+                operations: store_operations,
+                governed,
+            } = ask_values(&batch, &mut state, &asked, &destination)?;
             let carries = |field_value: &dyn Fn(&str) -> Option<String>| {
                 fields.iter().zip(&values).all(|(field, value)| {
                     field_value(field).is_some_and(|held| casefolded(&held) == *value)
@@ -542,6 +547,7 @@ pub fn copy(settings: &Settings, args: TicketCopyArgs) -> Result<Staged, Error> 
                     write,
                     matched: Some(item),
                     store_operations,
+                    governed,
                 });
             }
             for other in batch.tickets()? {
@@ -568,6 +574,7 @@ pub fn copy(settings: &Settings, args: TicketCopyArgs) -> Result<Staged, Error> 
                         write: outbox.writes[index].clone(),
                         matched: Some(other_key),
                         store_operations,
+                        governed,
                     });
                 }
             }
@@ -610,6 +617,7 @@ pub fn copy(settings: &Settings, args: TicketCopyArgs) -> Result<Staged, Error> 
         write,
         matched: None,
         store_operations: Vec::new(),
+        governed: Governed::default(),
     })
 }
 
@@ -626,7 +634,7 @@ fn ask_values(
     state: &mut BatchState,
     values: &[(String, String)],
     destination: &str,
-) -> Result<Vec<crate::store::StoreOperation>, Error> {
+) -> Result<Asked, Error> {
     let mut searches = Vec::new();
     for (field, value) in values {
         let value = value.clone();
@@ -652,7 +660,7 @@ fn ask_values(
         state.searched_values.push(key);
     }
     if searches.is_empty() {
-        return Ok(Vec::new());
+        return Ok(Asked::default());
     }
     let store = batch.store()?;
     let reads_before = state.reads.len();
@@ -684,7 +692,10 @@ fn ask_values(
             read.comments = detail.comments;
         }
     }
-    Ok(store.operations())
+    Ok(Asked {
+        operations: store.operations(),
+        governed: Governed::of(&store),
+    })
 }
 
 /// Ask each relation's `to` destination about a ticket's values of the fields its match
@@ -693,8 +704,8 @@ fn ask_targets(
     batch: &Batch<'_>,
     state: &mut BatchState,
     ticket: &TicketFile,
-) -> Result<Vec<crate::store::StoreOperation>, Error> {
-    let mut operations = Vec::new();
+) -> Result<Asked, Error> {
+    let mut operations = Asked::default();
     for relation in &batch.config.relations {
         let DecidedBy::Match(fields) = &relation.decided_by else {
             continue;
@@ -737,6 +748,7 @@ pub fn comment(settings: &Settings, args: TicketCommentArgs) -> Result<Staged, E
     let batch = Batch::new(settings, &args.batch)?;
     let mut state = batch.state()?;
     let mut store_operations = Vec::new();
+    let mut governed = Governed::default();
     let item = if args.fields.is_empty() {
         args.item.clone().ok_or_else(|| {
             Error::Refused(
@@ -745,9 +757,10 @@ pub fn comment(settings: &Settings, args: TicketCommentArgs) -> Result<Staged, E
             )
         })?
     } else {
-        let (item, operations) = most_specific(&batch, &mut state, &args)?;
+        let (item, asked) = most_specific(&batch, &mut state, &args)?;
         batch.save_state(&state)?;
-        store_operations = operations;
+        store_operations = asked.operations;
+        governed = asked.governed;
         item
     };
     let read = read_of(&state, &item).ok_or_else(|| {
@@ -844,6 +857,7 @@ pub fn comment(settings: &Settings, args: TicketCommentArgs) -> Result<Staged, E
         write,
         matched: (!args.fields.is_empty()).then_some(item),
         store_operations,
+        governed,
     })
 }
 
@@ -855,7 +869,7 @@ fn most_specific(
     batch: &Batch<'_>,
     state: &mut BatchState,
     args: &TicketCommentArgs,
-) -> Result<(String, Vec<crate::store::StoreOperation>), Error> {
+) -> Result<(String, Asked), Error> {
     let config = batch.config;
     let mut observed: Vec<(String, String)> = Vec::new();
     for pair in &args.fields {
@@ -887,7 +901,7 @@ fn most_specific(
         .filter_map(|kind| kind.duplicates.same().map(|fields| (kind, fields)))
         .filter(|(_, fields)| fields.iter().all(|field| value_of(field).is_some()))
         .collect();
-    let mut operations = Vec::new();
+    let mut operations = Asked::default();
     let mut found: Vec<(String, String)> = Vec::new();
     for (kind, fields) in &kinds {
         let destination = batch.destination_of(kind);
@@ -1026,6 +1040,7 @@ pub fn relate(settings: &Settings, args: TicketRelateArgs) -> Result<Staged, Err
         write,
         matched: None,
         store_operations: Vec::new(),
+        governed: Governed::default(),
     })
 }
 
@@ -1060,6 +1075,7 @@ pub fn re_estimate(settings: &Settings, args: TicketReEstimateArgs) -> Result<St
         write,
         matched: None,
         store_operations: Vec::new(),
+        governed: Governed::default(),
     })
 }
 
@@ -1318,4 +1334,18 @@ fn trial_render(
     record.draft_sources = (!sources.is_empty()).then_some(sources);
     record.transcripts = (!transcripts.is_empty()).then_some(transcripts);
     decide::rendered(batch, ticket, kind, destination, &mut record, &estimate)
+}
+
+/// The store operations a tool's destination reads made, and what the governor did for them.
+#[derive(Default)]
+struct Asked {
+    operations: Vec<crate::store::StoreOperation>,
+    governed: Governed,
+}
+
+impl Asked {
+    fn extend(&mut self, later: Self) {
+        self.operations.extend(later.operations);
+        self.governed = std::mem::take(&mut self.governed).and(later.governed);
+    }
 }

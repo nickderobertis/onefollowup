@@ -107,6 +107,7 @@ pub fn run(settings: &Settings, args: CommentsAnswerArgs) -> Result<CommentsAnsw
                 failed,
                 settled: None,
                 store_operations: gathered.store_operations,
+                governed: gathered.governed,
             })),
         });
     }
@@ -120,6 +121,7 @@ pub fn run(settings: &Settings, args: CommentsAnswerArgs) -> Result<CommentsAnsw
     )?;
     let mut store_operations = gathered.store_operations;
     store_operations.append(&mut settled.store_operations);
+    let governed = gathered.governed.and(std::mem::take(&mut settled.governed));
     Ok(CommentsAnswered::Pass(AnsweredPass {
         schema_version: SCHEMA_VERSION,
         snapshot: planned.snapshot,
@@ -127,6 +129,7 @@ pub fn run(settings: &Settings, args: CommentsAnswerArgs) -> Result<CommentsAnsw
         failed: Vec::new(),
         settled: Some(settled),
         store_operations,
+        governed,
     }))
 }
 

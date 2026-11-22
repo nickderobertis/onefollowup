@@ -9,11 +9,19 @@
 //! [`StoreOperation`] in [`Store::operations`], tagged with the source it reached and whether
 //! that source is the local drafts source, so what a verb spent at a destination is read off
 //! the operations it reports rather than estimated.
+//!
+//! **And the one governed point.** Every destination call is admitted by the store's
+//! [`Governor`] before it is sent (`Store::send`), and every backend request inside it
+//! through the [`RequestGate`] installed on the engine, so a store call any verb adds is paced
+//! without the verb knowing (README.md, "The quota governor"). The governor's quota reads are
+//! not store operations: a verb reports them as `quota_reads` beside its `store_operations`.
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
+use std::future::Future;
 use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, OnceLock, Weak};
 
 use onetaskgraph_core::config::{self, Layer, SourceVisibility};
 use onetaskgraph_core::{
@@ -24,11 +32,15 @@ use onetaskgraph_core::{
     UpdateBatch, UpdateBatchItem,
 };
 use onetaskgraph_plugin_api::{
-    AuthorKind, Classification, LinkDirection, Location, MetadataKey, MetadataMatch, NativeId,
-    Priority, Repository, SourceName, Status, StatusCategory, Task, TaskUpdate,
+    AuthorKind, Classification, GatedRequest, LinkDirection, Location, MetadataKey, MetadataMatch,
+    NativeId, Priority, QuotaReading, Repository, RequestGate, SourceError, SourceName, Status,
+    StatusCategory, Task, TaskUpdate,
 };
 use serde::Serialize;
 use serde_json::Value;
+
+use crate::config::GovernorSettings;
+use crate::governor::{self, Governor, Kind, Pending, Reading, Readings, Report, Request};
 
 /// The store status categories, in onetaskgraph's spelling, that a status role may map to.
 /// `tests/store.rs` reconciles this list with onetaskgraph's own vocabulary.
@@ -44,7 +56,7 @@ pub const STATUS_CATEGORIES: &[&str] = &[
 
 /// The store a snapshot records it was gathered through: onetaskgraph at the version this
 /// crate pins. `tests/store.rs` holds it to the workspace's pin.
-pub const STORE_LINE: &str = "onetaskgraph 0.14.20";
+pub const STORE_LINE: &str = "onetaskgraph 0.15.0";
 
 /// The name of the onetaskgraph configuration document a `store` directory holds.
 pub const STORE_DOCUMENT: &str = "onetaskgraph.yaml";
@@ -550,7 +562,8 @@ pub struct EdgeAnswer {
 
 /// An opened store.
 pub struct Store {
-    engine: Engine,
+    engine: Arc<Engine>,
+    governor: Arc<Governor>,
     settings: BTreeMap<String, Value>,
     visibilities: BTreeMap<String, Visibility>,
     runtime: tokio::runtime::Runtime,
@@ -672,8 +685,28 @@ impl Store {
                 (name.to_string(), declared)
             })
             .collect();
+        let parts = governor::installed();
+        let engine_of_readings = Arc::new(OnceLock::new());
+        let readings = parts.readings.clone().unwrap_or_else(|| {
+            Arc::new(EngineReadings {
+                engine: Arc::clone(&engine_of_readings),
+            })
+        });
+        let governor = Arc::new(Governor::new(
+            crate::config::defaults("").governor,
+            parts.clock,
+            readings,
+            parts.notices,
+        ));
+        let engine = Arc::new(
+            Engine::build(&loaded.config, &loaded.secrets)
+                .with_request_gate(Arc::new(Gate(Arc::clone(&governor)))),
+        );
+        // Set once, here, before any call can ask for a reading.
+        let _ = engine_of_readings.set(Arc::downgrade(&engine));
         Ok(Self {
-            engine: Engine::build(&loaded.config, &loaded.secrets),
+            engine,
+            governor,
             settings,
             visibilities,
             runtime,
@@ -687,6 +720,47 @@ impl Store {
     pub fn with_local(mut self, source: &str) -> Self {
         self.local = Some(source.to_owned());
         self
+    }
+
+    /// The same store, its destination calls paced by `settings` rather than the shipped
+    /// defaults.
+    #[must_use]
+    pub fn with_governor(self, settings: &GovernorSettings) -> Self {
+        self.governor.configure(settings.clone());
+        self
+    }
+
+    /// How many quota readings the governor took so far, which no store operation counts.
+    #[must_use]
+    pub fn quota_reads(&self) -> u64 {
+        self.governor.quota_reads()
+    }
+
+    /// What the governor did so far: `None` before any destination call.
+    #[must_use]
+    pub fn governor_report(&self) -> Option<Report> {
+        self.governor.report()
+    }
+
+    /// The one chokepoint every call to onetaskgraph passes: `call`, to the sources `named`,
+    /// sent once the governor admits it to every destination among them.
+    fn send<F: Future>(&self, named: &[&str], kind: Kind, call: F) -> F::Output {
+        let mut destinations: Vec<String> = named
+            .iter()
+            .filter(|source| self.local.as_deref() != Some(**source))
+            .map(|source| (*source).to_owned())
+            .collect();
+        destinations.sort_unstable();
+        destinations.dedup();
+        if destinations.is_empty() {
+            return self.runtime.block_on(call);
+        }
+        self.runtime.block_on(async {
+            self.governor.admit_call(&destinations, kind).await;
+            let answered = call.await;
+            self.governor.end_call();
+            answered
+        })
     }
 
     /// Every source the store's configuration declares, in name order.
@@ -774,9 +848,11 @@ impl Store {
                 .collect::<Result<Vec<_>, StoreError>>()?,
         };
         let page = NonZeroU32::new(PAGE_SIZE).unwrap_or(NonZeroU32::MIN);
-        let answered = self
-            .runtime
-            .block_on(self.engine.find_tasks(&name, &request, page));
+        let answered = self.send(
+            &[source],
+            Kind::Read,
+            self.engine.find_tasks(&name, &request, page),
+        );
         let found = answered.map_err(|error| Self::failed("a search", source, error))?;
         // The operation counts every distinct task the store answered, kept or not.
         let mut seen: Vec<String> = found
@@ -827,11 +903,14 @@ impl Store {
             .iter()
             .map(|id| global(id))
             .collect::<Result<Vec<_>, _>>()?;
-        let details = self
-            .runtime
-            .block_on(self.engine.task_details(&globals, comments));
         let mut sources: Vec<String> = globals.iter().map(|id| id.source.to_string()).collect();
         sources.dedup();
+        let named: Vec<&str> = sources.iter().map(String::as_str).collect();
+        let details = self.send(
+            &named,
+            Kind::Read,
+            self.engine.task_details(&globals, comments),
+        );
         for source in &sources {
             let items = globals
                 .iter()
@@ -913,7 +992,7 @@ impl Store {
                 .collect::<Result<_, _>>()?,
             page_size: NonZeroU32::new(PAGE_SIZE).unwrap_or(NonZeroU32::MIN),
         };
-        let answered = self.runtime.block_on(self.engine.comments_since(&request));
+        let answered = self.send(&[source], Kind::Read, self.engine.comments_since(&request));
         let listed = answered.map_err(|error| Self::failed("a comments listing", source, error))?;
         let mut items: Vec<String> = listed
             .comments
@@ -979,8 +1058,7 @@ impl Store {
             classification: private.then_some(Classification::Private),
         };
         let created = self
-            .runtime
-            .block_on(self.engine.create_project(&request))
+            .send(&[source], Kind::Write, self.engine.create_project(&request))
             .map_err(|error| Self::failed("a project write", source, error))?;
         self.count("create-project", source, 1);
         Ok(created.id.native.to_string())
@@ -1009,8 +1087,11 @@ impl Store {
             assignee: task.assignee.clone(),
         };
         let created = self
-            .runtime
-            .block_on(self.engine.create_task(&request))
+            .send(
+                &[task.source.as_str()],
+                Kind::Write,
+                self.engine.create_task(&request),
+            )
             .map_err(|error| match error {
                 EngineError::PrivateMemberOfPublicProject { .. }
                 | EngineError::NotPrivateDestination { .. } => StoreError::Private {
@@ -1066,10 +1147,14 @@ impl Store {
                 .map(repositories)
                 .transpose()?,
             assignees: change.assignee.clone().map(|person| vec![person]),
+            duplicate_of: None,
         };
         let updated = self
-            .runtime
-            .block_on(self.engine.update_task(&global, &update))
+            .send(
+                &[source.as_str()],
+                Kind::Write,
+                self.engine.update_task(&global, &update),
+            )
             .map_err(|error| Self::failed("a task update", &source, error))?;
         self.count("update-task", &source, 1);
         Ok(StoreItem::of(Qualified {
@@ -1119,7 +1204,13 @@ impl Store {
                 ..CopyConditions::default()
             },
         };
-        let report = self.runtime.block_on(self.engine.copy(&request));
+        let mut named: Vec<&str> = batch
+            .items
+            .iter()
+            .filter_map(|id| id.split_once(':').map(|(source, _)| source))
+            .collect();
+        named.push(&batch.destination);
+        let report = self.send(&named, Kind::Write, self.engine.copy(&request));
         self.count("copy", &batch.destination, batch.items.len());
         let report = report.map_err(|error| Self::failed("a copy", &batch.destination, error))?;
         Ok(report
@@ -1188,9 +1279,12 @@ impl Store {
                 })
                 .collect(),
         };
-        let added = self
-            .runtime
-            .block_on(self.engine.add_comments(&source_name(source)?, &batch));
+        let name = source_name(source)?;
+        let added = self.send(
+            &[source],
+            Kind::Write,
+            self.engine.add_comments(&name, &batch),
+        );
         self.count("comment-add-many", source, posts.len());
         let added = added.map_err(|error| Self::failed("a comment batch", source, error))?;
         Ok(added
@@ -1254,9 +1348,12 @@ impl Store {
                 })
                 .collect::<Result<Vec<_>, StoreError>>()?,
         };
-        let updated = self
-            .runtime
-            .block_on(self.engine.update_tasks(&source_name(source)?, &batch));
+        let name = source_name(source)?;
+        let updated = self.send(
+            &[source],
+            Kind::Write,
+            self.engine.update_tasks(&name, &batch),
+        );
         self.count("update-many", source, updates.len());
         let updated = updated.map_err(|error| Self::failed("an update batch", source, error))?;
         Ok(updated
@@ -1302,10 +1399,12 @@ impl Store {
             .iter()
             .map(|id| global(id))
             .collect::<Result<Vec<_>, _>>()?;
-        let answered = self
-            .runtime
-            .block_on(self.engine.task_relations(&globals, false));
         let named: Vec<&str> = ids.iter().map(String::as_str).collect();
+        let answered = self.send(
+            &sources_of(&named),
+            Kind::Read,
+            self.engine.task_relations(&globals, false),
+        );
         self.count_over("relations", &named, ids.len());
         let first = named.first().copied().unwrap_or_default();
         let answered = answered.map_err(|error| Self::failed("a relations read", first, error))?;
@@ -1351,7 +1450,15 @@ impl Store {
                 })
                 .collect(),
         };
-        let answered = self.runtime.block_on(self.engine.set_parents(&batch));
+        let ends: Vec<&str> = edges
+            .iter()
+            .flat_map(|edge| [edge.from.as_str(), edge.to.as_str()])
+            .collect();
+        let answered = self.send(
+            &sources_of(&ends),
+            Kind::Write,
+            self.engine.set_parents(&batch),
+        );
         let named: Vec<&str> = edges.iter().map(|edge| edge.from.as_str()).collect();
         self.count_over("parent-set-many", &named, edges.len());
         let first = named.first().copied().unwrap_or_default();
@@ -1383,11 +1490,15 @@ impl Store {
                 })
                 .collect(),
         };
-        let answered = self.runtime.block_on(self.engine.add_links(&batch));
         let named: Vec<&str> = links
             .iter()
             .flat_map(|link| [link.from.as_str(), link.to.as_str()])
             .collect();
+        let answered = self.send(
+            &sources_of(&named),
+            Kind::Write,
+            self.engine.add_links(&batch),
+        );
         self.count_over("link-add-many", &named, links.len());
         let first = named.first().copied().unwrap_or_default();
         let answered = answered.map_err(|error| Self::failed("a link batch", first, error))?;
@@ -1399,6 +1510,72 @@ impl Store {
                 reason: result.reason,
             })
             .collect())
+    }
+}
+
+/// The sources of qualified ids, each once.
+fn sources_of<'a>(ids: &[&'a str]) -> Vec<&'a str> {
+    let mut sources: Vec<&str> = ids
+        .iter()
+        .filter_map(|id| id.split_once(':').map(|(source, _)| source))
+        .collect();
+    sources.sort_unstable();
+    sources.dedup();
+    sources
+}
+
+/// The governor's readings, taken through the store's own engine: `GET /rate_limit` on a
+/// GitHub source, nothing on a source that meters nothing.
+struct EngineReadings {
+    engine: Arc<OnceLock<Weak<Engine>>>,
+}
+
+impl Readings for EngineReadings {
+    fn read<'a>(&'a self, source: &'a str) -> Pending<'a, Result<Vec<Reading>, String>> {
+        Box::pin(async move {
+            let engine = self
+                .engine
+                .get()
+                .and_then(Weak::upgrade)
+                .ok_or_else(|| "the store is closed".to_owned())?;
+            let name = SourceName::new(source).map_err(|error| error.to_string())?;
+            let readings = engine
+                .quota(&name)
+                .await
+                .map_err(|error| error.to_string())?;
+            Ok(readings.iter().map(reading).collect())
+        })
+    }
+}
+
+fn reading(reading: &QuotaReading) -> Reading {
+    Reading {
+        resource: reading.resource.clone(),
+        limit: reading.limit,
+        remaining: reading.remaining,
+        resets_at: reading.resets_at,
+    }
+}
+
+/// The governor as the engine's request gate: asked before every backend request a call sends,
+/// told every response's reading. It only ever waits, never refuses.
+struct Gate(Arc<Governor>);
+
+#[async_trait::async_trait]
+impl RequestGate for Gate {
+    async fn before_request(&self, request: &GatedRequest) -> Result<(), SourceError> {
+        self.0
+            .before_request(&Request {
+                resource: request.resource.clone(),
+                cost_hint: request.cost_hint,
+            })
+            .await;
+        Ok(())
+    }
+
+    fn after_response(&self, readings: &[QuotaReading]) {
+        self.0
+            .after_response(&readings.iter().map(reading).collect::<Vec<_>>());
     }
 }
 

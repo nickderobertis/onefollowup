@@ -15,9 +15,11 @@ authors = ["Nick DeRobertis"]
 # Every store access: the engine and, through its features, every destination plugin
 # (local-md built in, GitHub Projects and Linear switched on). onetaskgraph's pre-1.0
 # crates release in lock step and are not compatible across patches, so the pin is exact.
-onetaskgraph-core = { version = "=0.14.20", features = ["github-projects", "linear"] }
+onetaskgraph-core = { version = "=0.15.0", features = ["github-projects", "linear"] }
 # The contract crate, for the status vocabulary a status role maps to.
-onetaskgraph-plugin-api = "=0.14.20"
+onetaskgraph-plugin-api = "=0.15.0"
+# The request gate onetaskgraph's engine asks is an `async_trait`.
+async-trait = "0.1.92"
 clap = { version = "4.6.6", features = ["derive"] }
 # Timestamps a draft, a ticket and a receipt record.
 chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
@@ -36,7 +38,7 @@ sha2 = "0.10.9"
 # The verifying agent's task and a kind's ticket template are Jinja templates.
 minijinja = { version = "2.24.0", features = ["loader"] }
 # onetaskgraph's engine is async; each verb drives it on one current-thread runtime.
-tokio = { version = "1.54.1", default-features = false, features = ["rt"] }
+tokio = { version = "1.54.1", default-features = false, features = ["rt", "time"] }
 thiserror = "2.0.20"
 
 assert_cmd = "2.2.2"

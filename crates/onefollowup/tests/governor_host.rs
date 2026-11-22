@@ -894,3 +894,84 @@ impl Readings for Scripted {
         Box::pin(async move { Ok(readings) })
     }
 }
+
+#[test]
+fn two_processes_contending_for_headroom_for_one_estimate_admit_one_and_the_other_waits() {
+    // 1,016 left, the floor 1,000, no reserve: room for exactly one request hinted 16. Each
+    // process sends one. The first admitted is held at its admission until the other has been
+    // admitted too or is waiting, so the two admissions overlap as two processes' can; the
+    // second must count the first's estimate and wait, never both go against the same 16.
+    let state = tempfile::tempdir().unwrap();
+    let settings = GovernorSettings {
+        reserve_factor: 0.0,
+        min_peak_per_minute: BTreeMap::new(),
+        ..sharing(state.path())
+    };
+    let clock = Simulated::at(instant(T0));
+    let backend = Arc::new(Backend {
+        clock: Arc::clone(&clock),
+        remaining: Mutex::new(1016),
+        spike: Mutex::new(None),
+        events: Mutex::new(Vec::new()),
+        in_flight: Mutex::new([0, 0]),
+        most_in_flight: Mutex::new([0, 0]),
+    });
+    let arrived = Arc::new(Mutex::new(0_u32));
+    let runs: Vec<_> = (0..2)
+        .map(|process| {
+            let participant = clock.join();
+            let backend = Arc::clone(&backend);
+            let settings = settings.clone();
+            let arrived = Arc::clone(&arrived);
+            std::thread::spawn(move || {
+                let _taking_part = participant;
+                let governor = Governor::new(
+                    settings,
+                    backend.clock.clone(),
+                    backend.clone(),
+                    Arc::new(|line: &str| eprintln!("{line}")),
+                );
+                let clock = Arc::clone(&backend.clock);
+                governor.on_admitted(Arc::new(move || {
+                    *arrived.lock().unwrap() += 1;
+                    while *arrived.lock().unwrap() < 2 && clock.waiting() == 0 {
+                        std::thread::sleep(Duration::from_millis(1));
+                    }
+                }));
+                update_many(process, &governor, &backend, 1);
+                governor.report().unwrap()
+            })
+        })
+        .collect();
+    let reports: Vec<governor::Report> = runs.into_iter().map(|run| run.join().unwrap()).collect();
+
+    let events = backend.events();
+    let sent: Vec<DateTime<Utc>> = events
+        .iter()
+        .filter_map(|event| match event {
+            Event::Sent(at, _) => Some(*at),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(sent.len(), 2, "both requests went in the end: {events:?}");
+    assert_eq!(
+        sent.iter().filter(|at| **at < instant(RESET)).count(),
+        1,
+        "only one request went against the room for one; the other waited for the reset: {events:?}"
+    );
+    let lowest = events
+        .iter()
+        .filter_map(|event| match event {
+            Event::Answered(at, _, left) if *at < instant(RESET) => Some(*left),
+            _ => None,
+        })
+        .min()
+        .unwrap();
+    assert!(
+        lowest >= 1000 - 1,
+        "under the floor by at most the one admitted request's estimate error: {lowest}"
+    );
+    let held: Vec<&governor::Wait> = reports.iter().flat_map(|report| &report.waits).collect();
+    assert_eq!(held.len(), 1, "{reports:?}");
+    assert_eq!(held[0].reason, Reason::Floor);
+}

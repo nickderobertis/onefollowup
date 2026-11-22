@@ -397,6 +397,14 @@ struct ContentBlocked {
     reason: Reason,
 }
 
+/// Why [`Governor::admit`] refuses a request now.
+enum Refusal {
+    /// A window's floor or reserve.
+    Quota(Box<Blocked>),
+    /// A content-write window's cap.
+    Content(Box<ContentBlocked>),
+}
+
 /// Where the shared state is kept: the host state directory once opened, or the process.
 enum Keeper {
     /// No state directory, or not opened yet.
@@ -406,6 +414,9 @@ enum Keeper {
     /// The state directory that could not be opened, which the process governs without.
     Unusable(PathBuf),
 }
+
+/// What [`Governor::on_admitted`] runs.
+pub type Admitted = Arc<dyn Fn() + Send + Sync>;
 
 /// The quota governor of one store.
 pub struct Governor {
@@ -421,6 +432,8 @@ pub struct Governor {
     keeper: Mutex<Keeper>,
     /// This process's name in the host state.
     process: String,
+    /// Run once each request is admitted, before it is sent: a test's seam.
+    admitted: Mutex<Option<Admitted>>,
     /// Woken whenever the slot is given up.
     released: Notify,
 }
@@ -473,8 +486,15 @@ impl Governor {
             shared: Mutex::new(BTreeMap::new()),
             keeper: Mutex::new(Keeper::Process),
             process: host::process_name(),
+            admitted: Mutex::new(None),
             released: Notify::new(),
         }
+    }
+
+    /// Run `hook` each time a request is admitted, before it is sent: the seam a test holds
+    /// two processes' admissions at to see what each counted of the other.
+    pub fn on_admitted(&self, hook: Admitted) {
+        *self.admitted.lock().unwrap_or_else(PoisonError::into_inner) = Some(hook);
     }
 
     /// Key each source's state by its backend kind (`source → kind`): every source of one kind
@@ -800,46 +820,37 @@ impl Governor {
             || self.request_estimate(&sources, &request.resource, kind),
             points,
         );
-        let backends = self.backends_of(&sources);
+        let content_creating = request.content_creating && in_call;
         loop {
             for source in &sources {
                 self.refresh_if_stale(source, &settings).await;
             }
-            // A request refused on the estimate is held at once: the call was admitted against
-            // a fresh reading, every response since refreshed it, and the hold's own refreshes
-            // are what find the headroom come back — the estimate less than it cost — before a
-            // reset.
-            while let Some(refusal) = sources
-                .iter()
-                .find_map(|source| self.decide(source, &request.resource, cost, &settings))
-            {
-                self.hold(refusal, cost, &settings).await;
-            }
-            if !(request.content_creating && in_call) {
-                break;
-            }
-            // Counted as admitted, at the instant the quota admitted it, so a write is never
-            // counted earlier than it is sent.
-            match self.count_content(&sources, &request.resource, &settings) {
-                None => break,
-                Some(blocked) => self.hold_content(blocked).await,
+            // Checked and counted in one transaction of the host state (`admit`). A request
+            // refused on the estimate is held at once: the call was admitted against a fresh
+            // reading, every response since refreshed it, and the hold's own refreshes are what
+            // find the headroom come back — the estimate less than it cost — before a reset.
+            // A content-creating write is counted at the instant the quota admits it, so it is
+            // never counted earlier than it is sent.
+            match self.admit(
+                &sources,
+                &request.resource,
+                cost,
+                content_creating,
+                &settings,
+            ) {
+                Ok(()) => break,
+                Err(Refusal::Quota(blocked)) => self.hold(*blocked, cost, &settings).await,
+                Err(Refusal::Content(blocked)) => self.hold_content(*blocked).await,
             }
         }
-        self.shared(&backends, |shared| {
-            for backend in &backends {
-                if let Some(held) = shared.get_mut(backend)
-                    && let Some(metered) = held.resources.get_mut(&request.resource)
-                    && !metered.windows.is_empty()
-                {
-                    metered.own += cost;
-                    held.in_flight.push(Flight {
-                        process: self.process.clone(),
-                        resource: request.resource.clone(),
-                        estimate: cost,
-                    });
-                }
-            }
-        });
+        let hook = self
+            .admitted
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        if let Some(hook) = hook {
+            hook();
+        }
         let mut state = self.state();
         if slotted {
             state.in_flight = Some((request.resource.clone(), kind, cost));
@@ -849,71 +860,62 @@ impl Governor {
         }
     }
 
-    /// Count one content-creating write to `sources` now, or say why the host's content-write
-    /// windows hold it: checked and counted under one lock, so two processes never both take
-    /// a window's last place.
-    fn count_content(
+    /// Admit one request of `cost` on `resource` to `sources` now, or say why not: every live
+    /// window of every source checked against floor plus reserve and, for a content-creating
+    /// request, the host's content-write windows against their caps — and, once admitted, its
+    /// cost and its place in flight counted and the content write recorded — all in one
+    /// transaction of the host state, so no other process admits against the same headroom
+    /// between this one's check and its count.
+    fn admit(
         &self,
         sources: &[String],
         resource: &str,
+        cost: f64,
+        content_creating: bool,
         settings: &GovernorSettings,
-    ) -> Option<ContentBlocked> {
+    ) -> Result<(), Refusal> {
         let now = self.clock.now();
         let backends = self.backends_of(sources);
-        let source = sources.first().cloned().unwrap_or_default();
+        let of: Vec<(String, String)> = sources
+            .iter()
+            .map(|source| (source.clone(), self.backend(source)))
+            .collect();
         self.shared(&backends, |shared| {
-            for backend in &backends {
-                let held = shared.entry(backend.clone()).or_default();
-                let hour_ago = now - chrono::Duration::seconds(HOUR);
-                while held
-                    .content_writes
-                    .front()
-                    .is_some_and(|written| *written <= hour_ago)
+            for (source, backend) in &of {
+                if let Some(metered) = shared
+                    .get_mut(backend)
+                    .and_then(|held| held.resources.get_mut(resource))
+                    && let Some(blocked) = decide_in(metered, source, resource, cost, settings, now)
                 {
-                    held.content_writes.pop_front();
+                    return Err(Refusal::Quota(Box::new(blocked)));
                 }
-                for (span, cap, reason) in [
-                    (
-                        HOUR,
-                        settings.max_content_writes_per_hour,
-                        Reason::ContentPerHour,
-                    ),
-                    (
-                        MINUTE,
-                        settings.max_content_writes_per_minute,
-                        Reason::ContentPerMinute,
-                    ),
-                ] {
-                    let since = now - chrono::Duration::seconds(span);
-                    let within: Vec<DateTime<Utc>> = held
-                        .content_writes
-                        .iter()
-                        .copied()
-                        .filter(|written| *written > since)
-                        .collect();
-                    let cap_places = usize::try_from(cap).unwrap_or(usize::MAX);
-                    if within.len() >= cap_places {
-                        // The window has room once all but `cap - 1` of its writes left it.
-                        let leaving = within[within.len() - cap_places];
-                        return Some(ContentBlocked {
-                            source: source.clone(),
-                            resource: resource.to_owned(),
-                            written: within.len(),
-                            cap,
-                            resume_by: leaving + chrono::Duration::seconds(span),
-                            reason,
-                        });
+            }
+            if content_creating {
+                let source = sources.first().cloned().unwrap_or_default();
+                for backend in &backends {
+                    let held = shared.entry(backend.clone()).or_default();
+                    if let Some(blocked) = content_in(held, &source, resource, settings, now) {
+                        return Err(Refusal::Content(Box::new(blocked)));
                     }
                 }
             }
             for backend in &backends {
-                shared
-                    .entry(backend.clone())
-                    .or_default()
-                    .content_writes
-                    .push_back(now);
+                let held = shared.entry(backend.clone()).or_default();
+                if content_creating {
+                    held.content_writes.push_back(now);
+                }
+                if let Some(metered) = held.resources.get_mut(resource)
+                    && !metered.windows.is_empty()
+                {
+                    metered.own += cost;
+                    held.in_flight.push(Flight {
+                        process: self.process.clone(),
+                        resource: resource.to_owned(),
+                        estimate: cost,
+                    });
+                }
             }
-            None
+            Ok(())
         })
     }
 
@@ -1106,52 +1108,7 @@ impl Governor {
         let backend = self.backend(source);
         self.shared(std::slice::from_ref(&backend), |shared| {
             let metered = shared.get_mut(&backend)?.resources.get_mut(resource)?;
-            metered.windows.retain(|resets_at, _| *resets_at > now);
-            let (mean, peak) = burn(metered, settings.peak_window_seconds);
-            let seeded = settings
-                .min_peak_per_minute
-                .get(resource)
-                .copied()
-                .unwrap_or(0.0);
-            let peak = peak.max(seeded);
-            let mut worst: Option<(f64, Blocked)> = None;
-            for (resets_at, window) in &metered.windows {
-                let remaining = points(window.remaining) - (metered.own - window.own_at_read);
-                let floor = settings.floor_percent / 100.0 * points(window.limit);
-                let to_reset = seconds(now, *resets_at).max(0.0);
-                let reserve = peak / 60.0 * to_reset * settings.reserve_factor;
-                let headroom = remaining - cost - floor - reserve;
-                if headroom >= 0.0 || worst.as_ref().is_some_and(|(least, _)| *least <= headroom) {
-                    continue;
-                }
-                let (reason, resume_by) = if remaining - cost < floor {
-                    (Reason::Floor, *resets_at)
-                } else {
-                    // The reserve shrinks with the time to the reset; it admits the cost once
-                    // `peak * factor * to_reset <= remaining - cost - floor`.
-                    let rate = peak / 60.0 * settings.reserve_factor;
-                    let lead = (remaining - cost - floor) / rate;
-                    let lead = chrono::Duration::milliseconds(whole_millis(lead));
-                    (Reason::Reserve, (*resets_at - lead).max(now))
-                };
-                worst = Some((
-                    headroom,
-                    Blocked {
-                        source: source.to_owned(),
-                        resource: resource.to_owned(),
-                        remaining,
-                        limit: window.limit,
-                        floor,
-                        reserve,
-                        mean_per_minute: mean,
-                        peak_per_minute: peak,
-                        resets_at: *resets_at,
-                        resume_by,
-                        reason,
-                    },
-                ));
-            }
-            worst.map(|(_, blocked)| blocked)
+            decide_in(metered, source, resource, cost, settings, now)
         })
     }
 
@@ -1194,6 +1151,116 @@ impl Governor {
             reason: blocked.reason,
         });
     }
+}
+
+/// Why the least live window of `metered` refuses a cost of `cost` now, or `None` when every
+/// one admits it (or none is held).
+fn decide_in(
+    metered: &mut Metered,
+    source: &str,
+    resource: &str,
+    cost: f64,
+    settings: &GovernorSettings,
+    now: DateTime<Utc>,
+) -> Option<Blocked> {
+    metered.windows.retain(|resets_at, _| *resets_at > now);
+    let (mean, peak) = burn(metered, settings.peak_window_seconds);
+    let seeded = settings
+        .min_peak_per_minute
+        .get(resource)
+        .copied()
+        .unwrap_or(0.0);
+    let peak = peak.max(seeded);
+    let mut worst: Option<(f64, Blocked)> = None;
+    for (resets_at, window) in &metered.windows {
+        let remaining = points(window.remaining) - (metered.own - window.own_at_read);
+        let floor = settings.floor_percent / 100.0 * points(window.limit);
+        let to_reset = seconds(now, *resets_at).max(0.0);
+        let reserve = peak / 60.0 * to_reset * settings.reserve_factor;
+        let headroom = remaining - cost - floor - reserve;
+        if headroom >= 0.0 || worst.as_ref().is_some_and(|(least, _)| *least <= headroom) {
+            continue;
+        }
+        let (reason, resume_by) = if remaining - cost < floor {
+            (Reason::Floor, *resets_at)
+        } else {
+            // The reserve shrinks with the time to the reset; it admits the cost once
+            // `peak * factor * to_reset <= remaining - cost - floor`.
+            let rate = peak / 60.0 * settings.reserve_factor;
+            let lead = (remaining - cost - floor) / rate;
+            let lead = chrono::Duration::milliseconds(whole_millis(lead));
+            (Reason::Reserve, (*resets_at - lead).max(now))
+        };
+        worst = Some((
+            headroom,
+            Blocked {
+                source: source.to_owned(),
+                resource: resource.to_owned(),
+                remaining,
+                limit: window.limit,
+                floor,
+                reserve,
+                mean_per_minute: mean,
+                peak_per_minute: peak,
+                resets_at: *resets_at,
+                resume_by,
+                reason,
+            },
+        ));
+    }
+    worst.map(|(_, blocked)| blocked)
+}
+
+/// Why `held`'s content-write windows hold a write now, or `None` when both have room.
+fn content_in(
+    held: &mut Shared,
+    source: &str,
+    resource: &str,
+    settings: &GovernorSettings,
+    now: DateTime<Utc>,
+) -> Option<ContentBlocked> {
+    let hour_ago = now - chrono::Duration::seconds(HOUR);
+    while held
+        .content_writes
+        .front()
+        .is_some_and(|written| *written <= hour_ago)
+    {
+        held.content_writes.pop_front();
+    }
+    for (span, cap, reason) in [
+        (
+            HOUR,
+            settings.max_content_writes_per_hour,
+            Reason::ContentPerHour,
+        ),
+        (
+            MINUTE,
+            settings.max_content_writes_per_minute,
+            Reason::ContentPerMinute,
+        ),
+    ] {
+        let since = now - chrono::Duration::seconds(span);
+        let within: Vec<DateTime<Utc>> = held
+            .content_writes
+            .iter()
+            .copied()
+            .filter(|written| *written > since)
+            .collect();
+        let cap_places = usize::try_from(cap).unwrap_or(usize::MAX);
+        if within.len() >= cap_places {
+            // The window has room once all but `cap - 1` of its writes left it.
+            let leaving = within[within.len() - cap_places];
+            return Some(ContentBlocked {
+                source: source.to_owned(),
+                resource: resource.to_owned(),
+                written: within.len(),
+                cap,
+                resume_by: leaving + chrono::Duration::seconds(span),
+                reason,
+            });
+        }
+    }
+    None
 }
 
 fn whole_millis(span_seconds: f64) -> i64 {

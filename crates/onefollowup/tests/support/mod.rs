@@ -215,6 +215,11 @@ impl Simulated {
         self.lock().kill.push((thread, at));
     }
 
+    /// How many participants wait on the clock now.
+    pub fn waiting(&self) -> usize {
+        self.lock().sleepers.len()
+    }
+
     /// Move the clock by `seconds` while nobody waits: the case's own passage of time.
     pub fn advance(&self, seconds: i64) {
         let mut simulation = self.lock();

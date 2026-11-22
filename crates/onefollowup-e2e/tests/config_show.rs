@@ -719,7 +719,11 @@ fn the_governor_s_keys_merge_one_by_one_and_each_layer_is_named() {
         "{}",
         shown["sources"]
     );
-    let stderr = refusal(directory.path(), &[], &["--set", "governor.floor_percent=101"]);
+    let stderr = refusal(
+        directory.path(),
+        &[],
+        &["--set", "governor.floor_percent=101"],
+    );
     assert!(
         stderr.contains("`governor.floor_percent` from the flag --set"),
         "{stderr}"

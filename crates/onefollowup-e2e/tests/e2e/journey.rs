@@ -424,12 +424,16 @@ fn a_batch_is_prepared_verified_checked_published_and_settled_in_a_handful_of_st
     // The governor read the local-md destination's quota — none, so nothing waited — and
     // counted those reads apart from the store operations, whose count below is unchanged.
     assert!(
-        published["quota_reads"].as_u64().is_some_and(|reads| reads >= 1),
+        published["quota_reads"]
+            .as_u64()
+            .is_some_and(|reads| reads >= 1),
         "{published}"
     );
     assert_eq!(published["governor"], json!({"waits": []}), "{published}");
     assert!(
-        prepared["quota_reads"].as_u64().is_some_and(|reads| reads >= 1),
+        prepared["quota_reads"]
+            .as_u64()
+            .is_some_and(|reads| reads >= 1),
         "{prepared}"
     );
     assert_eq!(prepared["governor"], json!({"waits": []}), "{prepared}");

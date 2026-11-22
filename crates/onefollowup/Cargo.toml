@@ -23,6 +23,7 @@ name = "onefollowup"
 path = "src/main.rs"
 
 [dependencies]
+async-trait.workspace = true
 clap.workspace = true
 chrono.workspace = true
 gethostname.workspace = true
@@ -40,6 +41,8 @@ thiserror.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]
+# The governor's tests read and set its virtual clock and drive it on one runtime.
+chrono.workspace = true
 jsonschema.workspace = true
 regex.workspace = true
 onetaskgraph-plugin-api.workspace = true
@@ -48,3 +51,5 @@ serde.workspace = true
 serde-saphyr.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
+# Paused time drives the one-in-flight lease, which runs on the runtime's timer.
+tokio = { workspace = true, features = ["test-util"] }

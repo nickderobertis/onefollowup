@@ -33,6 +33,7 @@ pub const KEYS: &[&str] = &[
     "hooks",
     "snapshot",
     "comments",
+    "governor",
     "groom",
 ];
 
@@ -85,6 +86,8 @@ pub struct Config {
     pub snapshot: SnapshotSettings,
     /// How `comments answer` launches each batch's answering.
     pub comments: CommentsSettings,
+    /// How every destination call is paced against the quota the destination reports.
+    pub governor: GovernorSettings,
     /// How `groom prepare` selects, shards and tasks a destination's open tickets.
     pub groom: GroomSettings,
 }
@@ -950,6 +953,27 @@ pub struct HookOwner {
 pub struct SnapshotSettings {
     /// How long a snapshot stays launchable: a whole number of `s`, `m`, `h` or `d`.
     pub launchable_for: String,
+}
+
+/// How the quota governor paces every destination call (README.md, "The quota governor").
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GovernorSettings {
+    /// Whether destination calls are paced at all.
+    pub enabled: bool,
+    /// The hard floor, a percentage of each window's limit no request is admitted under.
+    pub floor_percent: f64,
+    /// What others' peak burn until the reset is multiplied by to make the reserve.
+    pub reserve_factor: f64,
+    /// The span others' peak burn rate is measured over.
+    pub peak_window_seconds: u64,
+    /// How far back others' burn is remembered.
+    pub burn_history_seconds: u64,
+    /// The least rate, in points a minute, others are ever assumed to spend each resource at;
+    /// a resource it does not name is assumed at 0.
+    pub min_peak_per_minute: std::collections::BTreeMap<String, f64>,
+    /// The longest a reading is used before it is taken again.
+    pub sample_seconds: u64,
 }
 
 /// How `comments answer` launches each batch's answering.

@@ -1089,6 +1089,7 @@ pub fn run(settings: &Settings, args: GroomPublishArgs) -> Result<GroomPublished
         report: report_md,
         report_json,
         store_operations: store.operations(),
+        governed: crate::api::Governed::of(&store),
     };
     if failed.is_empty() && published.mismatched.is_empty() {
         return Ok(published);

@@ -226,6 +226,7 @@ pub fn run(settings: &Settings, args: BatchArgs) -> Result<Published, Error> {
             receipts: receipts_path,
             outcomes: Vec::new(),
             store_operations: Vec::new(),
+            governed: crate::api::Governed::default(),
         });
     }
     let current = check::digests(&batch, &outbox)?;
@@ -685,6 +686,7 @@ pub fn run(settings: &Settings, args: BatchArgs) -> Result<Published, Error> {
         receipts: receipts_path,
         outcomes,
         store_operations: store.operations(),
+        governed: crate::api::Governed::of(&store),
     })
 }
 

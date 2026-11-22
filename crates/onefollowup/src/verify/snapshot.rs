@@ -36,5 +36,6 @@ pub fn run(settings: &Settings, args: SnapshotArgs) -> Result<Snapshotted, Error
         inputs: state.inputs.len() - drafts,
         empty,
         store_operations: store.operations(),
+        governed: crate::api::Governed::of(&store),
     })
 }

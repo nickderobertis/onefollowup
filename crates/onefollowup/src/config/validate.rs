@@ -8,7 +8,8 @@ use std::collections::HashSet;
 use serde_json::Value;
 
 use super::types::{
-    CONTEXT_FILE, Cardinality, Config, DecidedBy, Duplicates, PriorityModel, RelationStore, Rollup,
+    CONTEXT_FILE, Cardinality, Config, DecidedBy, Duplicates, GovernorSettings, PriorityModel,
+    RelationStore, Rollup,
 };
 use crate::store;
 
@@ -120,6 +121,7 @@ pub fn validate(config: &Config) -> Result<(), Refusal> {
             ),
         );
     }
+    governor(&config.governor)?;
     if config.groom.shard_size == 0 {
         return refuse(
             "groom.shard_size".to_owned(),
@@ -439,4 +441,50 @@ fn duration(text: &str) -> bool {
             .chars()
             .all(|one| one.is_ascii_digit())
         && matches!(text.as_bytes()[text.len() - 1], b's' | b'm' | b'h' | b'd')
+}
+
+/// Hold the governor's settings to the ranges its arithmetic needs.
+fn governor(settings: &GovernorSettings) -> Result<(), Refusal> {
+    if !(0.0..=100.0).contains(&settings.floor_percent) {
+        return refuse(
+            "governor.floor_percent".to_owned(),
+            format!(
+                "`{}` is not a percentage: use a number from 0 to 100",
+                settings.floor_percent
+            ),
+        );
+    }
+    if !settings.reserve_factor.is_finite() || settings.reserve_factor < 0.0 {
+        return refuse(
+            "governor.reserve_factor".to_owned(),
+            format!(
+                "`{}` is not a factor: use a number of 0 or more",
+                settings.reserve_factor
+            ),
+        );
+    }
+    if settings.peak_window_seconds == 0 {
+        return refuse(
+            "governor.peak_window_seconds".to_owned(),
+            "is 0: a peak rate is measured over at least one second".to_owned(),
+        );
+    }
+    if settings.burn_history_seconds < settings.peak_window_seconds {
+        return refuse(
+            "governor.burn_history_seconds".to_owned(),
+            format!(
+                "`{}` is shorter than `peak_window_seconds` ({}): the history must hold one peak window",
+                settings.burn_history_seconds, settings.peak_window_seconds
+            ),
+        );
+    }
+    for (resource, rate) in &settings.min_peak_per_minute {
+        if !rate.is_finite() || *rate < 0.0 {
+            return refuse(
+                format!("governor.min_peak_per_minute.{resource}"),
+                format!("`{rate}` is not a rate: use points a minute, 0 or more"),
+            );
+        }
+    }
+    Ok(())
 }

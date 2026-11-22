@@ -609,6 +609,7 @@ pub fn run(settings: &Settings, args: PrepareArgs) -> Result<Prepared, Error> {
         missing_links,
         duplicate_searches,
         store_operations: store.operations(),
+        governed: crate::api::Governed::of(&store),
     })
 }
 

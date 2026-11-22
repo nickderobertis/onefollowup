@@ -306,6 +306,7 @@ pub fn run(settings: &Settings, args: CommentsGatherArgs) -> Result<Gathered, Er
         left: snapshot.left.len(),
         launch_command,
         store_operations: store.operations(),
+        governed: crate::api::Governed::of(&store),
     })
 }
 

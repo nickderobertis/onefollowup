@@ -20,6 +20,7 @@ mod duplicate_boards;
 mod duplicates;
 mod examples;
 mod filing_duplicates;
+mod governed_publish;
 mod hook_context;
 mod journey;
 mod outstanding;

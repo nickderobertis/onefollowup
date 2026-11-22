@@ -382,3 +382,65 @@ pub fn an_older_record_holds_the_comment_read_back(runner: &dyn Runner) {
     );
     assert_eq!(groomed.selects(runner, &[]), ["wb"]);
 }
+
+pub fn a_record_this_does_not_read_selects_its_ticket(runner: &dyn Runner) {
+    let groomed = Groomed::new();
+    let good = groomed
+        .world
+        .groomed(
+            "gb",
+            &groomed.verified_at,
+            GADGETS,
+            &groomed.gadgets,
+            &["lib/y.rs"],
+            &[],
+        )
+        .to_value();
+    let unreadable: [(&str, serde_json::Value); 6] = [
+        ("repository", json!("gadgets")),
+        ("verified_at", json!("yesterday")),
+        ("evidence_paths", json!(["/etc/passwd"])),
+        ("content_digest", json!("md5:0")),
+        (
+            "overlap_comments",
+            json!([{"id": "c-1", "edited_at": "soon"}]),
+        ),
+        ("verdict", json!("maybe")),
+    ];
+    for (key, value) in unreadable {
+        let mut record = good.clone();
+        record[key] = value;
+        groomed.world.record("gb", &record);
+        assert_eq!(
+            groomed.selects(runner, &[]),
+            ["gb"],
+            "a record whose `{key}` this does not read"
+        );
+        let reasons =
+            &groomed.world.batch_record(&latest(&groomed.world))["selected"][0]["reasons"];
+        assert!(
+            reasons[0]
+                .as_str()
+                .is_some_and(|reason| reason.starts_with("its groom record is not one this reads")),
+            "{key}: {reasons}"
+        );
+    }
+    groomed.world.record("gb", &good);
+    assert_eq!(
+        groomed.selects(runner, &[]),
+        Vec::<String>::new(),
+        "a readable record again"
+    );
+}
+
+/// The newest batch the world holds.
+fn latest(world: &World) -> String {
+    let mut batches: Vec<String> = std::fs::read_dir(world.root.join(".onefollowup/groom"))
+        .expect("the grooming directory")
+        .flatten()
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.starts_with("groom-"))
+        .collect();
+    batches.sort();
+    batches.pop().expect("a batch")
+}

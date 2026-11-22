@@ -18,6 +18,7 @@ macro_rules! groom_journeys {
             prepare::nothing_to_select_answers_no_shard,
             prepare::a_zero_shard_size_is_refused,
             prepare::an_unreachable_repository_fails_naming_it,
+            prepare::a_configured_task_template_and_persona_shape_the_task,
             check::verdicts_are_held_to_the_rules_and_planned,
             check::malformed_verdict_records_are_refused_by_rule,
             check::a_plan_breaking_protection_is_refused_and_kept,
@@ -27,6 +28,7 @@ macro_rules! groom_journeys {
             selection::full_selects_every_open_ticket,
             selection::overlap_comments_select_by_what_the_record_holds,
             selection::an_older_record_holds_the_comment_read_back,
+            selection::a_record_this_does_not_read_selects_its_ticket,
         );
     };
     (@each $runner:expr; $($module:ident :: $journey:ident),* $(,)?) => {

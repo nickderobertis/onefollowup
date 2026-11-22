@@ -274,3 +274,46 @@ pub fn an_unreachable_repository_fails_naming_it(runner: &dyn Runner) {
     );
     assert!(ran.stderr.contains("next:"), "{}", ran.stderr);
 }
+
+pub fn a_configured_task_template_and_persona_shape_the_task(runner: &dyn Runner) {
+    let world = World::new();
+    world.repository("github.com/example/widgets", &[("src/a.rs", "a\n")]);
+    world.ticket(
+        "one",
+        "widgets: one ticket",
+        "todo",
+        &["github.com/example/widgets"],
+        "Its body.",
+    );
+    std::fs::create_dir_all(world.root.join("groom")).expect("a directory");
+    std::fs::write(
+        world.root.join("groom/task.md.j2"),
+        "{{ persona.name }} verifies {% for ticket in tickets %}{{ ticket.ticket }} ({{ ticket.protection }}){% endfor %} into {{ verdicts }}\n",
+    )
+    .expect("a template");
+    std::fs::write(world.root.join("groom/persona.yaml"), "name: careful\n").expect("a persona");
+    std::fs::write(
+        world.root.join("onefollowup.yaml"),
+        "groom:\n  task_template: groom/task.md.j2\n  persona: groom/persona.yaml\n",
+    )
+    .expect("the configuration");
+    let printed = world.json(runner, 0, &["groom", "prepare"]);
+    let shard = &printed["shards"][0];
+    assert_eq!(
+        std::fs::read_to_string(shard["task"].as_str().expect("a task")).expect("the task"),
+        format!(
+            "careful verifies followups:one (todo) into {}\n",
+            shard["verdicts"].as_str().expect("a path")
+        )
+    );
+
+    std::fs::write(world.root.join("groom/persona.yaml"), "name: [unclosed\n").expect("a persona");
+    let ran = runner.run(&world, &["groom", "prepare"]);
+    assert_eq!(ran.code, 2, "{}{}", ran.stderr, ran.stdout);
+    assert!(
+        ran.stderr
+            .contains("the persona groom/persona.yaml: is not YAML"),
+        "{}",
+        ran.stderr
+    );
+}

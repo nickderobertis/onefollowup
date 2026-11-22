@@ -931,3 +931,86 @@ pub fn an_unchanged_duplicate_target_wins_by_seam_repository(runner: &dyn Runner
     );
     assert_eq!(plan["kept"], json!([]));
 }
+
+pub fn ties_fall_to_the_todo_and_oldest_tiers(runner: &dyn Runner) {
+    // Two clusters, each decided by a later tier of the survivor order, and each against the
+    // survivor the agent's `duplicate_of` implies.
+    // - `b1` and `t1`: neither is claimed; `t1` is Todo and `b1` is not, though `b1` is in the
+    //   repository both name as the seam's and has more evidence, so `t1` survives by `todo`.
+    // - `d1` and `d2`: both Backlog, neither in a seam's repository, each with one evidence path
+    //   and evidence of one length, so they tie on every tier before the last. local-md reports
+    //   no creation time for a task, so the last tier falls to the first by id: `d1` survives by
+    //   `oldest`, though its own verdict names `d2` as the one it duplicates.
+    let world = World::new();
+    world.repository(WIDGETS, &[("src/a.rs", "a\n"), ("src/b.rs", "b\n")]);
+    world.repository(GADGETS, &[("lib/x.rs", "x\n"), ("lib/y.rs", "y\n")]);
+    for (id, status, repository) in [
+        ("b1", "backlog", GADGETS),
+        ("t1", "todo", WIDGETS),
+        ("d1", "backlog", WIDGETS),
+        ("d2", "backlog", WIDGETS),
+    ] {
+        world.ticket(
+            id,
+            &format!("widgets: ticket {id}"),
+            status,
+            &[repository],
+            &format!("The body of {id}."),
+        );
+    }
+    let printed = world.json(runner, 0, &["groom", "prepare"]);
+    let id = printed["batch"].as_str().expect("a batch").to_owned();
+    let verdicts = world.batch_record(&id)["shards"][0]["verdicts"]
+        .as_str()
+        .expect("a path")
+        .to_owned();
+    let records = [
+        verdict(
+            "b1",
+            "keep",
+            "high",
+            None,
+            &["lib/x.rs", "lib/y.rs"],
+            Some("t1"),
+            Some(GADGETS),
+        ),
+        verdict(
+            "t1",
+            "keep",
+            "high",
+            None,
+            &["src/a.rs"],
+            None,
+            Some(GADGETS),
+        ),
+        verdict("d1", "keep", "high", None, &["src/a.rs"], Some("d2"), None),
+        verdict("d2", "keep", "high", None, &["src/b.rs"], None, None),
+    ];
+    let text: String = records.iter().map(|one| format!("{one}\n")).collect();
+    std::fs::write(&verdicts, text).expect("verdicts written");
+
+    let printed = world.json(runner, 0, &["groom", "check", "--batch", &id]);
+    assert_eq!(printed["problems"], json!([]), "{printed:#}");
+    let plan = &printed["plan"];
+    assert_eq!(
+        plan["survivors"],
+        json!([
+            {"ticket": t("t1"), "members": [t("b1"), t("t1")], "chosen_by": "todo"},
+            {"ticket": t("d1"), "members": [t("d1"), t("d2")], "chosen_by": "oldest"},
+        ]),
+        "the Todo member outranks the seam and more evidence, and a tie on every earlier tier \
+         falls to the oldest: {plan:#}"
+    );
+    assert_eq!(entry(plan, "duplicates", "b1")["duplicate_of"], t("t1"));
+    assert_eq!(
+        entry(plan, "duplicates", "d2")["duplicate_of"],
+        t("d1"),
+        "the survivor the agent implied is ignored"
+    );
+    assert_eq!(ids(&plan["kept"]), ["d1", "t1"]);
+    for ticket in ["d1", "t1"] {
+        assert_eq!(entry(plan, "kept", ticket)["left_for_person"], Value::Null);
+    }
+    assert_eq!(plan["fixed"], json!([]));
+    assert_eq!(plan["obsolete"], json!([]));
+}

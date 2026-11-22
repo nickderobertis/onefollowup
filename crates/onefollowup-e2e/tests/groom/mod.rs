@@ -25,6 +25,7 @@ macro_rules! groom_journeys {
             check::a_plan_breaking_protection_is_refused_and_kept,
             check::a_batch_not_prepared_is_refused,
             check::an_unchanged_duplicate_target_wins_by_seam_repository,
+            check::ties_fall_to_the_todo_and_oldest_tiers,
             selection::nothing_changed_selects_nothing,
             selection::each_change_alone_selects_exactly_its_ticket,
             selection::full_selects_every_open_ticket,

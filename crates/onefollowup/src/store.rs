@@ -723,6 +723,13 @@ impl Store {
                 (name.to_string(), declared)
             })
             .collect();
+        // Every source of one backend kind shares one governor state on the host.
+        let backends = loaded
+            .config
+            .sources()
+            .iter()
+            .map(|(name, source)| (name.to_string(), source.plugin().as_str().to_owned()))
+            .collect();
         let parts = governor::installed();
         let engine_of_readings = Arc::new(OnceLock::new());
         let readings = parts.readings.clone().unwrap_or_else(|| {
@@ -736,6 +743,7 @@ impl Store {
             readings,
             parts.notices,
         ));
+        governor.set_backends(backends);
         let engine = Arc::new(
             Engine::build(&loaded.config, &loaded.secrets)
                 .with_request_gate(Arc::new(Gate(Arc::clone(&governor)))),
@@ -1716,6 +1724,7 @@ impl RequestGate for Gate {
             .before_request(&Request {
                 resource: request.resource.clone(),
                 cost_hint: request.cost_hint,
+                content_creating: request.content_creating,
             })
             .await;
         Ok(())

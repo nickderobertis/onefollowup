@@ -486,5 +486,34 @@ fn governor(settings: &GovernorSettings) -> Result<(), Refusal> {
             );
         }
     }
+    for (key, cap) in [
+        (
+            "governor.max_content_writes_per_hour",
+            settings.max_content_writes_per_hour,
+        ),
+        (
+            "governor.max_content_writes_per_minute",
+            settings.max_content_writes_per_minute,
+        ),
+    ] {
+        if cap == 0 {
+            return refuse(
+                key.to_owned(),
+                "is 0, which would hold every content-creating write forever: use 1 or more"
+                    .to_owned(),
+            );
+        }
+    }
+    if let Some(directory) = &settings.state_dir
+        && !directory.is_absolute()
+    {
+        return refuse(
+            "governor.state_dir".to_owned(),
+            format!(
+                "`{}` is not an absolute path: the state is the host's, shared by every work directory",
+                directory.display()
+            ),
+        );
+    }
     Ok(())
 }

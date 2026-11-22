@@ -97,7 +97,8 @@ impl<'a> Groom<'a> {
             self.settings.working_directory(),
             self.settings.environment(),
         )?
-        .with_local(&self.config.drafts_source))
+        .with_local(&self.config.drafts_source)
+        .with_governor(&self.config.governor))
     }
 
     /// The `git` the verb runs.

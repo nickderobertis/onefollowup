@@ -933,7 +933,7 @@ pub fn an_unchanged_duplicate_target_wins_by_seam_repository(runner: &dyn Runner
 }
 
 pub fn ties_fall_to_the_todo_and_oldest_tiers(runner: &dyn Runner) {
-    // Two clusters, each decided by a later tier of the survivor order, and each against the
+    // Three clusters, each decided by a later tier of the survivor order, and each against the
     // survivor the agent's `duplicate_of` implies.
     // - `b1` and `t1`: neither is claimed; `t1` is Todo and `b1` is not, though `b1` is in the
     //   repository both name as the seam's and has more evidence, so `t1` survives by `todo`.
@@ -941,6 +941,9 @@ pub fn ties_fall_to_the_todo_and_oldest_tiers(runner: &dyn Runner) {
     //   and evidence of one length, so they tie on every tier before the last. local-md reports
     //   no creation time for a task, so the last tier falls to the first by id: `d1` survives by
     //   `oldest`, though its own verdict names `d2` as the one it duplicates.
+    // - `e1` and `e2`: tied as `d1` and `d2` are, but with creation times seeded into the
+    //   batch's snapshot of open tickets, which is what check ranks age by. `e2` sorts after
+    //   `e1` by id and is the older, so only the age comparison makes it the survivor.
     let world = World::new();
     world.repository(WIDGETS, &[("src/a.rs", "a\n"), ("src/b.rs", "b\n")]);
     world.repository(GADGETS, &[("lib/x.rs", "x\n"), ("lib/y.rs", "y\n")]);
@@ -949,6 +952,8 @@ pub fn ties_fall_to_the_todo_and_oldest_tiers(runner: &dyn Runner) {
         ("t1", "todo", WIDGETS),
         ("d1", "backlog", WIDGETS),
         ("d2", "backlog", WIDGETS),
+        ("e1", "backlog", WIDGETS),
+        ("e2", "backlog", WIDGETS),
     ] {
         world.ticket(
             id,
@@ -964,6 +969,27 @@ pub fn ties_fall_to_the_todo_and_oldest_tiers(runner: &dyn Runner) {
         .as_str()
         .expect("a path")
         .to_owned();
+    // local-md reports no creation time, so seed one per `e` ticket where check reads it.
+    let snapshot_path = world.batch(&id).join("snapshot.json");
+    let mut snapshot: Value = serde_json::from_str(
+        &std::fs::read_to_string(&snapshot_path).expect("prepare wrote the snapshot"),
+    )
+    .expect("JSON");
+    let created = [
+        (t("e1"), "2026-11-20T00:00:00Z"),
+        (t("e2"), "2026-01-01T00:00:00Z"),
+    ];
+    for one in snapshot["tickets"].as_array_mut().expect("tickets") {
+        assert_eq!(
+            one["created_at"],
+            Value::Null,
+            "local-md gives no time: {one}"
+        );
+        if let Some((_, at)) = created.iter().find(|(ticket, _)| one["ticket"] == *ticket) {
+            one["created_at"] = json!(at);
+        }
+    }
+    std::fs::write(&snapshot_path, snapshot.to_string()).expect("snapshot seeded");
     let records = [
         verdict(
             "b1",
@@ -985,6 +1011,8 @@ pub fn ties_fall_to_the_todo_and_oldest_tiers(runner: &dyn Runner) {
         ),
         verdict("d1", "keep", "high", None, &["src/a.rs"], Some("d2"), None),
         verdict("d2", "keep", "high", None, &["src/b.rs"], None, None),
+        verdict("e1", "keep", "high", None, &["src/a.rs"], None, None),
+        verdict("e2", "keep", "high", None, &["src/b.rs"], Some("e1"), None),
     ];
     let text: String = records.iter().map(|one| format!("{one}\n")).collect();
     std::fs::write(&verdicts, text).expect("verdicts written");
@@ -997,6 +1025,7 @@ pub fn ties_fall_to_the_todo_and_oldest_tiers(runner: &dyn Runner) {
         json!([
             {"ticket": t("t1"), "members": [t("b1"), t("t1")], "chosen_by": "todo"},
             {"ticket": t("d1"), "members": [t("d1"), t("d2")], "chosen_by": "oldest"},
+            {"ticket": t("e2"), "members": [t("e1"), t("e2")], "chosen_by": "oldest"},
         ]),
         "the Todo member outranks the seam and more evidence, and a tie on every earlier tier \
          falls to the oldest: {plan:#}"
@@ -1007,8 +1036,13 @@ pub fn ties_fall_to_the_todo_and_oldest_tiers(runner: &dyn Runner) {
         t("d1"),
         "the survivor the agent implied is ignored"
     );
-    assert_eq!(ids(&plan["kept"]), ["d1", "t1"]);
-    for ticket in ["d1", "t1"] {
+    assert_eq!(
+        entry(plan, "duplicates", "e1")["duplicate_of"],
+        t("e2"),
+        "the newer member folds into the older, though it sorts first by id: {plan:#}"
+    );
+    assert_eq!(ids(&plan["kept"]), ["d1", "e2", "t1"]);
+    for ticket in ["d1", "e2", "t1"] {
         assert_eq!(entry(plan, "kept", ticket)["left_for_person"], Value::Null);
     }
     assert_eq!(plan["fixed"], json!([]));

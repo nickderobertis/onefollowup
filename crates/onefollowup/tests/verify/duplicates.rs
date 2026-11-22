@@ -422,3 +422,70 @@ fn copy_refuses_an_unsound_ticket_and_check_refuses_an_unsound_batch_writing_not
         "nothing reached the destination"
     );
 }
+
+#[test]
+fn under_duplicates_agent_a_filed_answer_accounts_for_every_candidate_prepare_rendered() {
+    let mut world = World::new(&["followups"], "host_label: build-host-1\n");
+    world.item(
+        "followups",
+        "older-palette",
+        &filed_item(
+            "widgets: the palette forgets its swatches",
+            "nightly-2026-10-01",
+            "palette-forgets-swatches",
+            &json!({}),
+            "medium",
+        ),
+        "## Root cause\n\nThe palette forgets its swatches after a resize.\n",
+    );
+    let draft = world.draft(
+        BATCH,
+        "swatches vanish from the palette",
+        &["src/palette.rs"],
+        "Swatches vanish.\n",
+    );
+    let prepared = world.ok("prepare", &["prepare", "--batch", BATCH], "");
+    let search = &prepared["duplicate_searches"][0];
+    assert_eq!(search["input"], draft.as_str(), "{prepared}");
+    assert_eq!(
+        search["candidates"][0]["item"], "followups:older-palette",
+        "{prepared}"
+    );
+    let slug = "swatches-vanish";
+    world.ticket(
+        BATCH,
+        &Ticket::new(slug, "swatches vanish from the palette", &[&draft]),
+    );
+    world.ok("agent", &["ticket", "copy", "--batch", BATCH, slug], "");
+
+    let filed = answer(&draft, "root-cause", "filed", &[slug], "Verified.");
+    world.answer_as_given(BATCH, std::slice::from_ref(&filed));
+    let checked = world.ok("check", &["check", "--batch", BATCH], "");
+    assert_eq!(checked["sound"], false, "{checked}");
+    assert!(
+        checked["problems"][0]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("`followups:older-palette`")
+                && message.contains("neither related nor dismissed")),
+        "{checked}"
+    );
+
+    let mut dismissing = filed.clone();
+    dismissing["dismissed"] = json!([{"item": "followups:older-palette", "reason": ""}]);
+    world.answer_as_given(BATCH, std::slice::from_ref(&dismissing));
+    let checked = world.ok("check", &["check", "--batch", BATCH], "");
+    assert!(
+        checked["problems"][0]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("without a reason")),
+        "{checked}"
+    );
+
+    dismissing["dismissed"] = json!([{
+        "item": "followups:older-palette",
+        "reason": "It loses swatches on a resize; these vanish when the palette first opens."
+    }]);
+    world.answer_as_given(BATCH, &[dismissing]);
+    let checked = world.ok("check", &["check", "--batch", BATCH], "");
+    assert_eq!(checked["sound"], true, "{checked}");
+}

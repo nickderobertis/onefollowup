@@ -15,7 +15,12 @@
     "test": {
       "command": "bash scripts/crate-test.sh",
       "options": { "cwd": "{workspaceRoot}" },
-      "inputs": ["testInputs", "{workspaceRoot}/scripts/crate-test.sh", "{workspaceRoot}/README.md"],
+      "inputs": [
+        "testInputs",
+        "{workspaceRoot}/scripts/crate-test.sh",
+        "{workspaceRoot}/README.md",
+        "{workspaceRoot}/crates/onefollowup-e2e/tests/groom/**/*"
+      ],
       "cache": true
     },
     "test-compile": {

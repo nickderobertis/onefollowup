@@ -72,8 +72,11 @@ impl Harness {
         (self.clock.now() - before).num_milliseconds() as f64 / 1000.0
     }
 
+    /// The request in flight was answered with `readings`, and is over: as a source tells the
+    /// gate, its response first, then its end.
     fn respond(&self, readings: &[Reading]) {
         self.governor.after_response(readings);
+        self.governor.request_ended();
     }
 
     fn end(&self) {
@@ -592,6 +595,7 @@ fn two_requests_sent_at_once_are_never_in_flight_together_and_the_second_waits_f
             *in_flight.lock().unwrap() -= 1;
             log.lock().unwrap().push(format!("{name} answered"));
             governor.after_response(&[answer]);
+            governor.request_ended();
         }
     };
     harness.runtime.block_on(async {
@@ -673,6 +677,7 @@ fn a_request_open_past_30_seconds_keeps_the_next_unsent_until_it_ends_then_admit
                 .push(format!("first answered at {}", at()));
             *answered.lock().unwrap() = true;
             governor.after_response(&[reading("graphql", 998, T0 + 600)]);
+            governor.request_ended();
         };
         let second = async {
             tokio::task::yield_now().await;
@@ -705,10 +710,10 @@ fn a_request_open_past_30_seconds_keeps_the_next_unsent_until_it_ends_then_admit
 }
 
 #[test]
-fn a_request_whose_response_reports_nothing_holds_the_slot_until_its_call_ends_and_is_counted() {
-    // A request failed in transport tells the gate nothing, so nothing but its call's end
-    // proves it over: a request of the next call goes once that call has ended, against the
-    // one reading less every estimate admitted since, the silent one included — with
+fn a_request_whose_response_reports_nothing_holds_the_slot_until_it_ends_and_is_counted() {
+    // A request failed in transport tells the gate no reading, only that it ended: a request
+    // of the next call goes against the one reading less every estimate admitted since, the
+    // silent one included — with
     // headroom for three at a hint of 1, the fourth is held, though no reading said anything
     // new. The backend charged each, as the later readings show.
     let charged = Arc::new(Mutex::new(0_u64));
@@ -745,7 +750,8 @@ fn a_request_whose_response_reports_nothing_holds_the_slot_until_its_call_ends_a
         "the fourth waited for a reading that admits it"
     );
 
-    // Within one call, a request after the silent one sends nothing until that call ends.
+    // Within one call, a request after the silent one sends nothing until it ends — an hour
+    // later, failed in transport with no reading — and then goes, before the call ends.
     let call = Harness::new(shipped(), instant(T0), |_| {
         vec![
             reading("graphql", 5000, T0 + 3600),
@@ -770,23 +776,24 @@ fn a_request_whose_response_reports_nothing_holds_the_slot_until_its_call_ends_a
             async {
                 call.governor.before_request(&request).await;
                 log.lock().unwrap().push("silent sent");
+                tokio::time::sleep(Duration::from_secs(3600)).await;
+                log.lock().unwrap().push("silent ended");
+                call.governor.request_ended();
             },
             async {
                 tokio::task::yield_now().await;
                 call.governor.before_request(&request).await;
                 log.lock().unwrap().push("next sent");
-            },
-            async {
-                tokio::time::sleep(Duration::from_secs(3600)).await;
-                log.lock().unwrap().push("call ended");
-                call.governor.end_call();
+                call.governor.request_ended();
             },
         );
+        log.lock().unwrap().push("call ended");
+        call.governor.end_call();
     });
     assert_eq!(
         *log.lock().unwrap(),
-        ["silent sent", "call ended", "next sent"],
-        "no time bound presumed the silent request over"
+        ["silent sent", "silent ended", "next sent", "call ended"],
+        "no time bound presumed the silent request over, and its end let the next go"
     );
 }
 
@@ -818,6 +825,8 @@ impl onefollowup::governor::Readings for GatedRefresh {
                 })
                 .await;
             self.asked.lock().unwrap().push((before, self.clock.now()));
+            // Answered, and over.
+            governor.request_ended();
             Ok((self.script)(self.clock.now()))
         })
     }

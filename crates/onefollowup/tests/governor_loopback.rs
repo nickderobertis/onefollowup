@@ -25,7 +25,8 @@ struct Received {
 
 /// GitHub on 127.0.0.1: `GET /rate_limit` answers `graphql` at `remaining`, resetting at
 /// `reset`; every GraphQL request is answered with no `x-ratelimit-*` headers — so no response
-/// refreshes the governor's reading — and charges nothing.
+/// refreshes the governor's reading — and charges nothing. With `drop_first`, the first GraphQL
+/// request is read and its connection closed before any header: a transport failure.
 struct Loopback {
     port: u16,
     received: Arc<Mutex<Vec<Received>>>,
@@ -33,11 +34,16 @@ struct Loopback {
 
 impl Loopback {
     fn start(clock: Arc<Virtual>, remaining: u64, reset: i64) -> Self {
+        Self::serving(clock, remaining, reset, false)
+    }
+
+    fn serving(clock: Arc<Virtual>, remaining: u64, reset: i64, drop_first: bool) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").expect("a loopback port");
         let port = listener.local_addr().expect("its address").port();
         let received = Arc::new(Mutex::new(Vec::new()));
         let log = Arc::clone(&received);
         std::thread::spawn(move || {
+            let mut dropped = !drop_first;
             for stream in listener.incoming() {
                 let Ok(mut stream) = stream else { return };
                 let mut reader = BufReader::new(stream.try_clone().expect("a stream"));
@@ -66,11 +72,18 @@ impl Loopback {
                 } else {
                     r#"{"data":null,"errors":[{"type":"NOT_FOUND","message":"Could not resolve to a node"}]}"#.to_owned()
                 };
+                let graphql = line.starts_with("POST /graphql");
                 log.lock().expect("the log").push(Received {
                     line,
                     body: String::from_utf8_lossy(&body).into_owned(),
                     at: clock.now(),
                 });
+                if graphql && !std::mem::replace(&mut dropped, true) {
+                    // Closed with nothing written: no status line, no header.
+                    drop(reader);
+                    let _ = stream.shutdown(std::net::Shutdown::Both);
+                    continue;
+                }
                 let _ = write!(
                     stream,
                     "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{answer}",
@@ -244,4 +257,122 @@ fn a_request_held_on_exhausted_headroom_goes_once_when_a_rate_limit_read_while_h
             ("find".to_owned(), "board".to_owned())
         ]
     );
+}
+
+/// A store of a local-md `drafts` source and two GitHub Projects boards, `board` and
+/// `other-board`, both at the loopback on `port`, governed on `clock` by the store's own
+/// readings and the shipped defaults.
+fn two_board_store(root: &std::path::Path, port: u16, clock: &Arc<Virtual>) -> Store {
+    std::fs::create_dir_all(root.join("drafts-root")).expect("the drafts root");
+    let mut store = String::from(
+        "sources:\n  drafts:\n    plugin: local-md\n    config:\n      root: drafts-root\n",
+    );
+    for (name, number) in [("board", 7), ("other-board", 8)] {
+        store.push_str(&format!(
+            "  {name}:\n    plugin: github-projects\n    config:\n      owner: example\n      project_number: {number}\n      endpoint: http://127.0.0.1:{port}/graphql\n      token_env: LOOPBACK_TOKEN\n"
+        ));
+    }
+    std::fs::write(root.join("onetaskgraph.yaml"), store).expect("the store");
+    let environment = vec![
+        ("HOME".to_owned(), root.display().to_string()),
+        (
+            "XDG_CONFIG_HOME".to_owned(),
+            root.join("config").display().to_string(),
+        ),
+        (
+            "XDG_CACHE_HOME".to_owned(),
+            root.join("cache").display().to_string(),
+        ),
+        // A loopback board's token: it reaches nothing but this test's server.
+        ("LOOPBACK_TOKEN".to_owned(), "loopback".to_owned()),
+    ];
+    let parts = Parts {
+        clock: clock.clone(),
+        readings: None,
+        notices: Arc::new(|line: &str| eprintln!("{line}")),
+    };
+    governor::with_parts(parts, || {
+        Store::open(Some(root), root, &environment).expect("the store opens")
+    })
+    .with_local("drafts")
+    .with_governor(&shipped())
+}
+
+#[test]
+fn a_request_failed_in_transport_before_any_header_ends_and_the_next_of_the_same_call_goes() {
+    // One read of an item on each of two boards: one request a board. The first request to
+    // reach the loopback is closed before any header — a transport failure, which reports no
+    // reading — and the other board's request comes in the same call. Quota is ample, so only
+    // the one in-flight slot could hold the second: it goes once the first has ended, and the
+    // call returns.
+    let start = DateTime::from_timestamp(Utc::now().timestamp(), 0).expect("now");
+    let clock = Virtual::at(start);
+    let loopback = Loopback::serving(Arc::clone(&clock), 5000, start.timestamp() + 3600, true);
+    let directory = tempfile::tempdir().expect("a directory");
+    let root = directory.path().to_path_buf();
+    let port = loopback.port;
+    let (sender, answered) = std::sync::mpsc::channel();
+    // On a thread of its own, so a second request waiting forever on the slot fails the case
+    // at the deadline below rather than hanging it.
+    std::thread::spawn(move || {
+        let store = two_board_store(&root, port, &clock);
+        let read = store.read(
+            &[
+                "board:I_kwDOAAAA".to_owned(),
+                "other-board:I_kwDOBBBB".to_owned(),
+            ],
+            false,
+        );
+        let _ = sender.send((
+            read.map_err(|error| error.to_string()),
+            store.governor_report(),
+            store.operations().len(),
+        ));
+    });
+    let (read, report, operations) = answered
+        .recv_timeout(std::time::Duration::from_secs(60))
+        .expect("the call returned: the failed request ended and the next one went");
+    let read = read.expect("the read is answered item by item");
+    let errors: Vec<&str> = read
+        .iter()
+        .map(|item| item.error.as_deref().unwrap_or_default())
+        .collect();
+    assert_eq!(
+        errors
+            .iter()
+            .filter(|error| error.contains("connection closed before message completed"))
+            .count(),
+        1,
+        "one item's request failed in transport: {errors:?}"
+    );
+    assert_eq!(
+        errors
+            .iter()
+            .filter(|error| error.contains("no task with the id"))
+            .count(),
+        1,
+        "the other's was sent and answered: {errors:?}"
+    );
+    let posts: Vec<Received> = loopback
+        .received()
+        .into_iter()
+        .filter(|one| one.line.starts_with("POST /graphql"))
+        .collect();
+    assert_eq!(posts.len(), 2, "one request a board: {posts:?}");
+    let ids = |one: &Received| {
+        ["I_kwDOAAAA", "I_kwDOBBBB"]
+            .into_iter()
+            .filter(|id| one.body.contains(id))
+            .collect::<Vec<_>>()
+    };
+    let (first, second) = (ids(&posts[0]), ids(&posts[1]));
+    assert_eq!(first.len(), 1, "{first:?}");
+    assert_eq!(second.len(), 1, "{second:?}");
+    assert_ne!(first, second, "the second request is the other board's");
+    assert_eq!(
+        report.expect("governed").waits,
+        Vec::new(),
+        "nothing waited on quota"
+    );
+    assert_eq!(operations, 2, "one read a board");
 }

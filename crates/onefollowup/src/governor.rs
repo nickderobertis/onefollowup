@@ -22,13 +22,13 @@
 //! batch it paces completes, however long it takes.
 //!
 //! **One request in flight.** A request on a metered resource holds the process's one slot
-//! from admission until its response's reading is told or its call ends — nothing else, and
-//! no time bound, presumes it over — so requests a destination sends at once (a GitHub source
-//! joins some) go one after another, each against the reading the one before it refreshed.
-//! A request that ends without a reading (failed in transport, or answered without rate-limit
-//! headers) therefore holds the slot to its call's end, and a later request of the same call
-//! waits until then — a hang that `quota-governor-writes` closes by releasing on the
-//! request-ended signal onetaskgraph's `request-completion` adds (manager ruling `a4`). The
+//! from admission until onetaskgraph tells the gate it ended ([`Governor::request_ended`], once
+//! for every admitted request however it ended: answered with or without a reading, failed in
+//! transport, or dropped) or its store call ends — nothing else, and no time bound, presumes it
+//! over — so requests a destination sends at once (a GitHub source joins some) go one after
+//! another, each against the reading the one before it refreshed. The signal names no request,
+//! so an ending is put to an admitted request holding no slot first, while one is open: that
+//! can only keep the slot a little longer, never give it up while its holder is in flight. The
 //! slot is only for requests to a backend whose responses report readings, decided by the
 //! resource the request names (manager ruling `a6`): onetaskgraph's request-gate contract
 //! reserves `local` for a source's write to its own files (local-md's), which neither takes nor
@@ -301,8 +301,11 @@ struct State {
     /// being admitted until its response is told ([`Slot`]); every other metered request
     /// waits for it.
     slot: Option<Slot>,
-    /// The request in flight and its estimate, until its response is told.
+    /// The slot's request and its estimate, until its response is told or it ends.
     in_flight: Option<(String, Kind, f64)>,
+    /// Admitted requests holding no slot — a refresh's own allowance read, a write to a
+    /// source's own files, any request while the governor is off — not yet ended.
+    unslotted: u32,
     quota_reads: u64,
     calls: u64,
     waits: Vec<Wait>,
@@ -492,6 +495,7 @@ impl Governor {
         let mut state = self.state();
         // Every request of the call is over, answered or not.
         state.in_flight = None;
+        state.unslotted = 0;
         self.release(&mut state);
         let Some(call) = state.call.take() else {
             return;
@@ -531,6 +535,7 @@ impl Governor {
                 // The slot's holder is refreshing, so the one request under the mark is the
                 // refresh's own allowance read, which must not wait on the admission it
                 // serves; any other request arriving meanwhile takes the slot's wait below.
+                state.unslotted += 1;
                 return;
             }
             state.requested.insert(request.resource.clone());
@@ -549,6 +554,7 @@ impl Governor {
         };
         let settings = self.settings().clone();
         if !settings.enabled {
+            self.state().unslotted += 1;
             return;
         }
         // A source's write to its own files (local-md) is answered by nothing that reports a
@@ -585,14 +591,16 @@ impl Governor {
                 metered.unanswered += cost;
             }
         }
-        state.in_flight = Some((request.resource.clone(), kind, cost));
         if slotted {
+            state.in_flight = Some((request.resource.clone(), kind, cost));
             state.slot = Some(Slot { sent: true });
+        } else {
+            state.unslotted += 1;
         }
     }
 
-    /// Wait for this process's one slot and take it: once its holder's response reading is
-    /// told or its call ends, which are the only proofs the gate is given that it is over.
+    /// Wait for this process's one slot and take it: once its holder ends or its call ends,
+    /// which are the only proofs the gate is given that it is over.
     async fn take_slot(&self) {
         loop {
             let released = self.released.notified();
@@ -614,18 +622,32 @@ impl Governor {
         self.released.notify_waiters();
     }
 
+    /// One admitted request is over, however it ended: onetaskgraph tells this exactly once for
+    /// every request the gate admitted. An admitted request holding no slot is taken to be the
+    /// one ended while any is open; otherwise it is the slot's holder, which gives the slot up.
+    pub fn request_ended(&self) {
+        let mut state = self.state();
+        if state.unslotted > 0 {
+            state.unslotted -= 1;
+        } else if state.slot.is_some_and(|slot| slot.sent) {
+            state.in_flight = None;
+            self.release(&mut state);
+        }
+    }
+
     /// What the response to the request in flight said is left: each reading refreshes its
     /// window at no quota cost, and teaches the governor what a request of its kind costs.
     pub fn after_response(&self, readings: &[Reading]) {
         let now = self.clock.now();
         let history = self.settings().burn_history_seconds;
         let mut state = self.state();
-        let in_flight = state.in_flight.take();
-        // The response to the request holding the slot gives it up. A refresh's own read,
-        // answered while its holder is still being admitted, does not.
-        if in_flight.is_some() && state.slot.is_some_and(|slot| slot.sent) {
-            self.release(&mut state);
-        }
+        // A response reporting nothing teaches nothing, and leaves the slot's request to learn
+        // from its own response; the slot is given up only when that request ends.
+        let in_flight = if readings.is_empty() {
+            None
+        } else {
+            state.in_flight.take()
+        };
         let sources: Vec<String> = match &state.call {
             Some(call) => call.sources.clone(),
             None => state.destinations.keys().cloned().collect(),

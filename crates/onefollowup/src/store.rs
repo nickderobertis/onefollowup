@@ -1725,6 +1725,10 @@ impl RequestGate for Gate {
         self.0
             .after_response(&readings.iter().map(reading).collect::<Vec<_>>());
     }
+
+    fn request_ended(&self) {
+        self.0.request_ended();
+    }
 }
 
 fn chrono_seconds() -> chrono::SecondsFormat {

@@ -56,3 +56,11 @@ strip = true
 
 [profile.dev.package."*"]
 opt-level = 1
+
+[patch.crates-io]
+onetaskgraph-core = { git = "https://github.com/nickderobertis/onetaskgraph", rev = "36bcb5b1ae6e7a5c6c21af18d66b1c37cceeaf18" }
+onetaskgraph-plugin-api = { git = "https://github.com/nickderobertis/onetaskgraph", rev = "36bcb5b1ae6e7a5c6c21af18d66b1c37cceeaf18" }
+onetaskgraph-github-projects = { git = "https://github.com/nickderobertis/onetaskgraph", rev = "36bcb5b1ae6e7a5c6c21af18d66b1c37cceeaf18" }
+onetaskgraph-linear = { git = "https://github.com/nickderobertis/onetaskgraph", rev = "36bcb5b1ae6e7a5c6c21af18d66b1c37cceeaf18" }
+onetaskgraph-local-md = { git = "https://github.com/nickderobertis/onetaskgraph", rev = "36bcb5b1ae6e7a5c6c21af18d66b1c37cceeaf18" }
+onetaskgraph-in-memory = { git = "https://github.com/nickderobertis/onetaskgraph", rev = "36bcb5b1ae6e7a5c6c21af18d66b1c37cceeaf18" }

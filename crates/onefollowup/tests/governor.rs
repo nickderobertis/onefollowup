@@ -738,19 +738,22 @@ fn within_one_process_own_spend_crosses_the_floor_by_at_most_one_requests_estima
     assert_eq!(harness.waits()[0].reason, Reason::Floor);
     assert!(harness.elapsed(T0) >= 3600.0);
 
-    // Two requests in flight against one reading: the second is admitted only against what
-    // the first's estimate leaves, so with headroom for one, the second waits.
-    let concurrent = Harness::new(
+    // Several requests against one reading, before any other is taken: each is admitted only
+    // against what the ones before it left of that reading, so with headroom for three the
+    // fourth is held, though no reading has said anything new.
+    let charged = Arc::new(Mutex::new(0_u64));
+    let held = Arc::clone(&charged);
+    let same = Harness::new(
         GovernorSettings {
             reserve_factor: 0.0,
             ..shipped()
         },
         instant(T0),
-        |at| {
+        move |at| {
             let (left, reset) = if at.timestamp() >= T0 + 600 {
                 (5000, T0 + 4200)
             } else {
-                (1001, T0 + 600)
+                (1003 - *held.lock().unwrap(), T0 + 600)
             };
             vec![
                 reading("graphql", left, reset),
@@ -758,24 +761,29 @@ fn within_one_process_own_spend_crosses_the_floor_by_at_most_one_requests_estima
             ]
         },
     );
-    concurrent.runtime.block_on(async {
-        concurrent
-            .governor
+    same.runtime.block_on(async {
+        same.governor
             .admit_call(&[DESTINATION.to_owned()], Kind::Read)
             .await;
         let request = Request {
             resource: "graphql".to_owned(),
             cost_hint: Some(1),
         };
-        let start = concurrent.clock.now();
-        concurrent.governor.before_request(&request).await;
-        assert_eq!(concurrent.clock.now(), start, "the first goes at once");
-        // No response yet: the first is in flight.
-        concurrent.governor.before_request(&request).await;
+        for _ in 0..3 {
+            same.governor.before_request(&request).await;
+            *charged.lock().unwrap() += 1;
+        }
         assert_eq!(
-            concurrent.clock.now(),
+            same.clock.now(),
+            instant(T0),
+            "three go against the one reading"
+        );
+        assert_eq!(same.readings.reads().len(), 1);
+        same.governor.before_request(&request).await;
+        assert_eq!(
+            same.clock.now(),
             instant(T0 + 600),
-            "the second waited for a reading that admits it"
+            "the fourth waited for a reading that admits it"
         );
     });
 }

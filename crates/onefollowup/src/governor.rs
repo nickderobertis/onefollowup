@@ -237,8 +237,10 @@ struct Metered {
     windows: BTreeMap<DateTime<Utc>, Window>,
     /// Every point onefollowup was admitted to spend, cumulative, by estimate.
     own: f64,
-    /// What of [`Self::own`] is in requests not yet answered, which a reading taken meanwhile
-    /// cannot show yet; cleared when their call ends, every request of it then answered.
+    /// What of [`Self::own`] is in the one request in flight, which a reading taken meanwhile
+    /// cannot show yet: cleared by its response, by the next request (a destination sends
+    /// one request after another, so the next means this one was answered) and by its call's
+    /// end.
     unanswered: f64,
     history: VecDeque<Interval>,
     /// The observed cost of one request, by [`Kind`].
@@ -403,7 +405,7 @@ impl Governor {
             return;
         }
         for source in sources {
-            self.refresh_if_stale(source, &settings).await;
+            let mut refreshed = self.refresh_if_stale(source, &settings).await;
             loop {
                 let governed = {
                     let state = self.state();
@@ -429,6 +431,11 @@ impl Governor {
                 }
                 match blocked {
                     None => break,
+                    Some(_) if !refreshed => {
+                        // Read again before a call the estimate says would cross the line.
+                        self.refresh(source).await;
+                        refreshed = true;
+                    }
                     Some((refusal, cost)) => self.hold(refusal, cost, &settings).await,
                 }
             }
@@ -479,6 +486,15 @@ impl Governor {
                 Some(call) => (call.sources.clone(), call.kind),
                 None => (state.destinations.keys().cloned().collect(), Kind::Read),
             };
+            // The request before this one has been answered: what it spent is the
+            // destination's to show from here on.
+            for metered in state
+                .destinations
+                .values_mut()
+                .flat_map(|held| held.resources.values_mut())
+            {
+                metered.unanswered = 0.0;
+            }
             for source in &sources {
                 state
                     .drawn
@@ -496,25 +512,17 @@ impl Governor {
             || self.request_estimate(&sources, &request.resource, kind),
             points,
         );
-        let mut refreshed = false;
         for source in &sources {
-            refreshed |= self.refresh_if_stale(source, &settings).await;
+            self.refresh_if_stale(source, &settings).await;
         }
-        loop {
-            let blocked = sources
-                .iter()
-                .find_map(|source| self.decide(source, &request.resource, cost, &settings));
-            match blocked {
-                None => break,
-                Some(_) if !refreshed => {
-                    // Read again before a request the estimate says would cross the line.
-                    for source in &sources {
-                        self.refresh(source).await;
-                    }
-                    refreshed = true;
-                }
-                Some(refusal) => self.hold(refusal, cost, &settings).await,
-            }
+        // A request refused on the estimate is held at once: the call was admitted against a
+        // fresh reading, every response since refreshed it, and the hold's own refreshes are
+        // what find the headroom come back — the estimate less than it cost — before a reset.
+        while let Some(refusal) = sources
+            .iter()
+            .find_map(|source| self.decide(source, &request.resource, cost, &settings))
+        {
+            self.hold(refusal, cost, &settings).await;
         }
         let mut state = self.state();
         for source in &sources {
@@ -525,7 +533,7 @@ impl Governor {
                 && !metered.windows.is_empty()
             {
                 metered.own += cost;
-                metered.unanswered += cost;
+                metered.unanswered = cost;
             }
         }
         state.in_flight = Some((request.resource.clone(), kind, cost));

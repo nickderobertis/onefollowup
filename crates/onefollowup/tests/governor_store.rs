@@ -577,11 +577,10 @@ fn one_update_many_of_100_waits_after_the_40th_record_until_a_reading_admits_the
     assert_eq!(report.waits[0].seconds, 90);
     assert_eq!(report.waits[0].reason, Reason::Floor);
     assert_eq!(store.operations().len(), 1, "one update-many");
-    // The reading said 200; local-md answers no record write with a reading, so the 40 it
-    // admitted stay unanswered until the call ends and are still counted against it.
+    // 240 read, less the 40 admitted since: on the estimate, at the floor.
     let line = notices.lock().unwrap()[0].clone();
     assert!(
-        line.contains("on local: remaining 160 of 1000, floor 200"),
+        line.contains("on local: remaining 200 of 1000, floor 200"),
         "{line}"
     );
 }

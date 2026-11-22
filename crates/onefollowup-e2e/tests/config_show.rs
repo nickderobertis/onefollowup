@@ -88,6 +88,10 @@ fn with_nothing_configured_it_prints_every_default() {
                 "burn_history_seconds": 86400,
                 "min_peak_per_minute": {"core": 60.0, "graphql": 40.0},
                 "sample_seconds": 30,
+                "max_content_writes_per_hour": 250,
+                "max_content_writes_per_minute": 40,
+                // No HOME or XDG_STATE_HOME in this environment: no host state directory.
+                "state_dir": null,
             }),
         ),
     ] {
@@ -717,6 +721,9 @@ fn the_governor_s_keys_merge_one_by_one_and_each_layer_is_named() {
             "burn_history_seconds": 86400,
             "min_peak_per_minute": {"core": 60.0, "graphql": 50.0},
             "sample_seconds": 10,
+            "max_content_writes_per_hour": 250,
+            "max_content_writes_per_minute": 40,
+            "state_dir": null,
         }),
         "every key the governor has, each from the layer that last stated it"
     );
@@ -736,4 +743,95 @@ fn the_governor_s_keys_merge_one_by_one_and_each_layer_is_named() {
         "{stderr}"
     );
     assert!(stderr.contains("use a number from 0 to 100"), "{stderr}");
+}
+
+#[test]
+fn the_content_write_caps_and_the_host_state_directory_show_with_their_layer_and_refuse_bad_values()
+{
+    let directory = support::tempdir();
+    let home = directory.path().join("home");
+    let home_text = home.display().to_string();
+    let state = directory.path().join("state");
+    let state_text = state.display().to_string();
+
+    // The default directory: under HOME, else under XDG_STATE_HOME when it is set.
+    let shown = show(directory.path(), &[("HOME", &home_text)], &[]);
+    assert_eq!(
+        shown["config"]["governor"]["state_dir"],
+        json!(
+            home.join(".local/state/onefollowup/governor")
+                .display()
+                .to_string()
+        )
+    );
+    assert_eq!(
+        shown["config"]["governor"]["max_content_writes_per_hour"],
+        250
+    );
+    assert_eq!(
+        shown["config"]["governor"]["max_content_writes_per_minute"],
+        40
+    );
+    assert_eq!(shown["sources"]["governor"], json!({"layer": "default"}));
+    let shown = show(
+        directory.path(),
+        &[("HOME", &home_text), ("XDG_STATE_HOME", &state_text)],
+        &[],
+    );
+    assert_eq!(
+        shown["config"]["governor"]["state_dir"],
+        json!(state.join("onefollowup/governor").display().to_string())
+    );
+
+    // Each overridable like every key, the layer named.
+    let elsewhere = directory.path().join("elsewhere").display().to_string();
+    let shown = show(
+        directory.path(),
+        &[
+            ("HOME", &home_text),
+            ("ONEFOLLOWUP_GOVERNOR__MAX_CONTENT_WRITES_PER_MINUTE", "20"),
+        ],
+        &[
+            "--set",
+            "governor.max_content_writes_per_hour=100",
+            "--set",
+            &format!("governor.state_dir={elsewhere}"),
+        ],
+    );
+    assert_eq!(
+        shown["config"]["governor"]["max_content_writes_per_minute"],
+        20
+    );
+    assert_eq!(
+        shown["config"]["governor"]["max_content_writes_per_hour"],
+        100
+    );
+    assert_eq!(shown["config"]["governor"]["state_dir"], json!(elsewhere));
+    assert_eq!(
+        shown["sources"]["governor"],
+        json!({"layer": "flag", "name": "--set"})
+    );
+
+    // A malformed value is refused naming the key.
+    for (assignment, key, says) in [
+        (
+            "governor.max_content_writes_per_minute=-5",
+            "`governor.max_content_writes_per_minute` from the flag --set",
+            "invalid value",
+        ),
+        (
+            "governor.max_content_writes_per_hour=0",
+            "`governor.max_content_writes_per_hour` from the flag --set",
+            "use 1 or more",
+        ),
+        (
+            "governor.state_dir=relative/dir",
+            "`governor.state_dir` from the flag --set",
+            "not an absolute path",
+        ),
+    ] {
+        let stderr = refusal(directory.path(), &[], &["--set", assignment]);
+        assert!(stderr.contains(key), "{assignment}: {stderr}");
+        assert!(stderr.contains(says), "{assignment}: {stderr}");
+    }
 }

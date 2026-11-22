@@ -281,6 +281,22 @@ fn defaults_value() -> Value {
     serde_saphyr::from_str(DEFAULTS).expect("the shipped defaults are YAML")
 }
 
+/// The governor's default host-level state directory: `$XDG_STATE_HOME/onefollowup/governor`,
+/// else `$HOME/.local/state/onefollowup/governor`. A relative or empty variable is ignored, as
+/// the XDG base directory specification says; `None` when neither names a directory.
+fn state_directory(environment: &[(String, String)]) -> Option<PathBuf> {
+    let absolute = |name: &str| {
+        environment
+            .iter()
+            .find(|(key, _)| key == name)
+            .map(|(_, value)| PathBuf::from(value))
+            .filter(|path| path.is_absolute())
+    };
+    absolute("XDG_STATE_HOME")
+        .or_else(|| absolute("HOME").map(|home| home.join(".local").join("state")))
+        .map(|base| base.join("onefollowup").join("governor"))
+}
+
 fn machine_hostname() -> String {
     gethostname::gethostname().to_string_lossy().into_owned()
 }
@@ -305,6 +321,9 @@ pub fn resolve(inputs: &Inputs) -> Result<Settings, ConfigError> {
     let mut settings = Vec::new();
     let mut default = defaults_value();
     default["host_label"] = Value::from(hostname);
+    if let Some(directory) = state_directory(&inputs.environment) {
+        default["governor"]["state_dir"] = Value::from(directory.display().to_string());
+    }
     flatten(&mut Vec::new(), &default, &Origin::Default, &mut settings);
 
     if let Some(path) = config_file(inputs)? {

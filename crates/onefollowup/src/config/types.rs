@@ -974,6 +974,16 @@ pub struct GovernorSettings {
     pub min_peak_per_minute: std::collections::BTreeMap<String, f64>,
     /// The longest a reading is used before it is taken again.
     pub sample_seconds: u64,
+    /// The most content-creating writes (an issue, a comment) every onefollowup process on the
+    /// host sends one backend kind in any rolling hour: a count, since no backend reports
+    /// GitHub's secondary content-creation limit.
+    pub max_content_writes_per_hour: u64,
+    /// The same in any rolling minute.
+    pub max_content_writes_per_minute: u64,
+    /// The host-level directory every onefollowup process shares the governor's state in;
+    /// resolution fills it from `XDG_STATE_HOME`, else `HOME`, and `None` keeps the state to
+    /// the process alone.
+    pub state_dir: Option<std::path::PathBuf>,
 }
 
 /// How `comments answer` launches each batch's answering.

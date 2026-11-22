@@ -275,6 +275,14 @@ governor:
     core: 60
   # A reading is taken again once it is this old.
   sample_seconds: 30
+  # Content-creating writes (an issue, a comment) every onefollowup process on the host sends
+  # one backend kind, counted because no response reports GitHub's secondary limit on them:
+  # half its stated 500 an hour and 80 a minute, leaving room for a second machine.
+  max_content_writes_per_hour: 250
+  max_content_writes_per_minute: 40
+  # Where every onefollowup process on the host shares the governor's state: null resolves to
+  # $XDG_STATE_HOME/onefollowup/governor, else ~/.local/state/onefollowup/governor.
+  state_dir: null
 # `groom prepare` and `groom check` (README.md, "Grooming"): how many tickets one shard's task
 # holds; how far before a record's `verified_at` a comment is still read as possibly unseen
 # (well past GitHub's roughly 30-second search-index lag); how old a record may grow before its

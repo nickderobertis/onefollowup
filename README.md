@@ -707,7 +707,7 @@ key, the layer its value came from.
 | `snapshot` | `launchable_for: 24h` | How long a dry run's comment snapshot stays launchable. |
 | `groom` | `shard_size: 50`, `comment_overlap_seconds: 3600`, `max_age_days: 30`, `clones: .onefollowup/groom/clones`, `task_template: builtin:groom-task.md.j2`, `persona: builtin:groom-persona.yaml`, `comment_template: builtin:groom-comment.md.j2` | The grooming pass (Grooming, below): how many tickets one shard's task holds (at least 1); how far before a record's `verified_at` a comment is still read as possibly unseen, well past GitHub's roughly 30-second search-index lag; how many days a record stays current (at least 1); where each repository's blob-less clone is kept, a relative path read against the store's directory; the shard task's template and its persona; and the visible part of every comment `groom publish` posts, before the marker line onefollowup appends; each template a path or `builtin:`. |
 | `comments` | none | `launch_command`: the argv `comments answer` runs once per launched batch, in onefollowup's working directory and environment, with `{"schema_version": 1, "batch", "feedback", "snapshot"}` on its stdin and, wherever an argument holds one, `{batch}` replaced with the batch, `{feedback}` with the path of the feedback file `comments launches` rendered for it, and `{snapshot}` with the snapshot directory. Its stdout and stderr are not printed; its exit code decides whether the pass settles. Without it `comments answer` is refused. |
-| `governor` | `enabled: true`, `floor_percent: 20`, `reserve_factor: 1`, `peak_window_seconds: 300`, `burn_history_seconds: 86400`, `min_peak_per_minute: {graphql: 40, core: 60}`, `sample_seconds: 30` | How every destination call is paced against the quota its destination reports (The quota governor, below): the floor as a percentage of each window's limit, the factor on the reserve kept for others, the span others' peak burn is measured over and how long it is remembered, the least rate in points a minute others are ever assumed to spend each resource at (a resource not named, 0), and the longest a reading is used before it is taken again. `enabled: false` sends every call at once. |
+| `governor` | `enabled: true`, `floor_percent: 20`, `reserve_factor: 1`, `peak_window_seconds: 300`, `burn_history_seconds: 86400`, `min_peak_per_minute: {graphql: 40, core: 60}`, `sample_seconds: 30`, `max_content_writes_per_hour: 250`, `max_content_writes_per_minute: 40`, `state_dir: $XDG_STATE_HOME/onefollowup/governor` (else `~/.local/state/onefollowup/governor`) | How every destination call is paced against the quota its destination reports (The quota governor, below): the floor as a percentage of each window's limit, the factor on the reserve kept for others, the span others' peak burn is measured over and how long it is remembered, the least rate in points a minute others are ever assumed to spend each resource at (a resource not named, 0), the longest a reading is used before it is taken again, the most content-creating writes every onefollowup process on the host sends one backend kind in any rolling hour and minute (counts, at least 1: no backend reports GitHub's secondary content-creation limit; half its stated 500 and 80, leaving room for a second machine), and the absolute host-level directory every onefollowup process shares the governor's state in (`null` when neither `XDG_STATE_HOME` nor `HOME` names an absolute directory: the state is then the process's alone). `enabled: false` sends every call at once. |
 
 No key says *when* the loop runs; that is the host's schedule.
 
@@ -829,15 +829,37 @@ nothing — local-md, a stdio peer without `quota` — is never held.
 - **What it guarantees.** Each request is admitted only against the latest reading, less
   onefollowup's own spend since. One process has at most one metered request in flight, even
   where a destination sends several at once: the next waits for its response's reading, or
-  for its store call to end when the response carried none. So its own spend can take
-  a window under the floor by at most one request's estimate error. When others' spend
+  for its store call to end when the response carried none. Every process on the host admits
+  against the one host state, which counts every process's cost in flight. So onefollowup's own
+  spend can take a window under the floor by at most one request's estimate error per process. When others' spend
   takes remaining under the floor plus the reserve, nothing more is sent until a reading
   admits it. **It does not hold the floor against others**: another machine or consumer of
   the token can cross the floor by its own spend, which no reading shows until after.
+- **Content-creating writes.** A request onetaskgraph's gate is told creates content (an
+  issue, a comment), in a destination call, goes only while the host's content-creating writes
+  to that backend kind in the last minute and the last hour, across every onefollowup process,
+  leave room under `max_content_writes_per_minute` and `max_content_writes_per_hour` for every
+  item it may carry, and those items are counted as it goes; otherwise it waits — one line on
+  standard error — until the oldest counted writes leave the window. It is never refused. The
+  caps count items, not requests: a source may batch several comments into one request
+  (GitHub's `comment add-many` does), and the gate is told only that a request creates
+  content, so a comment batch or a copy sends at most the lesser cap's items in one call, in
+  order, and each call's first content-creating request is admitted only with room for all of
+  them and counts all of them. A call refused after an earlier one of the same batch wrote
+  answers each of its items as failed with that refusal.
+- **One state per host.** What the governor learns of a backend kind — its windows, the spend
+  every process was admitted and the cost still in flight, others' burn history, observed
+  costs and the content-write window — is one state in `state_dir`, one file per backend kind
+  (`<kind>.json`, written by nothing but the governor, under a lock beside it), so every
+  destination of one kind and every onefollowup process on the host, whatever its work
+  directory, share it, and a fresh process starts from the burn estimate others learned. A
+  missing, unreadable or other-schema state is no history, never a refusal; the cost in flight
+  of a process that is gone is dropped. *Known limit:* two GitHub accounts used from one host
+  share one window, each held to caps and a burn estimate that count the other's spend.
 - **Reported.** Each verb's result carries `quota_reads` — the readings taken, which no
   `store_operations` entry counts — and `governor`, `{"waits": [{"source", "resource",
-  "seconds", "reason"}]}`, `reason` `floor` or `reserve`; both are absent when the verb reached
-  no destination.
+  "seconds", "reason"}]}`, `reason` `floor`, `reserve`, `content-per-minute` or
+  `content-per-hour`; both are absent when the verb reached no destination.
 
 ## Examples`; `## Suggested fix`; the optional `## Rejected fixes` and `## Related tickets`;
 and `## Evidence`, last, prose about what happened and nothing the record holds. The shipped
@@ -1391,8 +1413,10 @@ verdict is **definitely outdated** — `fixed` or `obsolete` at `high` confidenc
 `receipts.json` and `plan.json` are all a re-run reads.
 
 1. The batch is admitted at the store's chokepoint (`Store::admit_batch`, where the quota
-   governor admits the batch's estimated cost), then **one batched status read** of the tickets
-   to close or fold, so no governor wait falls between that read and the closes.
+   governor waits until its estimate admits the status read and the closes together — reserving
+   nothing, each request still admitted on its own as it is sent), then **one batched status
+   read** of the tickets to close or fold, so no governor wait falls between that read and the
+   closes.
 2. **One `update-many`.** A ticket that read finds at a non-claimable open status (the
    `proposal` or `deferred` role's, or one no role maps: Draft, Backlog, Unknown) is closed:
    `fixed` at the `done` role's status, `obsolete` at the `cancelled` role's, a duplicate by the
@@ -1480,6 +1504,7 @@ the batch id stands where they say `run`.
 | Verdict record | 1 | `groom/<batch>/<shard>/verdicts.jsonl`, one per line, keyed `schema_version`. |
 | Grooming batch, snapshot and plan | 1 | `groom/<batch>/batch.json`, `snapshot.json` and `plan.json`, onefollowup's own working files, keyed `schema_version`. |
 | Grooming receipts and report | 1 | `groom/<batch>/receipts.json`, what `groom publish` sent and heard back, and `report.json`, what it did, beside `report.md`; keyed `schema_version`. |
+| Governor state | 1 | `<governor.state_dir>/<backend kind>.json`: the quota governor's host-level state (The quota governor, above). A file of another schema, or one that cannot be read, is read as no history and replaced, never refused. |
 | Batch state | 1 | `state/<batch>.json`: onefollowup's own working file — the input set, prepare's reads and each publish. An optional member onefollowup adds within 1: `relations` (prepare's `task relations` read of the tickets it found), omitted when empty; and on each input, `author` (a draft's source, as `draft_sources` holds it) and `transcript`, each omitted when absent. |
 
 ## Development

@@ -66,6 +66,7 @@ impl Harness {
                 .before_request(&Request {
                     resource: resource.to_owned(),
                     cost_hint: hint,
+                    content_creating: false,
                 })
                 .await;
         });
@@ -392,6 +393,7 @@ fn graphql_and_core_reset_apart_and_each_is_admitted_on_its_own_window() {
             .block_on(harness.governor.before_request(&Request {
                 resource: resource.to_owned(),
                 cost_hint: Some(1),
+                content_creating: false,
             }));
         (harness.clock.now() - before).num_seconds()
     };
@@ -514,6 +516,7 @@ fn a_local_write_neither_takes_nor_waits_for_the_slot_yet_is_admitted_against_it
     let local = Request {
         resource: "local".to_owned(),
         cost_hint: None,
+        content_creating: false,
     };
     let admitted = harness.runtime.block_on(async {
         harness
@@ -525,6 +528,7 @@ fn a_local_write_neither_takes_nor_waits_for_the_slot_yet_is_admitted_against_it
             .before_request(&Request {
                 resource: "graphql".to_owned(),
                 cost_hint: Some(1),
+                content_creating: false,
             })
             .await;
         // Real time, not the virtual clock: a write waiting on the slot would never return.
@@ -579,6 +583,7 @@ fn two_requests_sent_at_once_are_never_in_flight_together_and_the_second_waits_f
                 .before_request(&Request {
                     resource: "graphql".to_owned(),
                     cost_hint: Some(1),
+                    content_creating: false,
                 })
                 .await;
             let now = {
@@ -656,6 +661,7 @@ fn a_request_open_past_30_seconds_keeps_the_next_unsent_until_it_ends_then_admit
     let request = Request {
         resource: "graphql".to_owned(),
         cost_hint: Some(1),
+        content_creating: false,
     };
     let at = || clock.now().timestamp() - T0;
     runtime.block_on(async {
@@ -767,6 +773,7 @@ fn a_request_whose_response_reports_nothing_holds_the_slot_until_it_ends_and_is_
     let request = Request {
         resource: "graphql".to_owned(),
         cost_hint: Some(1),
+        content_creating: false,
     };
     runtime.block_on(async {
         call.governor
@@ -822,6 +829,7 @@ impl onefollowup::governor::Readings for GatedRefresh {
                 .before_request(&Request {
                     resource: "core".to_owned(),
                     cost_hint: Some(0),
+                    content_creating: false,
                 })
                 .await;
             self.asked.lock().unwrap().push((before, self.clock.now()));
@@ -871,6 +879,7 @@ fn a_refresh_s_own_rate_limit_read_passes_the_gate_without_waiting_on_the_admiss
             .before_request(&Request {
                 resource: "graphql".to_owned(),
                 cost_hint: Some(1),
+                content_creating: false,
             })
             .await;
     });

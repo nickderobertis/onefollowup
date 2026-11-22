@@ -133,3 +133,166 @@ pub fn reading(resource: &str, remaining: u64, resets_at: i64) -> Reading {
 pub fn shipped() -> GovernorSettings {
     onefollowup::config::defaults("test-host").governor
 }
+
+/// What a [`Simulated`] clock runs each time it is about to move: the instant it leaves.
+pub type Advance = dyn Fn(DateTime<Utc>) + Send + Sync;
+
+/// Why a participant's wait ended in a panic: the case killed it, as `SIGKILL` would.
+pub struct Killed;
+
+struct Simulation {
+    now: DateTime<Utc>,
+    /// Threads running a process on this clock; time moves only once every one waits.
+    participants: usize,
+    /// Each waiting participant's ticket, with when it wakes and its thread.
+    sleepers: std::collections::BTreeMap<u64, (DateTime<Utc>, std::thread::ThreadId)>,
+    tickets: u64,
+    /// Participants to kill at an instant, each woken then with [`Killed`].
+    kill: Vec<(std::thread::ThreadId, DateTime<Utc>)>,
+    killed: Option<u64>,
+}
+
+/// A clock several processes, each on a thread of its own, share: a wait blocks until every
+/// participant waits, then time jumps to the earliest wake and only that waiter goes on. Work
+/// between waits takes no time, so what one process does at an instant every other sees
+/// before time moves.
+pub struct Simulated {
+    simulation: Mutex<Simulation>,
+    moved: std::sync::Condvar,
+    on_advance: Mutex<Option<Box<Advance>>>,
+    limit: DateTime<Utc>,
+}
+
+/// One thread's part in a [`Simulated`] clock, given up when dropped (a kill's unwinding
+/// included).
+pub struct Participant(Arc<Simulated>);
+
+impl Drop for Participant {
+    fn drop(&mut self) {
+        let mut simulation = self.0.lock();
+        simulation.participants -= 1;
+        self.0.moved.notify_all();
+    }
+}
+
+impl Simulated {
+    pub fn at(start: DateTime<Utc>) -> Arc<Self> {
+        Arc::new(Self {
+            simulation: Mutex::new(Simulation {
+                now: start,
+                participants: 0,
+                sleepers: std::collections::BTreeMap::new(),
+                tickets: 0,
+                kill: Vec::new(),
+                killed: None,
+            }),
+            moved: std::sync::Condvar::new(),
+            on_advance: Mutex::new(None),
+            limit: start + chrono::Duration::days(2),
+        })
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, Simulation> {
+        self.simulation
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Take part from this thread until the answer is dropped.
+    pub fn join(self: &Arc<Self>) -> Participant {
+        self.lock().participants += 1;
+        Participant(Arc::clone(self))
+    }
+
+    /// Run `hook` with the instant the clock leaves, every time it is about to move.
+    pub fn on_advance(&self, hook: impl Fn(DateTime<Utc>) + Send + Sync + 'static) {
+        *self.on_advance.lock().unwrap() = Some(Box::new(hook));
+    }
+
+    /// Kill the participant on `thread` at `at`: its wait spanning that instant ends there in
+    /// a [`Killed`] panic. A participant that waits across no such instant is left alone.
+    pub fn kill(&self, thread: std::thread::ThreadId, at: DateTime<Utc>) {
+        self.lock().kill.push((thread, at));
+    }
+
+    /// How many participants wait on the clock now.
+    pub fn waiting(&self) -> usize {
+        self.lock().sleepers.len()
+    }
+
+    /// Move the clock by `seconds` while nobody waits: the case's own passage of time.
+    pub fn advance(&self, seconds: i64) {
+        let mut simulation = self.lock();
+        assert!(simulation.sleepers.is_empty(), "nobody waits");
+        let from = simulation.now;
+        if let Some(hook) = self.on_advance.lock().unwrap().as_ref() {
+            hook(from);
+        }
+        simulation.now = from + chrono::Duration::seconds(seconds);
+    }
+}
+
+impl Clock for Simulated {
+    fn now(&self) -> DateTime<Utc> {
+        self.lock().now
+    }
+
+    fn sleep(&self, duration: Duration) -> Pending<'_, ()> {
+        let me = std::thread::current().id();
+        let mut simulation = self.lock();
+        let ticket = simulation.tickets;
+        simulation.tickets += 1;
+        let wake = simulation.now
+            + chrono::Duration::milliseconds(i64::try_from(duration.as_millis()).unwrap().max(1));
+        simulation.sleepers.insert(ticket, (wake, me));
+        loop {
+            if simulation.killed == Some(ticket) {
+                simulation.killed = None;
+                self.moved.notify_all();
+                drop(simulation);
+                std::panic::panic_any(Killed);
+            }
+            if !simulation.sleepers.contains_key(&ticket) {
+                return Box::pin(async {});
+            }
+            if simulation.sleepers.len() == simulation.participants {
+                let (&first, &(at, _)) = simulation
+                    .sleepers
+                    .iter()
+                    .min_by_key(|(ticket, (at, _))| (*at, **ticket))
+                    .unwrap();
+                let victim = simulation
+                    .kill
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, (_, when))| *when < at)
+                    .find_map(|(entry, (victim, when))| {
+                        let (ticket, _) = simulation
+                            .sleepers
+                            .iter()
+                            .find(|(_, (_, sleeper))| sleeper == victim)?;
+                        Some((entry, *ticket, *when))
+                    });
+                let (chosen, next) = victim.map_or((first, at), |(_, ticket, when)| (ticket, when));
+                if let Some((entry, ticket, _)) = victim {
+                    simulation.kill.remove(entry);
+                    simulation.killed = Some(ticket);
+                }
+                if next > simulation.now {
+                    if let Some(hook) = self.on_advance.lock().unwrap().as_ref() {
+                        hook(simulation.now);
+                    }
+                    assert!(next < self.limit, "the case waited past {}", self.limit);
+                    simulation.now = next;
+                }
+                simulation.sleepers.remove(&chosen);
+                self.moved.notify_all();
+                continue;
+            }
+            simulation = self
+                .moved
+                .wait(simulation)
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+        }
+    }
+}

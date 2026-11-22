@@ -39,9 +39,9 @@
   suggested fix, rejected fixes or owning batches — and never carries one of a ticket's
   level-2 section headings. `onefollowup ticket comment` refuses a body that carries one.
 
-  It goes only on an open item another batch created for the same root cause, which
-  receives at most **one** from this batch, whatever open status the destination holds it
-  at, so an item at a deferred status receives this batch's one comment like any other open
-  item. Where this batch's evidence comment is already there, edit it in place with
+  It goes only on an item another batch created for the same root cause, which receives at
+  most **one** from this batch, whatever status the destination holds it at, so an item at a
+  deferred status, or a closed one whose root cause recurs, receives this batch's one comment
+  like any other. Where this batch's evidence comment is already there, edit it in place with
   `onefollowup ticket comment`; never add a second. This batch never adds an evidence
   comment to an item it created: it edits that item by staging its ticket again instead.

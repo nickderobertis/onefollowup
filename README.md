@@ -213,7 +213,61 @@ and `settled` is `null`, since nothing was settled.
   "drafts": 3,
   "inputs": 1,
   "answers": "dispositions/nightly-2026-11-01.json",
-  "task_template": "tasks/nightly-2026-11-01/task.md"
+  "task_template": "tasks/nightly-2026-11-01/task.md",
+  "duplicate_searches": [
+    {
+      "input": "drafts:nightly-2026-11-01/drafts/20261101T101500Z-layout-save-loses-resize",
+      "stoplisted": [
+        "after"
+      ],
+      "queries": [
+        {
+          "text": "layout save loses its size after a resize",
+          "kind": "title",
+          "hits": 0,
+          "capped": false
+        },
+        {
+          "text": "layout",
+          "kind": "term",
+          "hits": 31,
+          "capped": true
+        },
+        {
+          "text": "resize",
+          "kind": "term",
+          "hits": 2,
+          "capped": false
+        },
+        {
+          "text": "layout.rs",
+          "kind": "file",
+          "hits": 1,
+          "capped": false
+        }
+      ],
+      "matching": 1,
+      "candidates": [
+        {
+          "item": "followups:item-17",
+          "title": "widgets: a resize must keep the saved layout",
+          "status": {
+            "category": "done",
+            "name": "Done"
+          },
+          "url": null,
+          "root_cause": "resize-keeps-layout",
+          "shared": [
+            "resize",
+            "layout.rs"
+          ],
+          "capped": [
+            "layout"
+          ]
+        }
+      ]
+    }
+  ]
 }
 ```
 
@@ -270,7 +324,8 @@ and `settled` is `null`, since nothing was settled.
       "op": "find",
       "source": "drafts",
       "destination": false,
-      "items": 3
+      "items": 3,
+      "searches": 1
     }
   ]
 }

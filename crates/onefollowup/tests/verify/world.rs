@@ -5,6 +5,7 @@
 //! printed `store_operations` is collected by phase, so a journey asserts what onefollowup
 //! asked of each source, counted at onefollowup's own store boundary.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use clap::Parser as _;
@@ -33,6 +34,8 @@ pub struct World {
     /// The shape every ticket `ticket` writes is written in, over its own: a world whose
     /// configuration names its own templates writes the shape they ask for.
     pub shape: Option<Shape>,
+    /// Each batch's duplicate searches, as its latest `prepare` printed them.
+    pub duplicate_searches: BTreeMap<String, Value>,
 }
 
 impl World {
@@ -70,6 +73,7 @@ impl World {
             phases: Vec::new(),
             variables: Vec::new(),
             shape: None,
+            duplicate_searches: BTreeMap::new(),
         }
     }
 
@@ -236,6 +240,12 @@ impl World {
         );
         let printed: Value = serde_json::from_str(&output.stdout).expect("the verb printed JSON");
         self.keep(phase, &printed);
+        if args.first() == Some(&"prepare")
+            && let Some(batch) = printed["batch"].as_str()
+        {
+            self.duplicate_searches
+                .insert(batch.to_owned(), printed["duplicate_searches"].clone());
+        }
         printed
     }
 
@@ -323,7 +333,53 @@ impl World {
     }
 
     /// Write the batch's answers file.
+    ///
+    /// The scripted agent judges each duplicate candidate its batch's latest `prepare`
+    /// rendered for an answer that gives no `dismissed` of its own: a candidate whose root
+    /// cause the answer names is the one it relates, and every other is dismissed.
     pub fn answer(&self, batch: &str, entries: &[Value]) {
+        let judged: Vec<Value> = entries
+            .iter()
+            .map(|entry| {
+                let mut entry = entry.clone();
+                if entry.get("dismissed").is_some() {
+                    return entry;
+                }
+                let dismissed: Vec<Value> = self
+                    .candidates(batch, entry["draft"].as_str().unwrap_or_default())
+                    .into_iter()
+                    .filter(|candidate| {
+                        !entry["root_causes"]
+                            .as_array()
+                            .is_some_and(|named| named.contains(&candidate["root_cause"]))
+                    })
+                    .map(|candidate| {
+                        json!({"item": candidate["item"], "reason": "Its root cause is a different invariant."})
+                    })
+                    .collect();
+                if !dismissed.is_empty() {
+                    entry["dismissed"] = Value::Array(dismissed);
+                }
+                entry
+            })
+            .collect();
+        self.answer_as_given(batch, &judged);
+    }
+
+    /// The duplicate candidates the batch's latest `prepare` rendered for `input`.
+    pub fn candidates(&self, batch: &str, input: &str) -> Vec<Value> {
+        self.duplicate_searches
+            .get(batch)
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter(|search| search["input"] == input)
+            .flat_map(|search| search["candidates"].as_array().cloned().unwrap_or_default())
+            .collect()
+    }
+
+    /// Write the batch's answers file with exactly `entries`, judging no candidate.
+    pub fn answer_as_given(&self, batch: &str, entries: &[Value]) {
         let path = self.work().join(format!("dispositions/{batch}.json"));
         let mut held: Value =
             serde_json::from_str(&std::fs::read_to_string(&path).expect("prepare wrote it"))

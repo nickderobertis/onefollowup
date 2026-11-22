@@ -21,6 +21,11 @@
                      no_workaround, impact_parts, workaround_costs}).
     estimate         {raise_at, raise_cap}.
     ticket_template  the rendered example ticket shape text.
+    candidates       map input id -> list of {item, title, status, url, root_cause, shared,
+                     capped}: the follow-up tickets, open or closed, prepare's search found
+                     for that draft or input, best first; `status` is {category, name},
+                     `shared` and `capped` the queries that found it under and over the hit
+                     cap. An input with none is absent.
 
   Beyond those, this template reads two optional variables:
     tickets          path of the directory the batch's tickets are written to; when
@@ -148,27 +153,29 @@ Every draft and input takes exactly one of these:
    on it**, for each ticket whose kind's duplicates are yours to search and whose record
    does not already name its item. A ticket already placed — its record names its item — is
    not searched for again; stage it again only once its content, dependencies or status
-   changed. Otherwise ask `onefollowup ticket search`, each distinct question once, in this
-   order:
-   - **first, in the words of the invariant and its symptom** — the broken guarantee as
-     `## Root cause` states it in plain language, which a report of this problem would
-     carry whichever file it was found in;
-   - then once per distinct further question about the symptom, the command or the message;
-   - **last, the failing file or function**, because the file is exactly what differs
-     between two reports of one root cause.
+   changed. **Start from the candidates listed under each draft and input below**: `prepare`
+   already searched the destination, at every status, for each one's distinctive words and
+   the files it names, and lists the tickets it found, best first. Read each candidate's
+   `## Root cause` with `onefollowup ticket board-status`. Then ask `onefollowup ticket search`
+   only what those searches did not, each distinct question once:
+   - **short distinctive terms**, one or two words each — a word of the symptom, the
+     command or the message that an unrelated ticket would not carry;
+   - **the failing file or function name**, alone, because another report of the same root
+     cause names the file even when its wording differs.
 
-   The slug is no question to ask: each batch names its own, so another batch's item for the
-   same root cause almost never carries this ticket's slug. Reuse every answer an earlier
-   step already obtained; never repeat a search. Search for words an item would carry rather
-   than a fragment of one, and expect an item written seconds ago to be missing from the
-   answer. Keep search results out of the ticket: never mention a rejected irrelevant
+   Never search a sentence or the invariant's phrasing: a search matches only the exact
+   words it is given, so another batch's report of the same root cause, worded its own way,
+   never matches one. The slug is no question to ask either: each batch names its own.
+   Reuse every answer an earlier step already obtained; never repeat a search, and expect an
+   item written seconds ago to be missing from the answer. Keep search results out of the ticket: never mention a rejected irrelevant
    candidate anywhere in its body, including Evidence, and keep no query or candidate log.
    A ticket you then do not file is deleted before you record its drafts' dispositions.
-   - **The same root cause.** An open item, at any open status, whose stated root cause
-     meets the bar of step 5 — one change to the rule would remove this ticket's instances
-     and its own — is the same root cause **even when its location and its slug differ**,
-     and is where this batch's evidence goes, as a comment, at step 10, rather than a new
-     ticket. This batch's ticket for it then **takes that item's root-cause slug**: its file
+   - **The same root cause.** An item, open at any status or closed, whose stated root
+     cause meets the bar of step 5 — one change to the rule would remove this ticket's
+     instances and its own — is the same root cause **even when its wording, its location
+     and its slug differ**, and is where this batch's evidence goes, as a comment, at step
+     10, rather than a new ticket: a closed one too, since its root cause recurring is
+     evidence its fix or its merge did not hold. This batch's ticket for it then **takes that item's root-cause slug**: its file
      is renamed to `<that slug>.md` and its record's root cause is that slug, so the
      comment's marker, the answers and the item's occurrence recount all name the one root
      cause. An item at a proposal or deferred status is open: no agent picks it up to work
@@ -214,8 +221,8 @@ Every draft and input takes exactly one of these:
    is this batch's own, stage the ticket with `onefollowup ticket copy`. When it refuses,
    stage nothing more for that ticket and keep what it printed for your report. Never edit a
    ticket only to make a copy write it.
-10. **Stage evidence on another batch's item.** Where an open item for the root cause was
-    created by another batch, stage no copy: stage this batch's one comment on that item
+10. **Stage evidence on another batch's item.** Where an item for the root cause, open or
+    closed, was created by another batch, stage no copy: stage this batch's one comment on that item
     with `onefollowup ticket comment`, or edit the one this batch already left there, under
     "Ownership at the destination" below, and **after every such comment, stage a
     re-estimate of that item** with `onefollowup ticket re-estimate`.
@@ -241,15 +248,21 @@ Every draft and input takes exactly one of these:
 
 A `ticket` names the root-cause slug of a ticket this batch holds under {{ tickets_at }} whose
 drafts name this one — under the existing item's own slug where it took it, since that is
-also what an evidence comment carries. A `reason` is one or two sentences, in your words, of
+also what an evidence comment carries.
+
+**An answer whose disposition requires a ticket accounts for every candidate listed under its
+draft or input**: a candidate is either the root cause it names, this batch's evidence comment
+staged on it, or it is listed in the answer's `dismissed` as
+`{"item": "<the candidate's id>", "reason": "<one sentence: why its root cause differs>"}`. A `reason` is one or two sentences, in your words, of
 why it became this. Every answer the file already holds was given by an earlier pass and is
 carried forward as it stands: never change, remove or re-answer one, and add answers only
 for what it does not answer yet.
 
 **`onefollowup check` is what says the answers are complete.** It refuses each draft or input
 that is unanswered or answered twice, whose kind or disposition is unknown or not allowed
-for its kind, that lacks what its disposition requires, or whose ticket this batch does not
-hold. This task is not finished while it refuses.
+for its kind, that lacks what its disposition requires, whose ticket this batch does not
+hold, or that files a ticket while a candidate of its input is neither related nor dismissed
+with a reason. This task is not finished while it refuses.
 
 ## The verified ticket
 
@@ -364,6 +377,12 @@ The shape, with every placeholder to fill:
 {%- endif %}
 
 {{ draft.body | trim }}
+{% if candidates is defined and draft.id in candidates %}
+Candidates on the destination for `{{ draft.id }}`:
+{% for candidate in candidates[draft.id] %}
+- `{{ candidate.item }}` — {{ candidate.title }} (`{{ candidate.status.name }}`, root cause `{{ candidate.root_cause }}`{% if candidate.url %}, {{ candidate.url }}{% endif %}); found by {% for query in candidate.shared %}`{{ query }}`{% if not loop.last %}, {% endif %}{% endfor %}{% if candidate.capped %}{% if candidate.shared %}, {% endif %}and by the common {% for query in candidate.capped %}`{{ query }}`{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}
+{%- endfor %}
+{% endif %}
 {% else %}
 None.
 {% endfor %}
@@ -375,6 +394,12 @@ None.
 - Source: {{ input.source }}
 
 {{ input.detail | trim }}
+{% if candidates is defined and input.id in candidates %}
+Candidates on the destination for `{{ input.id }}`:
+{% for candidate in candidates[input.id] %}
+- `{{ candidate.item }}` — {{ candidate.title }} (`{{ candidate.status.name }}`, root cause `{{ candidate.root_cause }}`{% if candidate.url %}, {{ candidate.url }}{% endif %}); found by {% for query in candidate.shared %}`{{ query }}`{% if not loop.last %}, {% endif %}{% endfor %}{% if candidate.capped %}{% if candidate.shared %}, {% endif %}and by the common {% for query in candidate.capped %}`{{ query }}`{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}
+{%- endfor %}
+{% endif %}
 {% else %}
 None.
 {% endfor %}

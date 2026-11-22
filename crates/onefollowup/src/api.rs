@@ -24,6 +24,7 @@ use crate::error::Error;
 use crate::formats::outbox::StagedWrite;
 use crate::formats::{HeldPriority, Level};
 use crate::store::StoreOperation;
+pub use crate::verify::candidates::{Candidate as DuplicateCandidate, QueryKind};
 pub use crate::verify::relations::{Absent, MissingLink};
 use crate::{comments, verify};
 
@@ -591,9 +592,42 @@ pub struct Prepared {
     /// edge again.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub missing_links: Vec<MissingLink>,
+    /// Each prepared input's search for its duplicates, under a kind whose duplicates the
+    /// agent judges: what it asked and the candidates the task renders for it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub duplicate_searches: Vec<DuplicateSearch>,
     /// Each store operation it made.
     #[serde(default, skip_serializing_if = "no_operations")]
     pub store_operations: Vec<StoreOperation>,
+}
+
+/// One input's search for its duplicates, inside `prepare`'s one batched search.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DuplicateSearch {
+    /// The input's id.
+    pub input: String,
+    /// Each word of the input the shipped stoplist kept out of its queries.
+    pub stoplisted: Vec<String>,
+    /// Each query asked for it.
+    pub queries: Vec<DuplicateQuery>,
+    /// How many candidates its queries found, before the task's bound.
+    pub matching: usize,
+    /// The candidates the task renders for it, best first: each must be related or dismissed
+    /// in an answer that files a ticket.
+    pub candidates: Vec<DuplicateCandidate>,
+}
+
+/// One query of an input's duplicate search.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DuplicateQuery {
+    /// What it asked.
+    pub text: String,
+    /// Where the text came from: the input's `title`, one `term`, or one `file` name.
+    pub kind: QueryKind,
+    /// How many items it found.
+    pub hits: usize,
+    /// Whether that is over the hit cap, so its candidates rank last.
+    pub capped: bool,
 }
 
 /// Snapshot a batch's input set, make its destination reads, and write the verifying

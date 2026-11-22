@@ -1,5 +1,6 @@
-//! `check`: hold the batch's answers, tickets, edges and staged writes to the rules before
-//! anything is written, reading nothing of the destination (only, for a route that assigns,
+//! `check`: hold the batch's answers — each ticket-filing one to its input's duplicate
+//! candidates too — tickets, edges and staged writes to the rules before anything is written,
+//! reading nothing of the destination (only, for a route that assigns,
 //! the store's configuration); when they are sound, record what it held so `publish` sends
 //! exactly that.
 
@@ -12,7 +13,7 @@ use sha2::{Digest as _, Sha256};
 use crate::api::{BatchArgs, Checked, Problem, SCHEMA_VERSION};
 use crate::config::{Duplicates, Requirement, Settings};
 use crate::error::Error;
-use crate::formats::batch::BatchState;
+use crate::formats::batch::{BatchState, Input};
 use crate::formats::dispositions::{CarriedDispositions, DispositionEntry, Dispositions};
 use crate::formats::outbox::{Outbox, StagedWrite};
 use crate::verify::context::Batch;
@@ -131,6 +132,8 @@ fn answers(
     let mut entries: Vec<DispositionEntry> = carried
         .map(|carried| carried.dispositions)
         .unwrap_or_default();
+    // An earlier pass's answers stand as they are, so the duplicate rule holds only new ones.
+    let carried_count = entries.len();
     for entry in written.iter().flat_map(|written| &written.dispositions) {
         if !entries.contains(entry) {
             entries.push(entry.clone());
@@ -178,6 +181,7 @@ fn answers(
             continue;
         }
         let entry = given[0];
+        let carried = entries[..carried_count].contains(entry);
         let Some(kind_name) = &entry.kind else {
             problems.push(problem(
                 &input.id,
@@ -244,6 +248,9 @@ fn answers(
                             ),
                         ));
                     }
+                    if !carried && kind.duplicates == Duplicates::Agent {
+                        candidates(batch, state, outbox, input, entry, problems);
+                    }
                     for root_cause in &entry.root_causes {
                         let held = staged_slugs.contains(root_cause)
                             || commented.contains(&root_cause.as_str())
@@ -287,6 +294,51 @@ fn answers(
         }
     }
     Ok(())
+}
+
+/// Hold a ticket-filing answer to its input's duplicate candidates: each one `prepare`
+/// rendered is related — this batch's evidence comment staged or published on it, under a root
+/// cause the answer names — or dismissed in the answer with a reason.
+fn candidates(
+    batch: &Batch<'_>,
+    state: &BatchState,
+    outbox: &Outbox,
+    input: &Input,
+    entry: &DispositionEntry,
+    problems: &mut Vec<Problem>,
+) {
+    let plan = crate::verify::candidates::plan(input);
+    let ranked = crate::verify::candidates::ranked(batch, input, &plan, &state.reads);
+    for dismissal in &entry.dismissed {
+        if dismissal.reason.trim().is_empty() {
+            problems.push(problem(
+                &input.id,
+                format!(
+                    "the answer dismisses the candidate `{}` without a reason; say why it is a different root cause",
+                    dismissal.item
+                ),
+            ));
+        }
+    }
+    for candidate in &ranked.rendered {
+        let related = all_writes(state, outbox).any(|write| {
+            matches!(write, StagedWrite::Comment { item, root_cause, .. }
+                if *item == candidate.item && entry.root_causes.contains(root_cause))
+        });
+        let dismissed = entry
+            .dismissed
+            .iter()
+            .any(|dismissal| dismissal.item == candidate.item);
+        if !related && !dismissed {
+            problems.push(problem(
+                &input.id,
+                format!(
+                    "the duplicate candidate `{}` (\"{}\", root cause `{}`) prepare found for this input is neither related nor dismissed: where it is this input's root cause, stage this batch's evidence on it with `ticket comment` and name its root cause in this answer; otherwise add it to this answer's `dismissed` with the reason it is a different root cause",
+                    candidate.item, candidate.title, candidate.root_cause
+                ),
+            ));
+        }
+    }
 }
 
 fn tickets(

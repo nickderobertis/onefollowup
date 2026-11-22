@@ -158,6 +158,9 @@ pub struct StoreOperation {
     pub destination: bool,
     /// How many items it read or wrote.
     pub items: usize,
+    /// For a `find`, how many searches it carried.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub searches: Option<usize>,
 }
 
 /// A status as a source holds it.
@@ -725,6 +728,7 @@ impl Store {
             source: source.to_owned(),
             destination: self.local.as_deref() != Some(source),
             items,
+            searches: None,
         });
     }
 
@@ -784,6 +788,9 @@ impl Store {
         seen.sort_unstable();
         seen.dedup();
         self.count("find", source, seen.len());
+        if let Some(last) = self.log.borrow_mut().last_mut() {
+            last.searches = Some(searches.len());
+        }
         Ok(found)
     }
 
@@ -1258,6 +1265,7 @@ impl Store {
                 .iter()
                 .any(|source| self.local.as_deref() != Some(*source)),
             items,
+            searches: None,
         });
     }
 

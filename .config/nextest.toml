@@ -1,0 +1,4 @@
+# The `ci` profile, which every hosted test job selects through NEXTEST_PROFILE: it runs
+# every test after a failure, so one run names every failing test on its platform.
+[profile.ci]
+fail-fast = false

@@ -1,7 +1,9 @@
 //! The governor at the store's real chokepoint, over a real local-md destination, on a
 //! virtual clock: GitHub's rate-limit state — the doubled reading — is the only thing doubled.
 //!
-//! A held destination call must send nothing until a reading admits it. For a write that is
+//! The doubled reading is a script stated in the case, or `spike-quota-burn`'s two real traces
+//! (`fixtures/quota-burn/`, committed as that spike's branch holds them) replayed from their
+//! start. A held destination call must send nothing until a reading admits it. For a write that is
 //! read off the destination's files, unchanged at every reading taken while held; for a read
 //! it is that the call answers what a person changed at the recovering reading, which a read
 //! sent earlier could not have seen.
@@ -18,7 +20,8 @@ use onefollowup::store::{
 use serde_json::Value;
 
 mod support;
-use support::{DESTINATION, Scripted, T0, Virtual, instant, reading};
+use support::replay::{Replay, TRACES};
+use support::{DESTINATION, Scripted, T0, Virtual, instant, reading, shipped};
 
 /// A store of two local-md sources, `drafts` (local) and the destination.
 struct World {
@@ -655,4 +658,148 @@ fn one_follow_up_batch_over_local_md_which_reports_no_reading_is_admitted_withou
         13,
         "the governor's reads are no store operation"
     );
+}
+
+/// A pass of `points` on `metered`, replaying the committed trace `trace_name` from its start:
+/// spent at 25 points a minute in 12.5-point batches, every batch a real `update-many` through
+/// the store over the local-md destination. A local-md record write is one request on
+/// `local`, which the doubled reading meters as the traced `metered` window in units of one
+/// batch ([`BATCH_POINTS`]): one record a batch, the pass's own records spent from it. Every
+/// term of the admission rule — remaining, cost, the floor's share of the limit, the reserve's
+/// peak rate times time — scales with the unit, so each admission is the one the trace's own
+/// points would make, but for remaining rounding down to a whole batch, which only ever errs
+/// towards waiting. Answers the store, the virtual seconds admission took, and the reading.
+fn replayed_pass(trace_name: &str, metered: &str, points: u64) -> (Store, f64, Arc<Scripted>) {
+    let world = World::new();
+    let ids = seeded(&world, 1);
+    let replay = Arc::new(Replay::of(trace_name));
+    let start = replay.start();
+    let clock = Virtual::at(start);
+    // Any wait fails the case, at its first pause rather than after it.
+    *clock.limit.lock().unwrap() = Some(start);
+    let script = Arc::clone(&replay);
+    let metered_name = metered.to_owned();
+    let readings = Scripted::new(&clock, move |at| {
+        script.readings(at, &metered_name, BATCH_POINTS)
+    });
+    let notices = Arc::new(Mutex::new(Vec::new()));
+    // The shipped defaults, the traced resource's seeded peak standing for its `local` view in
+    // that view's unit.
+    let mut settings = shipped();
+    let seeded_peak = settings.min_peak_per_minute[metered] / BATCH_POINTS;
+    settings
+        .min_peak_per_minute
+        .insert("local".to_owned(), seeded_peak);
+    let store = world
+        .governed(&clock, &readings, &notices)
+        .with_governor(&settings);
+    let batches = (points as f64 / BATCH_POINTS).ceil() as usize;
+    let mut admission = 0.0;
+    for batch in 0..batches {
+        let before = clock.now();
+        let answers = store
+            .update_many(
+                DESTINATION,
+                &[HeldUpdate {
+                    item: ids[0].clone(),
+                    body: Some(format!("Batch {batch} of the pass.\n")),
+                    ..HeldUpdate::default()
+                }],
+            )
+            .unwrap();
+        let waited = (clock.now() - before).num_milliseconds() as f64 / 1000.0;
+        assert_eq!(
+            waited,
+            0.0,
+            "{trace_name} {metered} {points}: batch {batch} waited: {:?}",
+            notices.lock().unwrap()
+        );
+        assert!(answers[0].reason.is_none(), "{answers:?}");
+        admission += waited;
+        replay.spend(metered, BATCH_POINTS, clock.now());
+        // 12.5 points at 25 a minute: a batch every 30 seconds.
+        clock.advance(30.0);
+    }
+    assert!(notices.lock().unwrap().is_empty(), "no wait line");
+    assert_eq!(
+        store.operations().len(),
+        batches,
+        "one update-many a batch, the quota reads counted in none"
+    );
+    let text = std::fs::read_to_string(world.task_file(&ids[0])).unwrap();
+    assert!(
+        text.contains(&format!("Batch {} of the pass.", batches - 1)),
+        "every batch landed"
+    );
+    (store, admission, readings)
+}
+
+/// What one batch of a replayed pass spends, in the trace's points.
+const BATCH_POINTS: f64 = 12.5;
+
+/// With quota ample for everyone's burn, a pass of `points` on `metered` over the committed
+/// trace `trace_name` is admitted at every store call without waiting.
+fn admitted_without_waiting(trace_name: &str, metered: &str, points: u64) {
+    let (store, admission, readings) = replayed_pass(trace_name, metered, points);
+    assert_eq!(
+        store.governor_report().map(|report| report.waits),
+        Some(Vec::new()),
+        "{trace_name} {metered} {points}: the governor object records no wait"
+    );
+    assert_eq!(
+        admission, 0.0,
+        "{trace_name} {metered} {points}: no virtual time passes in admission"
+    );
+    assert!(
+        readings.reads().len() > 1 && store.quota_reads() > 1,
+        "the doubled reading was read through the pass"
+    );
+}
+
+#[test]
+fn with_quota_ample_the_sample_of_2026_11_21_admits_every_store_call_of_a_full_graphql_pass_without_waiting()
+ {
+    admitted_without_waiting(TRACES[0], "graphql", 1500);
+}
+
+#[test]
+fn with_quota_ample_the_sample_of_2026_11_21_admits_every_store_call_of_a_weekly_graphql_pass_without_waiting()
+ {
+    admitted_without_waiting(TRACES[0], "graphql", 150);
+}
+
+#[test]
+fn with_quota_ample_the_sample_of_2026_11_21_admits_every_store_call_of_a_full_core_pass_without_waiting()
+ {
+    admitted_without_waiting(TRACES[0], "core", 1500);
+}
+
+#[test]
+fn with_quota_ample_the_sample_of_2026_11_21_admits_every_store_call_of_a_weekly_core_pass_without_waiting()
+ {
+    admitted_without_waiting(TRACES[0], "core", 150);
+}
+
+#[test]
+fn with_quota_ample_the_grooming_pass_of_2026_11_20_admits_every_store_call_of_a_full_graphql_pass_without_waiting()
+ {
+    admitted_without_waiting(TRACES[1], "graphql", 1500);
+}
+
+#[test]
+fn with_quota_ample_the_grooming_pass_of_2026_11_20_admits_every_store_call_of_a_weekly_graphql_pass_without_waiting()
+ {
+    admitted_without_waiting(TRACES[1], "graphql", 150);
+}
+
+#[test]
+fn with_quota_ample_the_grooming_pass_of_2026_11_20_admits_every_store_call_of_a_full_core_pass_without_waiting()
+ {
+    admitted_without_waiting(TRACES[1], "core", 1500);
+}
+
+#[test]
+fn with_quota_ample_the_grooming_pass_of_2026_11_20_admits_every_store_call_of_a_weekly_core_pass_without_waiting()
+ {
+    admitted_without_waiting(TRACES[1], "core", 150);
 }

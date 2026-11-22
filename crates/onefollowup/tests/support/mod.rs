@@ -6,6 +6,8 @@
     reason = "each test crate including this module uses its own part of it"
 )]
 
+pub mod replay;
+
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 

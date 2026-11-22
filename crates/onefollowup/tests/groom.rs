@@ -37,6 +37,9 @@ impl Runner for InProcess {
                 Command::Groom(GroomCommand::Check(args)) => {
                     api::groom_check(&settings, args).map(|result| print(&result))
                 }
+                Command::Groom(GroomCommand::Publish(args)) => {
+                    api::groom_publish(&settings, args).map(|result| print(&result))
+                }
                 other => panic!("a grooming journey runs only `groom` verbs, not {other:?}"),
             });
         match ran {

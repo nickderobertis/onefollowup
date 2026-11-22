@@ -1,6 +1,6 @@
-//! The grooming pass: `groom prepare` and `groom check`, which verify, deduplicate and close a
-//! destination's open tickets in three steps — prepare, the verifying agents, then check until
-//! it passes — before `groom-verb`'s publish sends the plan.
+//! The grooming pass: `groom prepare`, `groom check` and `groom publish`, which verify,
+//! deduplicate and close a destination's open tickets — prepare, the verifying agents, check
+//! until it passes, then publish sending the plan.
 //!
 //! **The agent only judges**, by filling a verdict record: whether a ticket is fixed or
 //! obsolete, and whether two tickets share one root cause. Selection, checking that judgement's
@@ -14,11 +14,16 @@
 //!   <batch>/<shard>/task.md         one shard's task
 //!   <batch>/<shard>/verdicts.jsonl  the verdicts its agent writes
 //!   <batch>/plan.json               what the latest passing check planned
+//!   <batch>/receipts.json           what publish sent and heard back
+//!   <batch>/report.md, report.json  what publish did, each ticket left for a person among it
 //! ```
+//!
+//! Once publish ran, the batch holds only the plan, the receipts and the reports.
 
 pub mod check;
 pub mod git;
 pub mod prepare;
+pub mod publish;
 
 use std::path::{Path, PathBuf};
 

@@ -1085,6 +1085,46 @@ pub fn groom_check(settings: &Settings, args: GroomCheckArgs) -> Result<GroomChe
     crate::groom::check::run(settings, args)
 }
 
+/// `onefollowup groom publish`: send what a grooming batch's passing check planned.
+#[derive(Debug, Clone, PartialEq, Eq, Args)]
+pub struct GroomPublishArgs {
+    /// The batch `groom prepare` answered and `groom check` passed.
+    #[arg(long, value_name = "B")]
+    pub batch: String,
+}
+
+/// What `groom publish` sent and read back.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct GroomPublished {
+    /// The batch.
+    pub batch: String,
+    /// How many tickets the read-back confirmed in full.
+    pub confirmed: usize,
+    /// Each way a ticket read back differs from what its receipts say landed.
+    pub mismatched: Vec<crate::formats::groom::Mismatch>,
+    /// The batch's `report.md`.
+    pub report: PathBuf,
+    /// The batch's `report.json`.
+    pub report_json: PathBuf,
+    /// Each store operation it made.
+    #[serde(default, skip_serializing_if = "no_operations")]
+    pub store_operations: Vec<StoreOperation>,
+}
+
+/// Send what a grooming batch's passing check planned — its closes, duplicate closes and every
+/// verified ticket's `groom` record, then its comments — receipting every outcome, read back
+/// every ticket it changed, and write the batch's report. Run again, it sends only what no
+/// receipt confirms.
+///
+/// # Errors
+///
+/// A batch no passing check planned, a file that cannot be read or written, the store's
+/// refusal of a whole call, or [`Error::Unpublished`] — at exit 1, its answer printed — while a
+/// refused write or a read-back mismatch stands.
+pub fn groom_publish(settings: &Settings, args: GroomPublishArgs) -> Result<GroomPublished, Error> {
+    crate::groom::publish::run(settings, args)
+}
+
 /// The arguments of a verb that takes none.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Args)]
 pub struct NoArgs {}

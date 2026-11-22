@@ -1,0 +1,36 @@
+{#-
+  The visible part of every comment `groom publish` posts. `comment.verdict` is `fixed`,
+  `obsolete` or `duplicate` on a ticket publish closed, and `survivor` on a cluster's survivor,
+  naming the duplicates closed into it. onefollowup appends the comment's marker line after
+  this; a template never writes it. Every variable README.md's "Grooming" documents is given.
+-#}
+{%- if comment.verdict == "survivor" -%}
+Grooming batch `{{ comment.batch }}` closed {{ comment.duplicates | length }} duplicate{{ "" if comment.duplicates | length == 1 else "s" }} of this ticket, each sharing its root cause:
+{% for duplicate in comment.duplicates %}
+- {% if duplicate.url %}[{{ duplicate.title }}]({{ duplicate.url }}){% else %}{{ duplicate.title }}{% endif %} (`{{ duplicate.ticket }}`){% if duplicate.root_cause %}: {{ duplicate.root_cause }}{% endif %}
+{%- endfor %}
+{%- if comment.claimed_as %}
+
+This ticket is {{ comment.status }}, so the work it holds now covers them.
+{%- endif %}
+
+Their evidence:
+{% for evidence in comment.evidence %}
+- {{ evidence | trim }}
+{%- endfor %}
+{%- else -%}
+Grooming batch `{{ comment.batch }}` closed this ticket as
+{%- if comment.verdict == "duplicate" %} a duplicate of {% if comment.survivor.url %}[{{ comment.survivor.title }}]({{ comment.survivor.url }}){% else %}{{ comment.survivor.title }}{% endif %} (`{{ comment.survivor.ticket }}`){% if comment.root_cause %}, sharing its root cause: {{ comment.root_cause }}{% endif %}.
+{%- elif comment.verdict == "fixed" %} fixed on `main` of `{{ comment.repository }}` by {{ comment.deciding_commit }}.
+{%- else %} obsolete: it no longer applies to `main` of `{{ comment.repository }}` since {{ comment.deciding_commit }}.
+{%- endif %}
+
+{{ comment.evidence | trim }}
+{%- if comment.evidence_paths %}
+
+Verified at {{ comment.commit }} against {% for path in comment.evidence_paths %}`{{ path }}`{{ ", " if not loop.last }}{% endfor %}, at {{ comment.confidence }} confidence.
+{%- else %}
+
+Verified at {{ comment.commit }}, at {{ comment.confidence }} confidence.
+{%- endif %}
+{%- endif %}

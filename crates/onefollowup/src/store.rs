@@ -25,7 +25,7 @@ use onetaskgraph_core::{
 };
 use onetaskgraph_plugin_api::{
     AuthorKind, Classification, CommentBody, LinkDirection, Location, MetadataKey, MetadataMatch,
-    NativeId, Priority, Repository, SourceName, Status, StatusCategory, Task, TaskUpdate,
+    NativeId, Priority, Repository, SourceName, Status, StatusCategory, Task, TaskLink, TaskUpdate,
 };
 use serde::Serialize;
 use serde_json::Value;
@@ -51,6 +51,10 @@ pub const STORE_DOCUMENT: &str = "onetaskgraph.yaml";
 
 /// How many tasks one page of a search asks for.
 const PAGE_SIZE: u32 = 100;
+
+/// The type of the link onetaskgraph records from a task closed as a duplicate to its
+/// survivor, on both of them.
+pub const DUPLICATE_LINK: &str = "duplicate";
 
 /// Whether `name` is a store status category a status role may map to: one onetaskgraph's
 /// status vocabulary names, other than the `unknown` it reports for a status it cannot place.
@@ -236,6 +240,20 @@ impl StoreItem {
                 .created_at
                 .map(|at| at.to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true)),
         }
+    }
+}
+
+impl StoreItem {
+    /// The survivor this task's metadata links it to as a duplicate, qualified: what a
+    /// duplicate close records. `None` when it holds no such link, or holds links that are not
+    /// onetaskgraph's list of them.
+    #[must_use]
+    pub fn duplicate_of(&self) -> Option<String> {
+        TaskLink::held(&self.metadata)
+            .ok()?
+            .into_iter()
+            .find(|link| link.link_type == DUPLICATE_LINK && link.direction == LinkDirection::Out)
+            .map(|link| link.other)
     }
 }
 
@@ -449,6 +467,9 @@ pub struct HeldUpdate {
     pub assignee: Option<String>,
     /// Write only while it is assigned to exactly these people, `[]` while unassigned.
     pub when_assignees: Option<Vec<String>>,
+    /// Close it as a duplicate of this task, qualified, its survivor: the store writes it
+    /// `cancelled` and records a [`DUPLICATE_LINK`] link from it to the survivor.
+    pub duplicate_of: Option<String>,
 }
 
 /// One task's relations as its source holds them.
@@ -737,6 +758,30 @@ impl Store {
     #[must_use]
     pub fn declares(&self, name: &str) -> bool {
         self.settings.contains_key(name)
+    }
+
+    /// Where the quota governor admits a grooming publish's batch before it is sent: `reads`
+    /// tasks of `source` read for their status, then `updates` tasks updated in one
+    /// `update-many` and `comments` comments added in one `comment add-many`. `groom publish`
+    /// calls it once, immediately before its status read, and sends that read and both writes
+    /// back to back, so the batch's whole estimated cost is admitted here and no governor wait
+    /// falls between the status read and the closes it admitted.
+    ///
+    /// It sends nothing and is no store operation. No governor is installed yet, so every batch
+    /// is admitted at once; the governor fills this in, and its refusal is its `Err`.
+    ///
+    /// # Errors
+    ///
+    /// None yet: a governor that refuses the batch will answer its refusal.
+    pub fn admit_batch(
+        &self,
+        source: &str,
+        reads: usize,
+        updates: usize,
+        comments: usize,
+    ) -> Result<(), StoreError> {
+        let _ = (source, reads, updates, comments);
+        Ok(())
     }
 
     /// Every operation made so far, in order.
@@ -1349,6 +1394,7 @@ impl Store {
                         metadata: update.metadata.clone(),
                         assignee: update.assignee.clone().map(Some),
                         when_assignees: update.when_assignees.clone(),
+                        duplicate_of: update.duplicate_of.clone(),
                         ..UpdateBatchItem::default()
                     })
                 })

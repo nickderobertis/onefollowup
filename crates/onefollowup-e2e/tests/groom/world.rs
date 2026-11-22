@@ -8,8 +8,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use onefollowup::formats::groom::{GroomRecord, OverlapComment, content_digest, record_key};
-use onefollowup::store::{Store, TaskChange};
-use serde_json::Value;
+use onefollowup::store::{ReadItem, Store, TaskChange};
+use serde_json::{Value, json};
 
 /// The destination every grooming journey grooms.
 pub const DESTINATION: &str = "followups";
@@ -220,7 +220,7 @@ impl World {
             .expect("the comment is edited");
     }
 
-    /// Write `record` to the ticket `id` through the store, as `groom-verb`'s publish would.
+    /// Write `record` to the ticket `id` through the store, as `groom publish` would.
     pub fn record(&self, id: &str, record: &Value) {
         self.store()
             .update_task(
@@ -310,6 +310,144 @@ impl World {
             )
         })
     }
+}
+
+impl World {
+    /// The qualified id of the destination's ticket `id`.
+    pub fn qualified(id: &str) -> String {
+        format!("{DESTINATION}:{id}")
+    }
+
+    /// The ticket `id` and its comments as the store reads them now.
+    pub fn read(&self, id: &str) -> ReadItem {
+        self.store()
+            .read(&[Self::qualified(id)], true)
+            .expect("the ticket reads")
+            .remove(0)
+    }
+
+    /// The ticket `id`'s status category as the store reads it now.
+    pub fn status(&self, id: &str) -> String {
+        self.read(id)
+            .item
+            .expect("the ticket is there")
+            .status
+            .category
+    }
+
+    /// The ticket `id`'s comments' bodies as the store reads them now.
+    pub fn comments(&self, id: &str) -> Vec<String> {
+        self.read(id)
+            .comments
+            .expect("its comments read")
+            .into_iter()
+            .map(|comment| comment.body)
+            .collect()
+    }
+
+    /// Move the ticket `id` to the status category `status` through the store, as a person's
+    /// client or another process would.
+    pub fn move_to(&self, id: &str, status: &str) {
+        self.store()
+            .update_task(
+                &Self::qualified(id),
+                &TaskChange {
+                    status: Some(status.to_owned()),
+                    ..TaskChange::default()
+                },
+            )
+            .expect("the status is written");
+    }
+
+    /// The ticket `id`'s `groom` record as the store reads it now.
+    pub fn groom_record(&self, id: &str) -> Option<Value> {
+        self.read(id)
+            .item
+            .expect("the ticket is there")
+            .metadata
+            .get(&record_key(NAMESPACE))
+            .cloned()
+    }
+
+    /// Play the verifying agents of `batch`: write each shard's `verdicts.jsonl`, one record
+    /// per ticket, from `verdict`.
+    pub fn verdicts(&self, batch: &str, verdict: impl Fn(&str) -> Value) {
+        for shard in self.batch_record(batch)["shards"]
+            .as_array()
+            .expect("shards")
+        {
+            let mut text = String::new();
+            for ticket in shard["tickets"].as_array().expect("tickets") {
+                let id = ticket.as_str().expect("an id");
+                text.push_str(&verdict(id.trim_start_matches("followups:")).to_string());
+                text.push('\n');
+            }
+            std::fs::write(shard["verdicts"].as_str().expect("a path"), text)
+                .expect("verdicts written");
+        }
+    }
+
+    /// One full pass: prepare, the agents' `verdict`s, a passing check; answers the batch, or
+    /// `None` when prepare selected nothing. Publish is the caller's.
+    pub fn checked(&self, runner: &dyn Runner, verdict: impl Fn(&str) -> Value) -> Option<String> {
+        let prepared = self.json(runner, 0, &["groom", "prepare"]);
+        if prepared["shards"] == json!([]) {
+            return None;
+        }
+        let batch = prepared["batch"].as_str().expect("a batch").to_owned();
+        self.verdicts(&batch, verdict);
+        let checked = self.json(runner, 0, &["groom", "check", "--batch", &batch]);
+        assert_eq!(checked["problems"], json!([]), "{checked:#}");
+        Some(batch)
+    }
+
+    /// One full pass, published: answers the batch and what publish printed.
+    pub fn groomed_pass(
+        &self,
+        runner: &dyn Runner,
+        verdict: impl Fn(&str) -> Value,
+    ) -> (String, Value) {
+        let batch = self
+            .checked(runner, verdict)
+            .expect("prepare selected tickets");
+        let published = self.json(runner, 0, &["groom", "publish", "--batch", &batch]);
+        (batch, published)
+    }
+}
+
+/// A verdict record on the ticket `id`.
+pub fn verdict(
+    id: &str,
+    verdict: &str,
+    confidence: &str,
+    commit: Option<&str>,
+    paths: &[&str],
+    duplicate_of: Option<&str>,
+) -> Value {
+    json!({
+        "schema_version": 1,
+        "ticket": World::qualified(id),
+        "verdict": verdict,
+        "confidence": confidence,
+        "evidence": format!("{id}: read what {} rests on at main", if paths.is_empty() { "the ticket".to_owned() } else { paths.join(", ") }),
+        "deciding_commit": commit,
+        "evidence_paths": paths,
+        "duplicate_of": duplicate_of.map(World::qualified),
+        "root_cause": duplicate_of.map(|_| "the layout's save reads the window size twice"),
+        "seam_repository": null,
+    })
+}
+
+/// A `keep` verdict on `id`, resting on `paths`.
+pub fn keep(id: &str, paths: &[&str]) -> Value {
+    verdict(id, "keep", "high", None, paths, None)
+}
+
+/// The marker line a grooming comment of `batch` with `mark` ends in.
+pub fn grooming_marker(batch: &str, mark: &str) -> String {
+    format!(
+        "<!-- {NAMESPACE}:follow-up-comment run=\"{batch}\" kind=\"groom\" verdict=\"{mark}\" -->"
+    )
 }
 
 /// `now` less `seconds`, as RFC 3339 to the second.

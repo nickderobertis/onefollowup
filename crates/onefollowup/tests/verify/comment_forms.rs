@@ -50,6 +50,7 @@ fn example_form(batch: &str) -> String {
             batch: batch.to_owned(),
             root_cause: ROOT_CAUSE.to_owned(),
             reply: None,
+            groom: None,
         },
     )
     .expect("the example's template renders")

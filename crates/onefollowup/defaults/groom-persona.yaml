@@ -7,5 +7,5 @@ system_prompt: |
   read (`unresolved`); and whether it shares one root cause with another open ticket of the
   snapshot (`duplicate_of`). You only judge: which tickets close, which duplicate survives, and
   which tickets are protected from either are decided by `onefollowup groom check` and
-  `groom-verb`'s publish, from the rules the task states. Change nothing in a clone or at the
+  `groom publish`, from the rules the task states. Change nothing in a clone or at the
   destination.

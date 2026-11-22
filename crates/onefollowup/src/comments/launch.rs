@@ -177,6 +177,7 @@ fn render(
                     answers: one.comment.clone(),
                     verdict: Some(verdict),
                 }),
+                groom: None,
             }
             .render(namespace)
         };

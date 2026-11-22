@@ -6,6 +6,7 @@
 
 pub mod check;
 pub mod prepare;
+pub mod publish;
 pub mod selection;
 pub mod workload;
 pub mod world;
@@ -28,10 +29,13 @@ macro_rules! groom_journeys {
             check::ties_fall_to_the_todo_and_oldest_tiers,
             selection::nothing_changed_selects_nothing,
             selection::each_change_alone_selects_exactly_its_ticket,
+            selection::after_a_published_pass_each_change_alone_selects_exactly_its_ticket,
             selection::full_selects_every_open_ticket,
             selection::overlap_comments_select_by_what_the_record_holds,
             selection::an_older_record_holds_the_comment_read_back,
             selection::a_record_this_does_not_read_selects_its_ticket,
+            publish::publish_closes_what_its_status_read_admits_and_leaves_the_rest,
+            publish::publish_refuses_a_batch_no_check_passed,
         );
     };
     (@each $runner:expr; $($module:ident :: $journey:ident),* $(,)?) => {

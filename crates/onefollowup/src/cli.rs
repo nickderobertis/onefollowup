@@ -151,6 +151,9 @@ pub enum GroomCommand {
     /// Hold every shard's verdicts to the rules and plan what publish sends; exit 2 while any
     /// problem stands.
     Check(api::GroomCheckArgs),
+    /// Send what the passing check planned, receipting every outcome; read back every ticket
+    /// changed and write the batch's report. Run again, it sends only what no receipt confirms.
+    Publish(api::GroomPublishArgs),
 }
 
 /// `onefollowup config …`.
@@ -234,6 +237,7 @@ pub fn dispatch(command: Command, config: &ConfigArgs) -> Result<String, Error> 
         }
         Command::Groom(GroomCommand::Prepare(args)) => handle(config, args, api::groom_prepare),
         Command::Groom(GroomCommand::Check(args)) => handle(config, args, api::groom_check),
+        Command::Groom(GroomCommand::Publish(args)) => handle(config, args, api::groom_publish),
         Command::Statuses(args) => handle(config, args, api::statuses),
         Command::Kinds(args) => handle(config, args, api::kinds),
         Command::Config(ConfigCommand::Show(args)) => handle(config, args, api::config_show),

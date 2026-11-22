@@ -746,6 +746,7 @@ fn verb(settings: &Settings, command: Command, stdin: &str) -> Result<String, Er
         }
         Command::Groom(GroomCommand::Prepare(args)) => call(settings, args, api::groom_prepare),
         Command::Groom(GroomCommand::Check(args)) => call(settings, args, api::groom_check),
+        Command::Groom(GroomCommand::Publish(args)) => call(settings, args, api::groom_publish),
         Command::Statuses(args) => call(settings, args, api::statuses),
         Command::Kinds(args) => call(settings, args, api::kinds),
         Command::Config(ConfigCommand::Show(args)) => call(settings, args, api::config_show),

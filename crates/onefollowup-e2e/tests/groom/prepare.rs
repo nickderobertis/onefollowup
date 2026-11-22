@@ -97,6 +97,19 @@ pub fn shards_carry_each_agents_task(runner: &dyn Runner) {
         [("list", 42), ("comments-since", 0), ("read", 42)],
         "three store operations: the open listing, the comment read and the selected tickets' read"
     );
+    // The governor read the local-md destination's quota — none, so nothing waited — and
+    // counted those reads apart from the three store operations above.
+    assert!(
+        printed["quota_reads"]
+            .as_u64()
+            .is_some_and(|reads| reads >= 1),
+        "{printed}"
+    );
+    assert_eq!(
+        printed["governor"],
+        serde_json::json!({"waits": []}),
+        "{printed}"
+    );
 
     let batch = printed["batch"].as_str().expect("a batch");
     assert!(batch.starts_with("groom-"), "{batch}");

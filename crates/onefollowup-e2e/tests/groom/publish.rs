@@ -116,6 +116,13 @@ pub fn publish_closes_what_its_status_read_admits_and_leaves_the_rest(runner: &d
     assert_eq!(published["batch"], batch.as_str());
     assert_eq!(published["mismatched"], json!([]), "{published:#}"); // The five closed tickets and the five recorded ones, the survivors among them.
     assert_eq!(published["confirmed"], 10, "{published:#}");
+    assert!(
+        published["quota_reads"]
+            .as_u64()
+            .is_some_and(|reads| reads >= 1),
+        "the governor read the destination's quota, apart from the store operations: {published:#}"
+    );
+    assert_eq!(published["governor"], json!({"waits": []}), "{published:#}");
 
     for (id, status, mark) in [
         ("b-fixed", "done", "fixed"),

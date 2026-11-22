@@ -1106,6 +1106,9 @@ pub struct GroomPrepared {
     /// Each store operation it made.
     #[serde(default, skip_serializing_if = "no_operations")]
     pub store_operations: Vec<StoreOperation>,
+    /// What the quota governor did, beside the store operations.
+    #[serde(flatten)]
+    pub governed: Governed,
 }
 
 /// Select a destination's open tickets to verify, fetch the repositories they name, and write
@@ -1183,6 +1186,9 @@ pub struct GroomPublished {
     /// Each store operation it made.
     #[serde(default, skip_serializing_if = "no_operations")]
     pub store_operations: Vec<StoreOperation>,
+    /// What the quota governor did, beside the store operations.
+    #[serde(flatten)]
+    pub governed: Governed,
 }
 
 /// Send what a grooming batch's passing check planned — its closes, duplicate closes and every

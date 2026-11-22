@@ -457,6 +457,7 @@ fn examples() -> BTreeMap<&'static str, Value> {
                         searches: None,
                     })
                     .collect(),
+                governed: Governed::default(),
             })),
         ),
         (
@@ -511,6 +512,7 @@ fn examples() -> BTreeMap<&'static str, Value> {
                         searches: None,
                     })
                     .collect(),
+                governed: Governed::default(),
             })),
         ),
         (

@@ -355,6 +355,7 @@ pub fn run(settings: &Settings, args: GroomPrepareArgs) -> Result<GroomPrepared,
             })
             .collect(),
         store_operations: store.operations(),
+        governed: crate::api::Governed::of(&store),
     })
 }
 

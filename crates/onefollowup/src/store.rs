@@ -841,12 +841,15 @@ impl Store {
     /// back to back, so the batch's whole estimated cost is admitted here and no governor wait
     /// falls between the status read and the closes it admitted.
     ///
-    /// It sends nothing and is no store operation. No governor is installed yet, so every batch
-    /// is admitted at once; the governor fills this in, and its refusal is its `Err`.
+    /// It sends nothing and is no store operation. This admission point does not wait yet: every
+    /// batch is admitted here at once, while every call and every request inside the batch is
+    /// still governed at the store's one chokepoint and its request gate. Waiting
+    /// here until the governor's estimate admits the status read and the batch's writes
+    /// together is `quota-governor-writes`' (manager ruling `a7`).
     ///
     /// # Errors
     ///
-    /// None yet: a governor that refuses the batch will answer its refusal.
+    /// None: the governor only ever waits.
     pub fn admit_batch(
         &self,
         source: &str,

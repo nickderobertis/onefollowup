@@ -225,24 +225,28 @@ and `settled` is `null`, since nothing was settled.
           "text": "layout save loses its size after a resize",
           "kind": "title",
           "hits": 0,
+          "retained": 0,
           "capped": false
         },
         {
           "text": "layout",
           "kind": "term",
           "hits": 31,
+          "retained": 21,
           "capped": true
         },
         {
           "text": "resize",
           "kind": "term",
           "hits": 2,
+          "retained": 2,
           "capped": false
         },
         {
           "text": "layout.rs",
           "kind": "file",
           "hits": 1,
+          "retained": 1,
           "capped": false
         }
       ],
@@ -607,7 +611,9 @@ and words frequent on a follow-up board), the repository's own name, a word with
 path — and one per file name it names, up to 2, its paths' first. Every follow-up ticket another
 batch filed that those queries found, at any status, open or closed, is a **candidate**, ranked by
 how many of the uncapped queries found it, then the capped, then by how few items those queries
-answered; a query answering more than 20 items is capped, so what only it found ranks last. The
+answered; a query answering more than 20 items is capped: it keeps only 21 of them, so its
+reads and candidates stay bounded however crowded the destination, and what only it found ranks
+last. The
 first 8 are rendered into the task under their draft or input and printed as
 `duplicate_searches`; these numbers are onefollowup's constants, not settings. `check` refuses
 an answer whose disposition requires a ticket while a rendered candidate of its input is neither

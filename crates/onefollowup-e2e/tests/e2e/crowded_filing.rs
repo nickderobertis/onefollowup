@@ -9,7 +9,7 @@
 //! batched store calls, recorded as `follow-up-batch-store-operations`' second workload.
 
 use onefollowup::formats::batch::Input;
-use onefollowup::verify::candidates::{self, BOUND, HIT_CAP, QueryKind};
+use onefollowup::verify::candidates::{self, BOUND, HIT_CAP, QueryKind, RETAINED};
 use serde_json::{Value, json};
 
 use crate::budget::BUDGET;
@@ -228,6 +228,7 @@ fn a_crowded_destination_still_renders_and_relates_every_duplicate_within_a_hand
     let mut fates = Vec::new();
     let mut recorded = Vec::new();
     let mut bounded = 0;
+    let mut retained_total = 0;
     for (((cluster, draft), placed), lacking) in clusters
         .iter()
         .zip(&drafts)
@@ -282,20 +283,48 @@ fn a_crowded_destination_still_renders_and_relates_every_duplicate_within_a_hand
                 cluster.later
             );
         }
-        // The capped query found more than reached the task: the rest of its candidates rank
-        // below the bound, under the ones sharing more of the draft's terms and file.
-        for query in &capped {
-            let only_it = rendered
-                .iter()
-                .filter(|one| shared(one) == 0 && capped_by(one) > 0)
-                .count();
-            let hits = usize::try_from(query["hits"].as_u64().unwrap_or_default()).unwrap_or(0);
-            assert!(
-                hits > HIT_CAP && only_it < hits,
-                "{}: {query} ranks its candidates last: {search}",
-                cluster.later
-            );
+        // A query the store answered past the cap keeps only `RETAINED` of its hits, and every
+        // other keeps all of its own: the draft's candidates are drawn from those kept alone,
+        // and what only a capped query found ranks below the bound's better-sharing candidates.
+        let count = |query: &Value, key: &str| {
+            usize::try_from(query[key].as_u64().unwrap_or_default()).unwrap_or(usize::MAX)
+        };
+        let mut kept = 0;
+        for query in search["queries"].as_array().into_iter().flatten() {
+            if query["capped"] == true {
+                assert!(
+                    count(query, "hits") > RETAINED && count(query, "retained") == RETAINED,
+                    "{}: {query} keeps {RETAINED} of the hits the store answered: {search}",
+                    cluster.later
+                );
+            } else {
+                assert_eq!(
+                    count(query, "retained"),
+                    count(query, "hits"),
+                    "{}: {query} keeps every hit under the cap",
+                    cluster.later
+                );
+            }
+            kept += count(query, "retained");
         }
+        let only_capped = rendered
+            .iter()
+            .filter(|one| shared(one) == 0 && capped_by(one) > 0)
+            .count();
+        let answered: usize = capped.iter().map(|query| count(query, "hits")).sum();
+        assert!(
+            only_capped < answered,
+            "{}: the capped queries' candidates rank last: {search}",
+            cluster.later
+        );
+        retained_total += kept;
+        let matching_now =
+            usize::try_from(search["matching"].as_u64().unwrap_or_default()).unwrap_or(usize::MAX);
+        assert!(
+            matching_now <= kept,
+            "{}: its {matching_now} candidates come from the {kept} hits kept: {search}",
+            cluster.later
+        );
         let matching = search["matching"].as_u64().unwrap_or_default();
         if usize::try_from(matching).unwrap_or_default() > BOUND {
             assert_eq!(rendered.len(), BOUND, "{search}");
@@ -336,6 +365,36 @@ fn a_crowded_destination_still_renders_and_relates_every_duplicate_within_a_hand
             },
         ));
     }
+    // The overflow stays out of the batch's reads: prepare's comments read reads only what
+    // the queries kept, fewer than the store answered its find with.
+    let prepared_ops: Vec<(String, u64)> = world
+        .destination_operations()
+        .into_iter()
+        .filter(|(phase, _, _, _)| phase == "prepare")
+        .map(|(_, op, _, items)| (op, items))
+        .collect();
+    let items_of = |op: &str| {
+        prepared_ops
+            .iter()
+            .find(|(one, _)| one == op)
+            .map(|(_, items)| *items)
+            .unwrap_or_else(|| panic!("prepare made a {op}: {prepared_ops:?}"))
+    };
+    let (answered, read) = (items_of("find"), items_of("read"));
+    let fresh_kept: u64 = fresh_drafts
+        .iter()
+        .flat_map(|draft| {
+            search_of(draft)["queries"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default()
+        })
+        .map(|query| query["retained"].as_u64().unwrap_or_default())
+        .sum();
+    assert!(
+        read < answered && read <= u64::try_from(retained_total).unwrap_or(u64::MAX) + fresh_kept,
+        "prepare read {read} items of the {answered} its find was answered with: {prepared_ops:?}"
+    );
     let find_searches: Vec<u64> = world
         .phases
         .iter()

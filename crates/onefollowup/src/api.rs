@@ -624,9 +624,11 @@ pub struct DuplicateQuery {
     pub text: String,
     /// Where the text came from: the input's `title`, one `term`, or one `file` name.
     pub kind: QueryKind,
-    /// How many items it found.
+    /// How many items the store answered it with.
     pub hits: usize,
-    /// Whether that is over the hit cap, so its candidates rank last.
+    /// How many of them were kept: every one, or past the hit cap only the cap and one more.
+    pub retained: usize,
+    /// Whether `hits` is over the hit cap, so its candidates rank last.
     pub capped: bool,
 }
 

@@ -331,6 +331,8 @@ pub fn run(settings: &Settings, args: PrepareArgs) -> Result<Prepared, Error> {
     let receipted: Vec<&String> = bound.keys().collect();
     let mut searched_values = Vec::new();
     let mut reads: Vec<Read> = Vec::new();
+    // How many items the store answered each search with, before its limit.
+    let mut answered: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
     for destination in batch.destinations() {
         let mut searches: Vec<Search> = Vec::new();
         for (_, plan) in &plans {
@@ -431,6 +433,7 @@ pub fn run(settings: &Settings, args: PrepareArgs) -> Result<Prepared, Error> {
             continue;
         }
         for found in store.find(&destination, &searches)? {
+            *answered.entry(found.key.clone()).or_default() += found.total;
             for item in found.items {
                 match reads.iter_mut().find(|read| read.item.id == item.id) {
                     Some(read) => read.found_by.push(found.key.clone()),
@@ -570,11 +573,12 @@ pub fn run(settings: &Settings, args: PrepareArgs) -> Result<Prepared, Error> {
                         .queries
                         .iter()
                         .map(|query| {
-                            let found = hits.get(query.key.as_str()).copied().unwrap_or_default();
+                            let found = answered.get(&query.key).copied().unwrap_or_default();
                             DuplicateQuery {
                                 text: query.text.clone(),
                                 kind: query.kind,
                                 hits: found,
+                                retained: hits.get(query.key.as_str()).copied().unwrap_or_default(),
                                 capped: found > candidates::HIT_CAP,
                             }
                         })

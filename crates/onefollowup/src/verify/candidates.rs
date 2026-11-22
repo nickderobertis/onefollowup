@@ -7,7 +7,8 @@
 //! words of its title, then of its body's opening paragraph, less the shipped stoplist
 //! (`defaults/duplicate-stoplist.txt`): onefollowup holds no corpus to rank words by rarity,
 //! so a fixed list of common English and board-frequent words stands in, and a query that still
-//! answers more than [`HIT_CAP`] items ranks what it found last. Every follow-up ticket another
+//! answers more than [`HIT_CAP`] items keeps only [`RETAINED`] of them and ranks what it found
+//! last. Every follow-up ticket another
 //! batch filed that the queries found, open or closed, is a candidate, ranked by how many of the
 //! input's queries found it, then by how rare those queries' answers were; the first [`BOUND`]
 //! are rendered into the task, and `check` refuses
@@ -35,6 +36,10 @@ pub const FILES: usize = 2;
 /// The hits above which a query is capped: its candidates rank after every candidate an
 /// uncapped query found.
 pub const HIT_CAP: usize = 20;
+/// The hits a duplicate query keeps: the cap and one more, so a query the store answered past
+/// the cap is kept capped — and is seen to be, by `check` too, from the batch state's reads —
+/// while what it adds to the reads, the comments read and the candidates stays bounded.
+pub const RETAINED: usize = HIT_CAP + 1;
 /// The candidates rendered per input. A constant rather than a setting: nothing a host
 /// decides depends on it, and a setting would be one more contract to keep.
 pub const BOUND: usize = 8;
@@ -253,7 +258,8 @@ pub fn plan(input: &Input) -> Plan {
     }
 }
 
-/// `plan`'s queries as the store's searches, each in titles and contents, at every status.
+/// `plan`'s queries as the store's searches, each in titles and contents, at every status,
+/// each keeping at most [`RETAINED`] hits.
 #[must_use]
 pub fn searches(plan: &Plan) -> Vec<Search> {
     plan.queries
@@ -262,6 +268,7 @@ pub fn searches(plan: &Plan) -> Vec<Search> {
             key: query.key.clone(),
             text: Some(query.text.clone()),
             within: SearchIn::Both,
+            limit: Some(RETAINED),
             ..Search::default()
         })
         .collect()
@@ -444,7 +451,9 @@ mod tests {
         for stated in [
             format!("up to {TERMS} words of its title"),
             format!("one per file name it names, up to {FILES}"),
-            format!("a query answering more than {HIT_CAP} items is capped"),
+            format!(
+                "a query answering more than {HIT_CAP} items is capped: it keeps only {RETAINED} of them"
+            ),
             format!("The first {BOUND} are rendered into the task"),
         ] {
             assert!(readme.contains(&stated), "README.md states {stated:?}");

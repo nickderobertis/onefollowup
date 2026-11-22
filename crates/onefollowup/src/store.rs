@@ -275,6 +275,10 @@ pub struct Search {
     pub metadata: Vec<(String, String)>,
     /// The qualified id the task was copied from.
     pub origin: Option<String>,
+    /// The most items of its answer kept; `None` keeps every one. onetaskgraph's `task find`
+    /// takes no limit, so the store still answers every match and [`Found::total`] counts
+    /// them; what is kept past this point — reads, candidates — is bounded.
+    pub limit: Option<usize>,
 }
 
 /// What one search found.
@@ -282,8 +286,10 @@ pub struct Search {
 pub struct Found {
     /// The search's key.
     pub key: String,
-    /// Every task it matched.
+    /// The tasks it matched, in the store's order, at most its search's limit.
     pub items: Vec<StoreItem>,
+    /// How many tasks the store answered it with, before the limit.
+    pub total: usize,
     /// Why it stopped short, when it did.
     pub incomplete: Option<String>,
 }
@@ -772,21 +778,37 @@ impl Store {
             .runtime
             .block_on(self.engine.find_tasks(&name, &request, page));
         let found = answered.map_err(|error| Self::failed("a search", source, error))?;
-        let found: Vec<Found> = found
+        // The operation counts every distinct task the store answered, kept or not.
+        let mut seen: Vec<String> = found
             .answers
-            .into_iter()
-            .map(|answer| Found {
-                key: answer.key,
-                items: answer.items.into_iter().map(StoreItem::of).collect(),
-                incomplete: answer.reason,
-            })
-            .collect();
-        let mut seen: Vec<&str> = found
             .iter()
-            .flat_map(|one| one.items.iter().map(|item| item.id.as_str()))
+            .flat_map(|answer| answer.items.iter().map(|item| item.id.to_string()))
             .collect();
         seen.sort_unstable();
         seen.dedup();
+        let found: Vec<Found> = found
+            .answers
+            .into_iter()
+            .map(|answer| {
+                let total = answer.items.len();
+                let limit = searches
+                    .iter()
+                    .find(|search| search.key == answer.key)
+                    .and_then(|search| search.limit)
+                    .unwrap_or(usize::MAX);
+                Found {
+                    key: answer.key,
+                    items: answer
+                        .items
+                        .into_iter()
+                        .take(limit)
+                        .map(StoreItem::of)
+                        .collect(),
+                    total,
+                    incomplete: answer.reason,
+                }
+            })
+            .collect();
         self.count("find", source, seen.len());
         if let Some(last) = self.log.borrow_mut().last_mut() {
             last.searches = Some(searches.len());

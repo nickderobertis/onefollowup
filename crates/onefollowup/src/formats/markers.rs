@@ -33,16 +33,52 @@ fn attribute(value: &str, what: &str) -> Result<(), FormatError> {
     }
 }
 
-/// The marker closing a batch's evidence comment or reply.
+/// The marker closing a batch's evidence comment or reply, or a grooming batch's comment.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommentMarker {
     /// The batch that wrote the comment.
     pub batch: String,
-    /// The root cause it is for.
+    /// The root cause it is for; empty on a grooming comment, whose marker names none.
     pub root_cause: String,
     /// For a reply: the comment it answers, and its verdict (absent on a reply written
     /// before verdicts were recorded).
     pub reply: Option<ReplyTo>,
+    /// For a grooming comment (`kind="groom"`): what it says of its ticket. Such a comment is
+    /// maintenance, never a person's to answer.
+    pub groom: Option<GroomMark>,
+}
+
+/// What a grooming comment says of the ticket it is on, as its marker's `verdict` spells it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum GroomMark {
+    /// The ticket was closed as fixed on `main`.
+    Fixed,
+    /// The ticket was closed as no longer applying to `main`.
+    Obsolete,
+    /// The ticket was closed as a duplicate of its cluster's survivor.
+    Duplicate,
+    /// The ticket survives its cluster, the duplicates closed into it named.
+    Survivor,
+}
+
+impl GroomMark {
+    /// The mark as the marker spells it.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Fixed => "fixed",
+            Self::Obsolete => "obsolete",
+            Self::Duplicate => "duplicate",
+            Self::Survivor => "survivor",
+        }
+    }
+
+    fn of(word: &str) -> Option<Self> {
+        [Self::Fixed, Self::Obsolete, Self::Duplicate, Self::Survivor]
+            .into_iter()
+            .find(|mark| mark.as_str() == word)
+    }
 }
 
 /// What a reply answers.
@@ -58,6 +94,13 @@ impl CommentMarker {
     /// The marker line.
     #[must_use]
     pub fn render(&self, namespace: &str) -> String {
+        if let Some(mark) = self.groom {
+            return format!(
+                "<!-- {namespace}:follow-up-comment run=\"{}\" kind=\"groom\" verdict=\"{}\" -->",
+                self.batch,
+                mark.as_str()
+            );
+        }
         let mut line = format!(
             "<!-- {namespace}:follow-up-comment run=\"{}\" root_cause=\"{}\"",
             self.batch, self.root_cause
@@ -78,6 +121,27 @@ impl CommentMarker {
     ///
     /// [`FormatError::Malformed`] for a line that is not a batch's comment marker.
     pub fn parse(line: &str, namespace: &str) -> Result<Self, FormatError> {
+        let groom = Regex::new(&format!(
+            r#"^<!-- {}:follow-up-comment run="([^"\s]+)" kind="groom" verdict="([^"\s]*)" -->$"#,
+            regex::escape(namespace)
+        ))
+        .map_err(|error| malformed(error.to_string()))?;
+        if let Some(captures) = groom.captures(line) {
+            let word = captures.get(2).map_or("", |one| one.as_str());
+            let mark = GroomMark::of(word).ok_or_else(|| {
+                malformed(format!(
+                    "`{word}` is not a grooming comment's verdict: fixed, obsolete, duplicate or survivor"
+                ))
+            })?;
+            return Ok(Self {
+                batch: captures
+                    .get(1)
+                    .map_or_else(String::new, |one| one.as_str().to_owned()),
+                root_cause: String::new(),
+                reply: None,
+                groom: Some(mark),
+            });
+        }
         let pattern = Regex::new(&format!(
             r#"^<!-- {}:follow-up-comment run="([^"\s]+)" root_cause="([^"\s]+)"(?: kind="([^"\s]*)")?(?: answers="([^"]*)")?(?: verdict="([^"]*)")? -->$"#,
             regex::escape(namespace)
@@ -109,6 +173,7 @@ impl CommentMarker {
             batch: text(1).unwrap_or_default(),
             root_cause: text(2).unwrap_or_default(),
             reply,
+            groom: None,
         })
     }
 }

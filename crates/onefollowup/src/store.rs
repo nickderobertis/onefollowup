@@ -26,15 +26,15 @@ use std::sync::{Arc, OnceLock, Weak};
 use onetaskgraph_core::config::{self, Layer, SourceVisibility};
 use onetaskgraph_core::{
     BATCH_SCHEMA_VERSION, Body, CommentBatch, CommentBatchItem, CommentsSinceRequest, CopyAction,
-    CopyConditions, CopyItems, CopyRequest, CopyScope, Engine, EngineError, Environment, FindIn,
-    FindQuery, FindRequest, GlobalId, LinkBatch, LinkItem, OtherEnd, ParentBatch, ParentEdge,
-    ProjectCreate, Qualified, RELATIONS_SCHEMA_VERSION, SourceState, StatusPolicy, TaskCreate,
-    UpdateBatch, UpdateBatchItem,
+    CopyConditions, CopyItems, CopyRequest, CopyScope, Engine, EngineError, Environment, Filters,
+    FindIn, FindQuery, FindRequest, GlobalId, LinkBatch, LinkItem, OtherEnd, Paging, ParentBatch,
+    ParentEdge, ProjectCreate, ProjectSelector, Qualified, RELATIONS_SCHEMA_VERSION, SourceState,
+    StatusPolicy, TaskCreate, TaskRequest, UpdateBatch, UpdateBatchItem,
 };
 use onetaskgraph_plugin_api::{
-    AuthorKind, Classification, GatedRequest, LinkDirection, Location, MetadataKey, MetadataMatch,
-    NativeId, Priority, QuotaReading, Repository, RequestGate, SourceError, SourceName, Status,
-    StatusCategory, Task, TaskUpdate,
+    AuthorKind, Classification, CommentBody, GatedRequest, LinkDirection, Location, MetadataKey,
+    MetadataMatch, NativeId, Priority, QuotaReading, Repository, RequestGate, SourceError,
+    SourceName, Status, StatusCategory, Task, TaskLink, TaskUpdate,
 };
 use serde::Serialize;
 use serde_json::Value;
@@ -63,6 +63,10 @@ pub const STORE_DOCUMENT: &str = "onetaskgraph.yaml";
 
 /// How many tasks one page of a search asks for.
 const PAGE_SIZE: u32 = 100;
+
+/// The type of the link onetaskgraph records from a task closed as a duplicate to its
+/// survivor, on both of them.
+pub const DUPLICATE_LINK: &str = "duplicate";
 
 /// Whether `name` is a store status category a status role may map to: one onetaskgraph's
 /// status vocabulary names, other than the `unknown` it reports for a status it cannot place.
@@ -160,9 +164,9 @@ pub struct Source {
 /// many items it read or wrote.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, serde::Deserialize)]
 pub struct StoreOperation {
-    /// The call: `find`, `read`, `copy`, `comment-add-many`, `update-many`, `create-task`,
-    /// `update-task`, `create-project`, `relations`, `parent-set-many`, `link-add-many` or
-    /// `comments-since`.
+    /// The call: `list`, `find`, `read`, `copy`, `comment-add-many`, `update-many`, `create-task`,
+    /// `update-task`, `create-project`, `relations`, `parent-set-many`, `link-add-many`,
+    /// `comments-since` or `comment-edit`.
     pub op: String,
     /// The source it reached; for a call over several, their names joined by `,`.
     pub source: String,
@@ -209,6 +213,13 @@ pub struct StoreItem {
     pub project: Option<String>,
     /// The file it is read from, for a source that says.
     pub path: Option<PathBuf>,
+    /// Its repositories, as normalized origins (`host/owner/name`). Not part of any record a
+    /// verb writes, so a record holding a store item reads and writes as before.
+    #[serde(skip)]
+    pub repositories: Vec<String>,
+    /// When its source says it was created, RFC 3339. Not part of any record, as above.
+    #[serde(skip)]
+    pub created_at: Option<String>,
 }
 
 impl StoreItem {
@@ -232,7 +243,29 @@ impl StoreItem {
                 Some(Location::Path(path)) => Some(PathBuf::from(path)),
                 _ => None,
             },
+            repositories: task
+                .repositories
+                .iter()
+                .map(|repository| repository.as_str().to_owned())
+                .collect(),
+            created_at: task
+                .created_at
+                .map(|at| at.to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true)),
         }
+    }
+}
+
+impl StoreItem {
+    /// The survivor this task's metadata links it to as a duplicate, qualified: what a
+    /// duplicate close records. `None` when it holds no such link, or holds links that are not
+    /// onetaskgraph's list of them.
+    #[must_use]
+    pub fn duplicate_of(&self) -> Option<String> {
+        TaskLink::held(&self.metadata)
+            .ok()?
+            .into_iter()
+            .find(|link| link.link_type == DUPLICATE_LINK && link.direction == LinkDirection::Out)
+            .map(|link| link.other)
     }
 }
 
@@ -287,6 +320,8 @@ pub struct Search {
     pub metadata: Vec<(String, String)>,
     /// The qualified id the task was copied from.
     pub origin: Option<String>,
+    /// The status categories kept; empty keeps every one.
+    pub statuses: Vec<String>,
     /// The most items of its answer kept; `None` keeps every one. onetaskgraph's `task find`
     /// takes no limit, so the store still answers every match and [`Found::total`] counts
     /// them; what is kept past this point — reads, candidates — is bounded.
@@ -444,6 +479,9 @@ pub struct HeldUpdate {
     pub assignee: Option<String>,
     /// Write only while it is assigned to exactly these people, `[]` while unassigned.
     pub when_assignees: Option<Vec<String>>,
+    /// Close it as a duplicate of this task, qualified, its survivor: the store writes it
+    /// `cancelled` and records a [`DUPLICATE_LINK`] link from it to the survivor.
+    pub duplicate_of: Option<String>,
 }
 
 /// One task's relations as its source holds them.
@@ -796,6 +834,30 @@ impl Store {
         self.settings.contains_key(name)
     }
 
+    /// Where the quota governor admits a grooming publish's batch before it is sent: `reads`
+    /// tasks of `source` read for their status, then `updates` tasks updated in one
+    /// `update-many` and `comments` comments added in one `comment add-many`. `groom publish`
+    /// calls it once, immediately before its status read, and sends that read and both writes
+    /// back to back, so the batch's whole estimated cost is admitted here and no governor wait
+    /// falls between the status read and the closes it admitted.
+    ///
+    /// It sends nothing and is no store operation. No governor is installed yet, so every batch
+    /// is admitted at once; the governor fills this in, and its refusal is its `Err`.
+    ///
+    /// # Errors
+    ///
+    /// None yet: a governor that refuses the batch will answer its refusal.
+    pub fn admit_batch(
+        &self,
+        source: &str,
+        reads: usize,
+        updates: usize,
+        comments: usize,
+    ) -> Result<(), StoreError> {
+        let _ = (source, reads, updates, comments);
+        Ok(())
+    }
+
     /// Every operation made so far, in order.
     #[must_use]
     pub fn operations(&self) -> Vec<StoreOperation> {
@@ -842,7 +904,17 @@ impl Store {
                         },
                         metadata: search.metadata.iter().cloned().collect(),
                         origin: search.origin.as_deref().map(global).transpose()?,
-                        status: Vec::new(),
+                        status: search
+                            .statuses
+                            .iter()
+                            .map(|word| {
+                                category(word).ok_or_else(|| {
+                                    StoreError::Invalid(format!(
+                                        "`{word}` is not a status category"
+                                    ))
+                                })
+                            })
+                            .collect::<Result<_, _>>()?,
                     })
                 })
                 .collect::<Result<Vec<_>, StoreError>>()?,
@@ -890,6 +962,43 @@ impl Store {
             last.searches = Some(searches.len());
         }
         Ok(found)
+    }
+
+    /// Every task of `source` at one of the status categories `statuses`, bodies included, every
+    /// page of it, in one listing.
+    ///
+    /// # Errors
+    ///
+    /// A value the store does not take, or its refusal of the listing.
+    pub fn list(&self, source: &str, statuses: &[String]) -> Result<Vec<StoreItem>, StoreError> {
+        let request = TaskRequest {
+            sources: vec![source_name(source)?],
+            filters: Filters {
+                statuses: statuses
+                    .iter()
+                    .map(|word| status_category(word))
+                    .collect::<Result<_, _>>()?,
+                ..Filters::default()
+            },
+            project: ProjectSelector::Any,
+            priorities: Vec::new(),
+            commented_since: None,
+            metadata: Vec::new(),
+            origin: None,
+            include_members: false,
+            paging: Paging {
+                limit: NonZeroU32::new(PAGE_SIZE).unwrap_or(NonZeroU32::MIN),
+                token: None,
+            },
+        };
+        let answered = self.runtime.block_on(self.engine.tasks_all(&request));
+        let listed = answered.map_err(|error| Self::failed("a task listing", source, error))?;
+        if let Some(failure) = listed.errors.into_iter().next() {
+            self.count("list", source, 0);
+            return Err(Self::failed("a task listing", source, failure.error));
+        }
+        self.count("list", source, listed.items.len());
+        Ok(listed.items.into_iter().map(StoreItem::of).collect())
     }
 
     /// Every task of `ids`, all of one source, each with its comments when `comments` is set,
@@ -1026,6 +1135,41 @@ impl Store {
                     body: comment.body,
                 })
                 .collect(),
+        })
+    }
+
+    /// Replace the body of the comment `comment` on the task `item`, answering with the comment
+    /// as its source now holds it.
+    ///
+    /// # Errors
+    ///
+    /// A value the store does not take, or its refusal of the edit.
+    pub fn edit_comment(
+        &self,
+        item: &str,
+        comment: &str,
+        body: &str,
+    ) -> Result<StoreComment, StoreError> {
+        let task = global(item)?;
+        let source = task.source.to_string();
+        let body = CommentBody::new(body)
+            .map_err(|error| StoreError::Invalid(format!("a comment body: {error}")))?;
+        let edited = self.runtime.block_on(self.engine.edit_comment(
+            &task,
+            &NativeId(comment.to_owned()),
+            &body,
+        ));
+        self.count("comment-edit", &source, 1);
+        let edited = edited.map_err(|error| Self::failed("a comment edit", &source, error))?;
+        Ok(StoreComment {
+            id: edited.id.to_string(),
+            author: edited.author,
+            url: edited.url,
+            last_changed: edited
+                .updated_at
+                .or(edited.created_at)
+                .map(|at| at.to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true)),
+            body: edited.body,
         })
     }
 
@@ -1343,6 +1487,7 @@ impl Store {
                         metadata: update.metadata.clone(),
                         assignee: update.assignee.clone().map(Some),
                         when_assignees: update.when_assignees.clone(),
+                        duplicate_of: update.duplicate_of.clone(),
                         ..UpdateBatchItem::default()
                     })
                 })

@@ -7,6 +7,7 @@
 //! - [`governor`] — the quota governor the store paces every destination call by.
 //! - [`comments`] — the comment-answering pass the `comments` verbs run.
 //! - [`verify`] — the verify loop the batch verbs run: tickets, templates, routes, commands.
+//! - [`groom`] — the grooming pass `groom prepare` and `groom check` run.
 //! - [`work`] — where a batch's working files live.
 //! - [`cli`] — the command line, a thin layer over [`api`].
 //!
@@ -19,6 +20,7 @@ pub mod config;
 pub mod error;
 pub mod formats;
 pub mod governor;
+pub mod groom;
 pub mod store;
 pub mod verify;
 pub mod work;

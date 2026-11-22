@@ -1140,6 +1140,7 @@ fn updates(
             metadata: BTreeMap::from([(batch.record_key(), ticket::record_value(&record))]),
             assignee: None,
             when_assignees: None,
+            duplicate_of: None,
         };
         let summary = ReEstimateOutcome {
             estimate_line: estimated.line.clone().unwrap_or_default(),
@@ -1330,6 +1331,7 @@ fn assign_entry(batch: &Batch<'_>, assignment: Assignment) -> Entry {
             metadata: BTreeMap::from([(batch.record_key(), ticket::record_value(&record))]),
             assignee: Some(assignment.person.clone()),
             when_assignees: Some(assignment.recorded.clone().into_iter().collect()),
+            duplicate_of: None,
         },
         Box::new(assignment),
     )

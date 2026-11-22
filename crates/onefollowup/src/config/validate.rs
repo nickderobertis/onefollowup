@@ -122,6 +122,24 @@ pub fn validate(config: &Config) -> Result<(), Refusal> {
         );
     }
     governor(&config.governor)?;
+    if config.groom.shard_size == 0 {
+        return refuse(
+            "groom.shard_size".to_owned(),
+            "is 0: a shard holds at least one ticket".to_owned(),
+        );
+    }
+    if config.groom.max_age_days == 0 {
+        return refuse(
+            "groom.max_age_days".to_owned(),
+            "is 0: a record stays current for at least one day".to_owned(),
+        );
+    }
+    if config.groom.clones.trim().is_empty() {
+        return refuse(
+            "groom.clones".to_owned(),
+            "is empty: name the directory each repository's clone is kept in".to_owned(),
+        );
+    }
     for (name, field) in &config.fields {
         if field.description.trim().is_empty() {
             return refuse(

@@ -1288,6 +1288,7 @@ fn evidence_comment(
         batch: batch.batch.clone(),
         root_cause: root_cause.to_owned(),
         reply: None,
+        groom: None,
     };
     render::comment(
         &Common {

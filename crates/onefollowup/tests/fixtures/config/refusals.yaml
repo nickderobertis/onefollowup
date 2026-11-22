@@ -234,6 +234,30 @@ cases:
     key: 'governor.pace'
     message: 'unknown field `pace`'
   - document: |
+      groom: {shard_size: 0}
+    key: 'groom.shard_size'
+    message: 'a shard holds at least one ticket'
+  - document: |
+      groom: {max_age_days: 0}
+    key: 'groom.max_age_days'
+    message: 'stays current for at least one day'
+  - document: |
+      groom: {clones: ' '}
+    key: 'groom.clones'
+    message: 'is empty'
+  - document: |
+      groom: {task_template: builtin:no-such-task.md.j2}
+    key: 'groom.task_template'
+    message: 'names no shipped template'
+  - document: |
+      groom: {persona: personas/absent.yaml}
+    key: 'groom.persona'
+    message: 'does not exist'
+  - document: |
+      groom: {comment_template: builtin:no-such-comment.md.j2}
+    key: 'groom.comment_template'
+    message: 'names no shipped template'
+  - document: |
       batch_id_pattern: '('
     key: 'batch_id_pattern'
     message: 'not a regular expression'

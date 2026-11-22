@@ -96,6 +96,9 @@ pub enum Command {
     /// The comment-answering pass.
     #[command(subcommand)]
     Comments(CommentsCommand),
+    /// Verify, deduplicate and close a destination's open tickets.
+    #[command(subcommand)]
+    Groom(GroomCommand),
     /// Read the destination's statuses against the configured status roles.
     Statuses(api::NoArgs),
     /// Print the effective kinds, relations, dispositions and routes.
@@ -139,6 +142,27 @@ pub enum CommentsCommand {
     Answer(api::CommentsAnswerArgs),
 }
 
+/// `onefollowup groom …`.
+#[derive(Debug, Subcommand)]
+pub enum GroomCommand {
+    /// List the open tickets, fetch their repositories, select the tickets to verify, and
+    /// write one task per shard.
+    Prepare(api::GroomPrepareArgs),
+    /// Hold every shard's verdicts to the rules and plan what publish sends; exit 2 while any
+    /// problem stands.
+    Check(api::GroomCheckArgs),
+    /// Send what the passing check planned, receipting every outcome; read back every ticket
+    /// changed and write the batch's report. Run again, it sends only what no receipt confirms.
+    ///
+    /// Prints `{"batch", "confirmed", "mismatched": [{"ticket", "expected", "found"}],
+    /// "report", "report_json", "store_operations"}`: how many tickets the read-back confirmed,
+    /// each way one differs from its receipts, and the batch's `report.md` and `report.json`,
+    /// which list every ticket left for a person. Exits 0 when everything landed and read back,
+    /// 1 while a write the destination refused or a mismatch stands (still printing its
+    /// document), and 2 for a batch no passing `groom check` planned.
+    Publish(api::GroomPublishArgs),
+}
+
 /// `onefollowup config …`.
 #[derive(Debug, Subcommand)]
 pub enum ConfigCommand {
@@ -162,10 +186,10 @@ pub fn main() -> ExitCode {
             ExitCode::from(EXIT_OK)
         }
         Err(error) => {
-            if let Some(answer) = error.answer() {
+            if let Some(document) = error.document() {
                 let mut out = std::io::stdout().lock();
                 // The exit code says the verb failed whether or not the document is written.
-                let _ignored = writeln!(out, "{}", print(answer)).and_then(|()| out.flush());
+                let _ignored = writeln!(out, "{document}").and_then(|()| out.flush());
             }
             match error {
                 Error::NotImplemented { .. } => eprintln!("onefollowup {error}"),
@@ -218,6 +242,9 @@ pub fn dispatch(command: Command, config: &ConfigArgs) -> Result<String, Error> 
         Command::Comments(CommentsCommand::Answer(args)) => {
             handle(config, args, api::comments_answer)
         }
+        Command::Groom(GroomCommand::Prepare(args)) => handle(config, args, api::groom_prepare),
+        Command::Groom(GroomCommand::Check(args)) => handle(config, args, api::groom_check),
+        Command::Groom(GroomCommand::Publish(args)) => handle(config, args, api::groom_publish),
         Command::Statuses(args) => handle(config, args, api::statuses),
         Command::Kinds(args) => handle(config, args, api::kinds),
         Command::Config(ConfigCommand::Show(args)) => handle(config, args, api::config_show),

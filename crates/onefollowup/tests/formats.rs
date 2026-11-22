@@ -14,8 +14,8 @@ use onefollowup::formats::draft::{DraftRecord, DraftsProjectRecord};
 use onefollowup::formats::existing_tickets::ExistingTickets;
 use onefollowup::formats::gathering::Gathering;
 use onefollowup::formats::markers::{
-    self, CommentMarker, FeedbackBoundary, FeedbackSnapshot, IssueLine, QuotedAnchor, ReplyTo,
-    evidence_opening, reply_opening,
+    self, CommentMarker, FeedbackBoundary, FeedbackSnapshot, GroomMark, IssueLine, QuotedAnchor,
+    ReplyTo, evidence_opening, reply_opening,
 };
 use onefollowup::formats::outbox::{Outbox, StagedWrite};
 use onefollowup::formats::pending::Pending;
@@ -309,6 +309,32 @@ fn comment_markers_round_trip() {
     }
     assert!(CommentMarker::parse(&fixture("comment-markers/evidence-marker.txt"), "acme").is_err());
 
+    // A grooming comment's marker names no root cause, and reads back as the grooming mark.
+    for mark in [
+        GroomMark::Fixed,
+        GroomMark::Obsolete,
+        GroomMark::Duplicate,
+        GroomMark::Survivor,
+    ] {
+        let line = format!(
+            "<!-- orchestrator:follow-up-comment run=\"groom-20261121T090000000Z\" kind=\"groom\" verdict=\"{}\" -->",
+            mark.as_str()
+        );
+        let marker = CommentMarker::parse(&line, NAMESPACE).expect("a grooming marker");
+        assert_eq!(marker.groom, Some(mark));
+        assert_eq!(marker.batch, "groom-20261121T090000000Z");
+        assert!(marker.reply.is_none() && marker.root_cause.is_empty());
+        assert_eq!(marker.render(NAMESPACE), line);
+    }
+    assert!(
+        CommentMarker::parse(
+            "<!-- orchestrator:follow-up-comment run=\"groom-1\" kind=\"groom\" verdict=\"closed\" -->",
+            NAMESPACE
+        )
+        .is_err(),
+        "a grooming verdict this does not know"
+    );
+
     let batch = "nightly-2026-11-01";
     assert_eq!(
         evidence_opening(batch),
@@ -336,7 +362,8 @@ fn comment_markers_round_trip() {
             &CommentMarker {
                 batch: batch.to_owned(),
                 root_cause: root_cause.to_owned(),
-                reply: None
+                reply: None,
+                groom: None,
             },
         ),
         evidence_text
@@ -370,7 +397,8 @@ fn comment_markers_round_trip() {
                 &CommentMarker {
                     batch: batch.to_owned(),
                     root_cause: root_cause.to_owned(),
-                    reply: Some(to.clone())
+                    reply: Some(to.clone()),
+                    groom: None,
                 },
             ),
             fixture(&format!("comment-markers/{path}")),
@@ -395,7 +423,8 @@ fn comment_markers_round_trip() {
         CommentMarker {
             batch: batch.to_owned(),
             root_cause: root_cause.to_owned(),
-            reply: None
+            reply: None,
+            groom: None,
         }
         .render(NAMESPACE)
     );
@@ -702,6 +731,7 @@ fn an_outbox_written_by_the_library_round_trips() {
         batch: batch.to_owned(),
         root_cause: "export-dialog-drops-unicode".to_owned(),
         reply: None,
+        groom: None,
     };
     let body = shipped(
         "comment-evidence.md.j2",

@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use clap::Parser as _;
-use onefollowup::cli::{Cli, Command, CommentsCommand, ConfigCommand, TicketCommand};
+use onefollowup::cli::{Cli, Command, CommentsCommand, ConfigCommand, GroomCommand, TicketCommand};
 use onefollowup::config::{self, Inputs, Settings};
 use onefollowup::{Error, api};
 use serde::Serialize;
@@ -214,10 +214,7 @@ impl World {
             },
             Err(error) => Ran {
                 code: error.exit_code().into(),
-                stdout: error
-                    .answer()
-                    .map(onefollowup::cli::print)
-                    .unwrap_or_default(),
+                stdout: error.document().unwrap_or_default(),
                 stderr: format!("onefollowup: {error}"),
             },
         }
@@ -747,6 +744,9 @@ fn verb(settings: &Settings, command: Command, stdin: &str) -> Result<String, Er
         Command::Comments(CommentsCommand::Answer(args)) => {
             call(settings, args, api::comments_answer)
         }
+        Command::Groom(GroomCommand::Prepare(args)) => call(settings, args, api::groom_prepare),
+        Command::Groom(GroomCommand::Check(args)) => call(settings, args, api::groom_check),
+        Command::Groom(GroomCommand::Publish(args)) => call(settings, args, api::groom_publish),
         Command::Statuses(args) => call(settings, args, api::statuses),
         Command::Kinds(args) => call(settings, args, api::kinds),
         Command::Config(ConfigCommand::Show(args)) => call(settings, args, api::config_show),

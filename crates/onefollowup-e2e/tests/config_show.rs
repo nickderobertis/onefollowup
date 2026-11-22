@@ -462,6 +462,13 @@ fn case(key: &str) -> Option<Case> {
             "/governor/floor_percent",
             [json!(30.0), json!(40.0), json!(50.0)],
         ),
+        "groom" => simple(
+            "groom: {shard_size: 10}",
+            ("ONEFOLLOWUP_GROOM__SHARD_SIZE", "20"),
+            "groom.shard_size=30",
+            "/groom/shard_size",
+            [json!(10), json!(20), json!(30)],
+        ),
         _ => return None,
     })
 }

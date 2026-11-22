@@ -15,6 +15,7 @@ pub mod dispositions;
 pub mod draft;
 pub mod existing_tickets;
 pub mod gathering;
+pub mod groom;
 pub mod markers;
 pub mod outbox;
 pub mod pending;

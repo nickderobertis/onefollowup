@@ -275,3 +275,17 @@ governor:
     core: 60
   # A reading is taken again once it is this old.
   sample_seconds: 30
+# `groom prepare` and `groom check` (README.md, "Grooming"): how many tickets one shard's task
+# holds; how far before a record's `verified_at` a comment is still read as possibly unseen
+# (well past GitHub's roughly 30-second search-index lag); how old a record may grow before its
+# ticket is verified again; where each repository's blob-less clone is kept, beside the store
+# when relative; the shard task's template and persona; and the visible part of every comment
+# `groom publish` posts, before the marker line onefollowup appends.
+groom:
+  shard_size: 50
+  comment_overlap_seconds: 3600
+  max_age_days: 30
+  clones: .onefollowup/groom/clones
+  task_template: builtin:groom-task.md.j2
+  persona: builtin:groom-persona.yaml
+  comment_template: builtin:groom-comment.md.j2

@@ -745,6 +745,7 @@ fn plan(
             metadata: BTreeMap::from([(pass.record_key(), record_value)]),
             assignee: None,
             when_assignees: None,
+            duplicate_of: None,
         },
         intended,
         snapshot: snapshotted.directory.clone(),
@@ -1021,6 +1022,7 @@ fn recover(settling: &Settling<'_, '_>, mut entry: PendingEntry) -> Recovered {
             .unwrap_or_default(),
         assignee: None,
         when_assignees: None,
+        duplicate_of: None,
     };
     Recovered::Retry(Box::new(Planned {
         batch: entry.batch.clone(),

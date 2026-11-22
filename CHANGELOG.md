@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0](https://github.com/nickderobertis/onefollowup/compare/v0.10.0...v0.11.0) - 2026-11-22
+
+### Added
+
+- groom a destination's open tickets with a verify, check and publish verb ([#58](https://github.com/nickderobertis/onefollowup/pull/58))
+
+## [0.10.0](https://github.com/nickderobertis/onefollowup/compare/v0.9.3...v0.10.0) - 2026-11-22
+
+### Added
+
+- prepare and check a grooming batch of a destination's open tickets ([#56](https://github.com/nickderobertis/onefollowup/pull/56))
+
 ## [0.9.3](https://github.com/nickderobertis/onefollowup/compare/v0.9.2...v0.9.3) - 2026-11-22
 
 ### Fixed

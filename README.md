@@ -46,6 +46,9 @@ library is the `onefollowup` crate.
 | `comments check --feedback <F>` | Hold a feedback dispatch's response account to its snapshot, and its batch's tickets to changing only quoted issues' tickets; `sound` says whether it breaks no rule. |
 | `comments settle --snapshot <S> [--launched <BATCH>=<FEEDBACK>]...` | Verify every reply in one batched read, send every ticket change in one `update-many`, record what did not certainly land in `pending.json`, and move the watermark when it may. Without `--launched`, every batch the snapshot launched. |
 | `comments answer [--dry-run]` | The comment pass in one verb: gather exactly as `comments gather`, plan the launches exactly as `comments launches --snapshot` that snapshot, run `comments.launch_command` once per launch in the launch list's order, and — only when every batch's command exited 0, an empty launch list included — settle exactly as `comments settle --snapshot` that snapshot. A batch whose command exits non-zero does not stop the others; then nothing is settled, so the watermark holds, and the verb exits 1, still printing its document — every batch's exit status, `failed` naming every failed batch, `settled` `null` — and naming the failed batches on stderr; a re-run gathers afresh. Refused (exit 2) without `comments.launch_command`, before anything is gathered. `--dry-run` prints exactly what `comments gather --dry-run` prints and launches and settles nothing. |
+| `groom prepare [--full] [--dry-run] [--shard-size <N>]` | List the destination's open tickets with their bodies, read every comment made or edited on them since the window start in one `comments_since` read, fetch a blob-less clone of each repository they name, select the tickets to verify (Grooming, below), read the selected tickets' comments in one batched read, and write the batch under `.onefollowup/groom/<batch>/`: a snapshot of every open ticket and one task per shard of `--shard-size` (`groom.shard_size`) tickets. Three store operations. `--full` selects every open ticket; `--dry-run` answers the same counts, makes no third read and writes nothing: the clones its counts are computed from are made in temporary storage (`TMPDIR`) and removed, so the configured clones and batches are left as they were. Nothing selected answers `"shards": []` and writes no batch. |
+| `groom check --batch <ID>` | Hold every shard's `verdicts.jsonl` to the verdict rules, plan the closes, duplicate folds and survivors (Grooming, below), and hold the batch's `plan.json`, as well as the plan computed, to the protection rules. With no problem standing it writes the plan to `plan.json`, what `groom publish` sends; while any stands it exits 2, still printing its document, and writes nothing. It makes no store operation. |
+| `groom publish --batch <B>` | Send what the batch's passing check planned, in three store operations once the batch is admitted: one batched status read of the tickets to close or fold, one `update-many` carrying each close that read still admits, each duplicate close and every verified ticket's `groom` record, and one `comment add-many` of the evidence comments on the tickets shown closed, then each survivor's consolidation comment (Grooming, below). Every outcome is receipted in `receipts.json`; run again, it sends only what no receipt confirms, and on a fully receipted batch nothing. Then one batched read-back of every ticket changed, `report.md` and `report.json` in the batch directory, and every other working file retired but `plan.json` and `receipts.json`. Exits 1, still printing its document, while a write the destination refused or a read-back mismatch stands. |
 | `statuses` | Read the destination's statuses against the configured status roles. |
 | `kinds` | Print the effective kinds, relations, dispositions and routes, as the verifying agent reads them. |
 | `config show [--sources]` | Print the effective configuration as JSON; `--sources` names the layer each key came from. |
@@ -201,6 +204,157 @@ and `settled` is `null`, since nothing was settled.
   "batch": "nightly-2026-11-01",
   "draft": "drafts:nightly-2026-11-01/drafts/20261101T101500Z-layout-save-loses-resize",
   "path": ".follow-ups/tasks/nightly-2026-11-01/drafts/20261101T101500Z-layout-save-loses-resize.md"
+}
+```
+
+#### `groom check`
+
+```json
+{
+  "batch": "groom-20261121T090000000Z",
+  "problems": [
+    {
+      "ticket": "followups:item-7",
+      "rule": "low-confidence-close",
+      "detail": "groom-20261121T090000000Z-1 line 2: a `fixed` verdict closes the ticket, which `low` confidence never does: raise the evidence to `medium` or `high`, or answer `keep` or `unresolved`"
+    }
+  ],
+  "plan": {
+    "fixed": [],
+    "obsolete": [],
+    "duplicates": [
+      {
+        "ticket": "followups:item-9",
+        "status": "backlog",
+        "verdict": "keep",
+        "confidence": "high",
+        "evidence": "src/layout.rs reads the size once since the fix",
+        "deciding_commit": null,
+        "evidence_paths": [
+          "src/layout.rs"
+        ],
+        "repository": "github.com/example/widgets",
+        "commit": "89abcdef0123456789abcdef0123456789abcdef",
+        "duplicate_of": "followups:item-3",
+        "root_cause": "the layout's save reads the window size twice",
+        "left_for_person": null
+      }
+    ],
+    "survivors": [
+      {
+        "ticket": "followups:item-3",
+        "members": [
+          "followups:item-3",
+          "followups:item-9"
+        ],
+        "chosen_by": "claimed"
+      }
+    ],
+    "kept": [
+      {
+        "ticket": "followups:item-3",
+        "status": "in-progress",
+        "verdict": "fixed",
+        "confidence": "high",
+        "evidence": "src/layout.rs reads the size once since the fix",
+        "deciding_commit": "0123456789abcdef0123456789abcdef01234567",
+        "evidence_paths": [
+          "src/layout.rs"
+        ],
+        "repository": "github.com/example/widgets",
+        "commit": "89abcdef0123456789abcdef0123456789abcdef",
+        "duplicate_of": null,
+        "root_cause": null,
+        "left_for_person": "it is claimed (Queued or In Progress), which grooming never closes"
+      }
+    ],
+    "unresolved": []
+  }
+}
+```
+
+#### `groom publish`
+
+```json
+{
+  "batch": "groom-20261121T090000000Z",
+  "confirmed": 3,
+  "mismatched": [
+    {
+      "ticket": "followups:item-9",
+      "expected": "status category `cancelled`",
+      "found": "status category `backlog` (Backlog)"
+    }
+  ],
+  "report": "/work/.onefollowup/groom/groom-20261121T090000000Z/report.md",
+  "report_json": "/work/.onefollowup/groom/groom-20261121T090000000Z/report.json",
+  "store_operations": [
+    {
+      "op": "read",
+      "source": "followups",
+      "destination": true,
+      "items": 2
+    },
+    {
+      "op": "update-many",
+      "source": "followups",
+      "destination": true,
+      "items": 4
+    },
+    {
+      "op": "comment-add-many",
+      "source": "followups",
+      "destination": true,
+      "items": 3
+    },
+    {
+      "op": "read",
+      "source": "followups",
+      "destination": true,
+      "items": 4
+    }
+  ]
+}
+```
+
+#### `groom prepare`
+
+```json
+{
+  "schema_version": 1,
+  "batch": "groom-20261121T090000000Z",
+  "destination": "followups",
+  "selected": 2,
+  "unchanged": 47,
+  "protected": 1,
+  "shards": [
+    {
+      "shard": "groom-20261121T090000000Z-1",
+      "task": "/work/.onefollowup/groom/groom-20261121T090000000Z/groom-20261121T090000000Z-1/task.md",
+      "verdicts": "/work/.onefollowup/groom/groom-20261121T090000000Z/groom-20261121T090000000Z-1/verdicts.jsonl",
+      "tickets": 2
+    }
+  ],
+  "store_operations": [
+    {
+      "op": "list",
+      "source": "followups",
+      "destination": true,
+      "items": 49
+    },
+    {
+      "op": "comments-since",
+      "source": "followups",
+      "destination": true,
+      "items": 3
+    },
+    {
+      "op": "read",
+      "source": "followups",
+      "destination": true,
+      "items": 2
+    }
+  ]
 }
 ```
 
@@ -551,6 +705,7 @@ key, the layer its value came from.
 | `routes` | `[]` | Ordered routes (below). |
 | `hooks` | none | Commands run at named moments, and the `owner` a context file names (below). |
 | `snapshot` | `launchable_for: 24h` | How long a dry run's comment snapshot stays launchable. |
+| `groom` | `shard_size: 50`, `comment_overlap_seconds: 3600`, `max_age_days: 30`, `clones: .onefollowup/groom/clones`, `task_template: builtin:groom-task.md.j2`, `persona: builtin:groom-persona.yaml`, `comment_template: builtin:groom-comment.md.j2` | The grooming pass (Grooming, below): how many tickets one shard's task holds (at least 1); how far before a record's `verified_at` a comment is still read as possibly unseen, well past GitHub's roughly 30-second search-index lag; how many days a record stays current (at least 1); where each repository's blob-less clone is kept, a relative path read against the store's directory; the shard task's template and its persona; and the visible part of every comment `groom publish` posts, before the marker line onefollowup appends; each template a path or `builtin:`. |
 | `comments` | none | `launch_command`: the argv `comments answer` runs once per launched batch, in onefollowup's working directory and environment, with `{"schema_version": 1, "batch", "feedback", "snapshot"}` on its stdin and, wherever an argument holds one, `{batch}` replaced with the batch, `{feedback}` with the path of the feedback file `comments launches` rendered for it, and `{snapshot}` with the snapshot directory. Its stdout and stderr are not printed; its exit code decides whether the pass settles. Without it `comments answer` is refused. |
 | `governor` | `enabled: true`, `floor_percent: 20`, `reserve_factor: 1`, `peak_window_seconds: 300`, `burn_history_seconds: 86400`, `min_peak_per_minute: {graphql: 40, core: 60}`, `sample_seconds: 30` | How every destination call is paced against the quota its destination reports (The quota governor, below): the floor as a percentage of each window's limit, the factor on the reserve kept for others, the span others' peak burn is measured over and how long it is remembered, the least rate in points a minute others are ever assumed to spend each resource at (a resource not named, 0), and the longest a reading is used before it is taken again. `enabled: false` sends every call at once. |
 
@@ -1132,6 +1287,172 @@ gathers unscoped, launches that snapshot, runs `comments.launch_command` as each
 answering dispatch, and settles only when every one exited 0. A failed batch settles nothing
 and moves no watermark, so the next `comments answer` gathers its comments again.
 
+## Grooming
+
+`groom prepare` and `groom check` keep a destination's open tickets true, current and unique:
+prepare, then one verifying agent per shard, then check until it passes, then `groom publish`
+sends the plan. **The agent only judges**, by filling a verdict record per ticket:
+whether the ticket is fixed or obsolete on `main`, and whether it shares one root cause with
+another open ticket. Selection, checking that judgement's evidence, clustering, survivors and
+protection are code.
+
+**The batch**, `.onefollowup/groom/<batch>/` (`<batch>` is `groom-<UTC stamp>`), holds
+`batch.json` (what prepare listed, fetched and selected, each ticket's protection, digest and
+overlap comments, and `verified_at`), `snapshot.json` (every open ticket's id, title, status,
+URL, repositories and content, for duplicate detection), one `<batch>-<k>/task.md` per shard —
+`groom.task_template` rendered with its tickets and their comments, each repository's clone path
+and fetched `main` commit, the snapshot's path, the verdict schema and the rules below — and the
+`verdicts.jsonl` beside it the agent writes. A passing check writes `plan.json`; publish writes
+`receipts.json`, `report.md` and `report.json`, and retires every other file of the batch. A repository
+`host/owner/name` is cloned from `https://host/owner/name.git`; git's own
+`url.<base>.insteadOf` points that elsewhere.
+
+**Incremental selection.** A ticket is selected when it holds no `groom` record, or one of a
+schema this does not read; its digest differs from the one recorded; its repository's `main`
+moved since the recorded commit and the diff touches one of its `evidence_paths` (a path, or a
+directory holding a changed path) — or moved at all when it has none, or no longer holds that
+commit; its record is older than `groom.max_age_days`; `--full` is given; or a comment on it
+that carries no grooming marker (a line `<!-- <namespace>:follow-up-comment … kind="groom" …
+-->`, the line every comment `groom publish` posts ends in) is new activity against its own record:
+created or edited later than its `verified_at`, or inside the overlap (later than `verified_at`
+less `groom.comment_overlap_seconds`) with its id absent from the record's `overlap_comments` or
+held there with a different last-edited time. An older comment is compared by time, so is never
+new activity. A `protected` count is the selected tickets at a claimed status.
+
+**The comment watermark** is derived on every pass and never stored: the `comments_since` read
+starts at the earliest `verified_at` among the open tickets holding a record, less the overlap,
+floored at `now - groom.max_age_days - overlap`, since an older record selects its ticket anyway.
+So a ticket whose record did not move holds the read's start back until it does, and no comment
+activity on an open ticket is passed over unless a published record of that ticket was taken
+after it. `verified_at` is when prepare's comment read began, never the publish time, so a
+comment made or edited while the batch is verified, checked or published selects the ticket next
+pass.
+
+**The verdict record**, one JSON object per line of a shard's `verdicts.jsonl`, `schema_version`
+1, every key required and no other read: `ticket` (an id prepare listed in the shard); `verdict`
+(`keep`, `fixed`, `obsolete` or `unresolved`); `confidence` (`high`, `medium` or `low`);
+`evidence` (non-empty text); `deciding_commit` (a 40-hex commit for `fixed` and `obsolete`, else
+`null`); `evidence_paths` (repository-relative paths, possibly `[]`); `duplicate_of` (a ticket id
+of the snapshot, or `null`); `root_cause` (one line, set exactly when `duplicate_of` is);
+`seam_repository` (`host/owner/name`, or `null`).
+
+**Check's rules**, each problem naming its `rule` and `ticket`:
+
+| Rule | Refused when |
+|---|---|
+| `verdict-record` | A line is not one JSON object. |
+| `schema-version` | Its `schema_version` is not 1. |
+| `unknown-key` | It carries a key the record does not have. |
+| `missing-field` | It leaves out a key (`null` is how a nullable one is left empty). |
+| `invalid-value` | A value is outside its enum or shape: an unknown `verdict` or `confidence`, a `deciding_commit` that is not 40 hex, a path that leaves the repository, a `seam_repository` that is not `host/owner/name`. |
+| `evidence-required` | Its `evidence` is empty. |
+| `deciding-commit` | A `fixed` or `obsolete` verdict names no `deciding_commit`, or another verdict names one. |
+| `root-cause-required` | It names `duplicate_of` and no `root_cause`. |
+| `duplicate-of-self`, `duplicate-of-unknown` | `duplicate_of` names the ticket itself, or no open ticket of the snapshot. |
+| `unknown-ticket` | It names a ticket its shard does not list. |
+| `missing-verdict`, `duplicate-verdict` | A shard's ticket has no verdict record, or more than one. |
+| `low-confidence-close` | A `fixed` or `obsolete` verdict is `low` confidence. |
+| `commit-not-on-main` | A `fixed` or `obsolete` verdict's `deciding_commit` is not an ancestor, in its clone, of the `main` commit prepare fetched for any of the ticket's repositories. |
+| `claimed-closed`, `claimed-folded` | A plan closes, or folds as a duplicate, a ticket at the `queued` or `in-progress` role's status. |
+| `todo-folded` | A plan folds a ticket at the `accepted` role's status (Todo). |
+| `todo-close-below-bar` | A plan closes a Todo ticket short of definitely outdated: a `high`-confidence `fixed` or `obsolete` verdict whose `deciding_commit` is verified an ancestor of the fetched `main`. |
+| `plan-record` | `plan.json` is not this batch's plan, or plans a ticket the batch did not list. |
+
+**The plan.** A ticket at a non-claimable status (the proposal or deferred role's, or one no
+role maps) may be closed or folded. A Queued or In Progress ticket is never closed or folded,
+and a Todo ticket never folded and closed only when definitely outdated; any of them may survive
+a cluster, and with a closing or duplicate verdict it is kept, `left_for_person` saying why, with
+its verdict and evidence. Duplicate links are unioned into clusters, which members closing as
+`fixed` or `obsolete` leave. Each cluster's survivor is, in order: claimed (Queued or In
+Progress), then Todo, then a member in the repository most members name as `seam_repository`,
+then the most evidence (the most evidence paths, then the longest evidence), then the oldest;
+any survivor the agent implies is ignored. A member this batch did not select is ranked by
+what `snapshot.json` holds of it, its repositories and creation time, and is never folded. Everything not closed or folded is `kept`, and an `unresolved` one is also listed under
+`unresolved`. **A plan is input**: the `plan.json` a batch holds when check runs is what publish
+sends, so check holds it to the protection rules beside the plan it computes, and refuses one
+that breaks them without writing over it; once it is removed or corrected, check passes and
+writes its computed plan.
+
+**The `groom` record** is `groom publish`'s to write, through `onefollowup::formats::groom`:
+`<namespace>.groom` (`orchestrator.groom` by default) set to `{"schema_version": 1, "batch",
+"verified_at", "verdict", "repository", "commit", "evidence_paths", "content_digest",
+"overlap_comments": [{"id", "edited_at"}]}`. `content_digest` is `sha256:<hex>` over the title
+and the content as the store reads it, without its metadata block, so recording never makes a
+ticket look changed; comments are not in it. `overlap_comments` holds each comment, not
+grooming's own, that prepare read for the ticket created or last edited inside the overlap
+before `verified_at`, by id and last-edited time (created time when never edited).
+
+**Publish.** `groom publish --batch <B>` sends what the batch's `plan.json` holds, refusing (exit 2)
+a batch no passing check planned. Before its first store operation it writes `receipts.json`:
+every ticket of the plan with what publish does with it, the `groom` record its write carries
+(its `verified_at`, `content_digest` and `overlap_comments` taken from the batch), and whether its
+verdict is **definitely outdated** — `fixed` or `obsolete` at `high` confidence, its
+`deciding_commit` verified an ancestor of the fetched `main` in its clone. From then on
+`receipts.json` and `plan.json` are all a re-run reads.
+
+1. The batch is admitted at the store's chokepoint (`Store::admit_batch`, where the quota
+   governor admits the batch's estimated cost), then **one batched status read** of the tickets
+   to close or fold, so no governor wait falls between that read and the closes.
+2. **One `update-many`.** A ticket that read finds at a non-claimable open status (the
+   `proposal` or `deferred` role's, or one no role maps: Draft, Backlog, Unknown) is closed:
+   `fixed` at the `done` role's status, `obsolete` at the `cancelled` role's, a duplicate by the
+   store's duplicate close (`cancelled` with a `duplicate` link to its survivor; on GitHub, closed
+   as `DUPLICATE` and marked on the survivor's timeline). A ticket still at the `accepted` role's
+   status (Todo) is closed only on a definitely-outdated verdict, and never folded. Each close is
+   held to the version the status read found. The same call sets every verified ticket's
+   `groom` record through the store's metadata set, which keeps every other key.
+3. **One `comment add-many`** built from that write's receipts: an evidence comment on each
+   ticket shown closed, then each survivor's **consolidation comment**, once every duplicate of
+   its cluster is settled, carrying each closed duplicate's distinct evidence and link, naming
+   only the duplicates shown closed, and saying when the survivor is Todo, Queued or In
+   Progress. A survivor with none closed gets none.
+
+**Left for a person.** Any other ticket that read finds — Todo short of definitely outdated,
+Queued, In Progress, no longer open, or changed after the read so its held close is refused —
+gets no comment, status, duplicate link or `groom` key, is receipted as left, and keeps its older
+record, so the next pass selects it again. Kept tickets get no comment, and no body text or other
+metadata key changes. `report.md` and `report.json` list every ticket with a closing or duplicate
+verdict that check or publish left open — a Todo duplicate, one below `high` confidence and a
+skipped duplicate included — with its status, verdict, confidence, deciding commit, evidence and
+any survivor. Grooming closes only tickets nobody can claim, or Todo tickets definitely
+outdated, and needs no undo. Accepted residuals, which nothing reopens: on a destination that
+cannot hold a write to its version, a Backlog ticket moved to Queued or In Progress by hand
+between the status read and its close is closed, and a claim made on a definitely-outdated Todo
+ticket in that moment is overwritten.
+
+**A re-run reads the receipts** and sends only what none confirms. A close no receipt confirms —
+never sent, refused, or its answer lost — is re-read in the same order before the writes still
+sent, and left for a person unless that read still admits it; a read finding the ticket at its
+planned close holding this batch's record confirms a close whose answer was lost. The re-run's
+read also reads the comments of every ticket owed one, so a comment whose answer was lost is
+receipted rather than posted again: a closed ticket gets its comment once, a survivor its
+consolidation comment once. Every close is sent before any comment about it, so no ticket is
+ever open with a comment saying it was closed, and a closed ticket lacks its comment only until
+the batch or its re-run finishes. A record is written only in the `update-many` carrying its
+ticket's outcome, so a batch never published moves no record, an interrupted or refused publish
+moves exactly the receipted tickets', and a ticket whose write failed never gets a newer record
+from a later item.
+
+**The read-back**, one batched read of every ticket changed, holds each closed ticket to its
+status category, duplicate link, comment and record, each recorded ticket to its record, and each
+survivor to its comment; a ticket left for a person is expected unchanged and never read as a
+mismatch. A closed ticket's issue closing, beyond its card, rests on the store: onetaskgraph's
+terminal status write closes the issue, and its duplicate close reads `cancelled`. A read reports
+one status per ticket, so the read-back cannot see an issue left open under a terminal card.
+
+**Grooming comments.** `groom.comment_template` renders the visible part of each, with `comment`:
+`batch`, `verdict` (`fixed`, `obsolete`, `duplicate` or `survivor`), `ticket`, `title` and `url`;
+on a closed ticket `confidence`, `evidence`, `deciding_commit`, `repository`, `commit`,
+`evidence_paths`, `root_cause` and, for a duplicate, `survivor` (`ticket`, `title`, `url`); on a
+survivor `status` (its status name), `claimed_as` (`todo`, `queued`, `in-progress` or none),
+`duplicates` (each closed one's `ticket`, `title`, `url`, `root_cause` and `evidence_paths`) and
+`evidence` (their distinct evidence). onefollowup appends a blank line and the marker
+`<!-- <namespace>:follow-up-comment run="<batch>" kind="groom" verdict="<verdict>" -->`, which
+names no root cause, so `comments gather` leaves a grooming comment out as maintenance, never as
+a person's to answer. Every comment a run could post is rendered before its first store
+operation, so a template that cannot render, or writes a marker itself, is refused (exit 2)
+before any ticket is closed.
+
 ## Record formats
 
 Every record is declared once as a Rust type in `onefollowup::formats` with its parse and
@@ -1144,7 +1465,7 @@ the batch id stands where they say `run`.
 |---|---|---|
 | Ticket record | 14 | The ticket's `<namespace>.follow-up` metadata. Optional keys onefollowup adds within 14, each omitted when empty: `draft_sources` (qualified draft id → `author <kind>`, then `; node <node>` and `; member <member>` where the draft names them; written by onefollowup from each draft, after `drafts`), `transcripts` (qualified draft id → the command that reads its turns; written by onefollowup, after `draft_sources`), `witnesses` (`["<origin> <path>:<line> at <commit>"]`, the origin a key of `basis` and the commit the one `basis` holds for it; written by the verifying agent, after `basis`), `kind`, `fields`, `edges` (`[{"relation", "to"}]`), `board_assignee`, `impact` (rubric impact-line label → value; written by the verifying agent, required of an estimated kind's ticket, the one input its priority is estimated from, and kept whole; a bound copy or re-estimate of a record without it writes what the legacy read of its body found) and `projected` (projection name → rendered value; written by onefollowup alone at `ticket copy` and `publish`, and refused in an authored record). The names, shapes and order of `draft_sources`, `transcripts` and `witnesses` are those of the schema-15 records an orchestrator's `followups` board held, relabelled 14, whose `metadata_fields` read them: never rename one. |
 | Draft record | 1 | A draft's `<namespace>.follow-up-draft` metadata. |
-| Comment markers | — | `<!-- <namespace>:follow-up-comment run="…" root_cause="…" -->`, the last line of an evidence comment or (with `kind="reply" answers="…" verdict="…"`) a reply, which alone names the comment's owner and kind; the quoted-comment and feedback anchors. |
+| Comment markers | — | `<!-- <namespace>:follow-up-comment run="…" root_cause="…" -->`, the last line of an evidence comment or (with `kind="reply" answers="…" verdict="…"`) a reply, which alone names the comment's owner and kind; a grooming comment's `<!-- <namespace>:follow-up-comment run="…" kind="groom" verdict="…" -->`, which names no root cause; the quoted-comment and feedback anchors. |
 | Receipt journal | 3 | `receipts/<batch>.jsonl`, one line per write outcome. Two line kinds onefollowup adds within 3, written only under relations or an assignee: `relate` (an edge's `relation`, `store`, `from`, `to`, `to_card`, `derived`, `action` of `written`, `exists` or `failed`, and its `error`) and `assign` (the `assignee`, the `when` it was held to, `action` of `written`, `held` or `failed`, and its `error`, `assignee-held` when a person's assignment stood). |
 | Dispositions | 2 | `dispositions/<batch>.json`; each entry may carry `kind`, which `check` requires, and from 2 `dismissed` (`[{"item", "reason"}]`, the duplicate candidates it dismisses), omitted when empty. Schema 1, the same without `dismissed`, is still read, and written back as 2. |
 | Carried dispositions | 2 | `dispositions/<batch>.carried.json`; its entries are the dispositions' own, and schema 1 is still read. |
@@ -1155,6 +1476,10 @@ the batch id stands where they say `run`.
 | Pending writes | 1 | `feedback/pending.json`. |
 | Existing tickets | 1 | `existing-tickets.json`. |
 | Outbox | 1 | `outbox/<batch>.json`: the staged writes `publish` sends. |
+| Groom record | 1 | A groomed ticket's `<namespace>.groom` metadata (Grooming, above), keyed `schema_version`. |
+| Verdict record | 1 | `groom/<batch>/<shard>/verdicts.jsonl`, one per line, keyed `schema_version`. |
+| Grooming batch, snapshot and plan | 1 | `groom/<batch>/batch.json`, `snapshot.json` and `plan.json`, onefollowup's own working files, keyed `schema_version`. |
+| Grooming receipts and report | 1 | `groom/<batch>/receipts.json`, what `groom publish` sent and heard back, and `report.json`, what it did, beside `report.md`; keyed `schema_version`. |
 | Batch state | 1 | `state/<batch>.json`: onefollowup's own working file — the input set, prepare's reads and each publish. An optional member onefollowup adds within 1: `relations` (prepare's `task relations` read of the tickets it found), omitted when empty; and on each input, `author` (a draft's source, as `draft_sources` holds it) and `transcript`, each omitted when absent. |
 
 ## Development

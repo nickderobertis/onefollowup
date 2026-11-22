@@ -22,7 +22,9 @@ use onefollowup::api::{
 };
 use onefollowup::cli::Cli;
 use onefollowup::config::StatusRole;
-use onefollowup::formats::groom::{Confidence, GroomPlan, GroomVerdict, PlanEntry, Survivor};
+use onefollowup::formats::groom::{
+    Confidence, GroomPlan, GroomRule, GroomVerdict, PlanEntry, Survivor, SurvivorRule,
+};
 use onefollowup::formats::outbox::StagedWrite;
 use onefollowup::formats::{HeldPriority, Level};
 use onefollowup::store::StoreOperation;
@@ -441,7 +443,7 @@ fn examples() -> BTreeMap<&'static str, Value> {
                 batch: GROOM.to_owned(),
                 problems: vec![GroomProblem {
                     ticket: Some("followups:item-7".to_owned()),
-                    rule: "low-confidence-close".to_owned(),
+                    rule: GroomRule::LowConfidenceClose,
                     detail: format!(
                         "{GROOM}-1 line 2: a `fixed` verdict closes the ticket, which `low` confidence never does: raise the evidence to `medium` or `high`, or answer `keep` or `unresolved`"
                     ),
@@ -453,7 +455,7 @@ fn examples() -> BTreeMap<&'static str, Value> {
                     survivors: vec![Survivor {
                         ticket: "followups:item-3".to_owned(),
                         members: vec!["followups:item-3".to_owned(), "followups:item-9".to_owned()],
-                        chosen_by: "claimed".to_owned(),
+                        chosen_by: SurvivorRule::Claimed,
                     }],
                     kept: vec![groomed(
                         "followups:item-3",
@@ -553,4 +555,36 @@ fn the_contract_document_states_every_verbs_result_as_the_library_types_it() {
             serde_json::to_string_pretty(example).expect("JSON")
         );
     }
+}
+
+#[test]
+fn the_contract_document_states_every_grooming_rule_check_names() {
+    let section = &README[README
+        .find("**Check's rules**")
+        .expect("the rules are stated")..];
+    let table = &section[..section.find("\n\n**").expect("the table ends")];
+    let mut stated: Vec<String> = table
+        .lines()
+        .filter_map(|line| line.strip_prefix("| "))
+        .filter_map(|line| line.split(" |").next())
+        .flat_map(|cell| {
+            cell.split(", ")
+                .map(|name| name.trim_matches('`').to_owned())
+        })
+        .filter(|name| name != "Rule" && !name.starts_with('-'))
+        .collect();
+    stated.sort();
+    let mut rules: Vec<String> = GroomRule::ALL
+        .iter()
+        .map(|rule| {
+            let spelled = rule.as_str().to_owned();
+            assert_eq!(to_value(rule).expect("JSON"), Value::from(spelled.clone()));
+            spelled
+        })
+        .collect();
+    rules.sort();
+    assert_eq!(
+        stated, rules,
+        "README.md's rule table names every rule `groom check` names, once"
+    );
 }

@@ -146,7 +146,7 @@ impl<'a> Groom<'a> {
         } else if role_of(StatusRole::Accepted) {
             Protection::Todo
         } else {
-            Protection::Open
+            Protection::Unprotected
         }
     }
 }

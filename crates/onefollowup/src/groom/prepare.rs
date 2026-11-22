@@ -25,8 +25,8 @@ use crate::config::Settings;
 use crate::error::Error;
 use crate::formats::groom::{
     FetchedRepository, GroomBatch, GroomRecord, GroomSnapshot, HeldStatus, OverlapComment,
-    Protection, SCHEMA_VERSION, SelectedTicket, Shard, SnapshotTicket, content_digest, record_key,
-    render,
+    Protection, SCHEMA_VERSION, SelectedTicket, Shard, SnapshotTicket, content_digest,
+    is_repository, record_key, render,
 };
 use crate::store::{ListedComment, Narrowing, StoreComment, StoreItem};
 use crate::verify::template::{self, Located};
@@ -234,6 +234,8 @@ pub fn run(settings: &Settings, args: GroomPrepareArgs) -> Result<GroomPrepared,
     let named: BTreeSet<&str> = items
         .iter()
         .flat_map(|item| item.repositories.iter().map(String::as_str))
+        // A repository is a path under the clones and part of a URL: only `host/owner/name`.
+        .filter(|repository| is_repository(repository))
         .collect();
     let clones = groom.clones();
     let mut fetched: BTreeMap<String, FetchedRepository> = BTreeMap::new();
@@ -292,6 +294,9 @@ pub fn run(settings: &Settings, args: GroomPrepareArgs) -> Result<GroomPrepared,
         .count();
 
     if !args.dry_run && !shards.is_empty() {
+        // Two passes in one millisecond would share a batch id; this guard keeps the second
+        // from writing into the first's batch. Untested: provoking it needs two processes
+        // started in the same millisecond, a flaky race to stage for one line that refuses.
         if directory.exists() {
             return Err(Error::Failed(format!(
                 "{}: the batch {batch} already exists; next: run `groom prepare` again",

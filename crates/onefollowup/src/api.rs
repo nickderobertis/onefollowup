@@ -1059,7 +1059,7 @@ pub struct GroomProblem {
     /// The ticket that breaks it, where one does.
     pub ticket: Option<String>,
     /// The rule.
-    pub rule: String,
+    pub rule: crate::formats::groom::GroomRule,
     /// What is wrong, and where.
     pub detail: String,
 }

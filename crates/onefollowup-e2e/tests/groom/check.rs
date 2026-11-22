@@ -453,13 +453,13 @@ pub fn verdicts_are_held_to_the_rules_and_planned(runner: &dyn Runner) {
         (
             t("g1"),
             vec![t("g1"), t("o5")],
-            "seam repository".to_owned()
+            "seam-repository".to_owned()
         ),
         "the member in the repository its members name as the seam's wins over more evidence"
     );
     assert_eq!(
         survivor("o7"),
-        (t("o7"), vec![t("o6"), t("o7")], "most evidence".to_owned())
+        (t("o7"), vec![t("o6"), t("o7")], "most-evidence".to_owned())
     );
     assert_eq!(
         survivors.len(),
@@ -578,6 +578,48 @@ pub fn malformed_verdict_records_are_refused_by_rule(runner: &dyn Runner) {
             "o1",
             "deciding-commit",
             with("o1", "deciding_commit", Some(Value::Null)),
+        ),
+        (
+            "a ticket that is not text",
+            "o9",
+            "missing-verdict",
+            with("o9", "ticket", Some(json!(9))),
+        ),
+        (
+            "evidence that is not text",
+            "o9",
+            "invalid-value",
+            with("o9", "evidence", Some(json!(3))),
+        ),
+        (
+            "an evidence path leaving the repository",
+            "o9",
+            "invalid-value",
+            with("o9", "evidence_paths", Some(json!(["../secrets"]))),
+        ),
+        (
+            "an empty duplicate",
+            "o9",
+            "invalid-value",
+            with("o9", "duplicate_of", Some(json!(""))),
+        ),
+        (
+            "a seam that is no repository",
+            "o9",
+            "invalid-value",
+            with("o9", "seam_repository", Some(json!("widgets"))),
+        ),
+        (
+            "a kept verdict naming a deciding commit",
+            "o9",
+            "deciding-commit",
+            with("o9", "deciding_commit", Some(json!(batch.fix))),
+        ),
+        (
+            "a duplicate of itself",
+            "o6",
+            "duplicate-of-self",
+            with("o6", "duplicate_of", Some(json!(t("o6")))),
         ),
         (
             "a duplicate of a ticket nobody holds open",
@@ -715,6 +757,67 @@ pub fn a_plan_breaking_protection_is_refused_and_kept(runner: &dyn Runner) {
             std::fs::read_to_string(batch.plan_path()).expect("the plan"),
             plan,
             "{case}: nothing is written over the plan"
+        );
+        std::fs::write(batch.plan_path(), &saved).expect("the plan corrected");
+        assert_eq!(
+            batch.check(runner, 0),
+            passed,
+            "{case}: corrected, the check passes"
+        );
+    }
+
+    let mut closing_o9 = kept("o9");
+    closing_o9["verdict"] = json!("fixed");
+    closing_o9["deciding_commit"] = json!(batch.side.clone());
+    let mut low_o9 = closing_o9.clone();
+    low_o9["confidence"] = json!("low");
+    low_o9["deciding_commit"] = json!(batch.fix.clone());
+    let mut stranger = kept("o9");
+    stranger["ticket"] = json!(t("zz"));
+    let more: Vec<(&str, Option<&str>, &str, String)> = vec![
+        (
+            "a plan closing on a commit off main",
+            Some("o9"),
+            "commit-not-on-main",
+            edit(&push("fixed", closing_o9)),
+        ),
+        (
+            "a plan closing on a low verdict",
+            Some("o9"),
+            "low-confidence-close",
+            edit(&push("obsolete", low_o9)),
+        ),
+        (
+            "a plan closing a ticket the batch never listed",
+            Some("zz"),
+            "plan-record",
+            edit(&push("fixed", stranger.clone())),
+        ),
+        (
+            "a plan folding a ticket the batch never listed",
+            Some("zz"),
+            "plan-record",
+            edit(&push("duplicates", stranger)),
+        ),
+        ("another batch's plan", None, "plan-record", {
+            let mut plan = held.clone();
+            plan["batch"] = json!("groom-20260101T000000000Z");
+            serde_json::to_string_pretty(&plan).expect("JSON")
+        }),
+    ];
+    for (case, ticket, rule, plan) in more {
+        std::fs::write(batch.plan_path(), &plan).expect("the plan edited");
+        let printed = batch.check(runner, 2);
+        assert!(
+            printed["problems"]
+                .as_array()
+                .expect("problems")
+                .iter()
+                .any(|one| {
+                    one["rule"] == rule
+                        && one["ticket"] == ticket.map_or(Value::Null, |id| json!(t(id)))
+                }),
+            "{case}: check names `{rule}`: {printed:#}"
         );
         std::fs::write(batch.plan_path(), &saved).expect("the plan corrected");
         assert_eq!(

@@ -20,8 +20,9 @@ use crate::api::{GroomCheckArgs, GroomChecked, GroomProblem};
 use crate::config::Settings;
 use crate::error::Error;
 use crate::formats::groom::{
-    Confidence, GroomBatch, GroomPlan, GroomVerdict, PlanEntry, PlanRecord, Protection,
-    SCHEMA_VERSION, SelectedTicket, Survivor, VerdictRecord, parse, render,
+    Confidence, GroomBatch, GroomPlan, GroomRule, GroomVerdict, PlanEntry, PlanRecord, Protection,
+    SCHEMA_VERSION, SelectedTicket, Survivor, SurvivorRule, VerdictRecord, is_commit, parse,
+    render,
 };
 use crate::work;
 
@@ -41,10 +42,10 @@ struct Batch<'a> {
 }
 
 impl Batch<'_> {
-    fn problem(&mut self, ticket: Option<&str>, rule: &str, detail: String) {
+    fn problem(&mut self, ticket: Option<&str>, rule: GroomRule, detail: String) {
         self.problems.push(GroomProblem {
             ticket: ticket.map(str::to_owned),
-            rule: rule.to_owned(),
+            rule,
             detail,
         });
     }
@@ -63,6 +64,10 @@ impl Batch<'_> {
         ticket: &SelectedTicket,
         commit: &str,
     ) -> Result<Option<(String, String)>, Error> {
+        // Only a full commit id reaches git, so a plan's value is never read as an option.
+        if !is_commit(commit) {
+            return Ok(None);
+        }
         for named in &ticket.repositories {
             if let Some(fetched) = self
                 .record
@@ -125,7 +130,7 @@ fn verdicts<'a>(batch: &mut Batch<'a>) -> Result<Vec<Judged<'a>>, Error> {
                     if !shard.tickets.contains(&ticket) {
                         batch.problem(
                             Some(&ticket),
-                            "unknown-ticket",
+                            GroomRule::UnknownTicket,
                             format!("{at}: `{ticket}` is not a ticket of shard {}", shard.shard),
                         );
                         continue;
@@ -147,7 +152,7 @@ fn verdicts<'a>(batch: &mut Batch<'a>) -> Result<Vec<Judged<'a>>, Error> {
             match seen.get(ticket).copied().unwrap_or_default() {
                 0 => batch.problem(
                     Some(ticket),
-                    "missing-verdict",
+                    GroomRule::MissingVerdict,
                     format!(
                         "shard {} lists `{ticket}`, and {} holds no verdict for it",
                         shard.shard, shard.verdicts
@@ -157,7 +162,7 @@ fn verdicts<'a>(batch: &mut Batch<'a>) -> Result<Vec<Judged<'a>>, Error> {
                 count => {
                     batch.problem(
                         Some(ticket),
-                        "duplicate-verdict",
+                        GroomRule::DuplicateVerdict,
                         format!(
                             "{} holds {count} verdict records for `{ticket}`; keep exactly one",
                             shard.verdicts
@@ -179,7 +184,7 @@ fn verdicts<'a>(batch: &mut Batch<'a>) -> Result<Vec<Judged<'a>>, Error> {
             {
                 batch.problem(
                     Some(&ticket),
-                    "duplicate-of-unknown",
+                    GroomRule::DuplicateOfUnknown,
                     format!(
                         "`duplicate_of` names `{other}`, which is not an open ticket of the batch's snapshot"
                     ),
@@ -205,7 +210,7 @@ fn verdicts<'a>(batch: &mut Batch<'a>) -> Result<Vec<Judged<'a>>, Error> {
                         .collect();
                     batch.problem(
                         Some(&ticket),
-                        "commit-not-on-main",
+                        GroomRule::CommitNotOnMain,
                         format!(
                             "the `{}` verdict's `deciding_commit` {commit} is not an ancestor of the fetched `main` of {}",
                             verdict.verdict.as_str(),
@@ -265,7 +270,7 @@ fn survivor(
     batch: &Batch<'_>,
     members: &[String],
     judged: &BTreeMap<&str, &Judged<'_>>,
-) -> (String, String) {
+) -> (String, SurvivorRule) {
     let mut seams: BTreeMap<&str, usize> = BTreeMap::new();
     for member in members {
         if let Some(seam) = judged
@@ -307,21 +312,21 @@ fn survivor(
     let mut ranked: Vec<&String> = members.iter().collect();
     ranked.sort_by_key(|member| rank(member));
     let first = ranked[0];
-    let chosen_by = ranked.get(1).map_or("only member", |second| {
-        let (one, other) = (rank(first), rank(second));
-        if one.0 != other.0 {
-            "claimed"
-        } else if one.1 != other.1 {
-            "todo"
-        } else if one.2 != other.2 {
-            "seam repository"
-        } else if one.3 != other.3 || one.4 != other.4 {
-            "most evidence"
-        } else {
-            "oldest"
-        }
-    });
-    (first.clone(), chosen_by.to_owned())
+    // A cluster has at least two members, so there is always a runner-up.
+    let second = rank(ranked[1]);
+    let one = rank(first);
+    let chosen_by = if one.0 != second.0 {
+        SurvivorRule::Claimed
+    } else if one.1 != second.1 {
+        SurvivorRule::Todo
+    } else if one.2 != second.2 {
+        SurvivorRule::SeamRepository
+    } else if one.3 != second.3 || one.4 != second.4 {
+        SurvivorRule::MostEvidence
+    } else {
+        SurvivorRule::Oldest
+    };
+    (first.clone(), chosen_by)
 }
 
 /// Plan the judged verdicts.
@@ -450,12 +455,12 @@ fn protect(batch: &mut Batch<'_>, plan: &GroomPlan, what: &str) -> Result<(), Er
         match batch.protection(ticket) {
             None => batch.problem(
                 Some(ticket),
-                "plan-record",
+                GroomRule::PlanRecord,
                 format!("{what} closes `{ticket}`, which the batch did not list as open"),
             ),
             Some(Protection::Claimed) => batch.problem(
                 Some(ticket),
-                "claimed-closed",
+                GroomRule::ClaimedClosed,
                 format!("{what} closes `{ticket}`, which is Queued or In Progress: grooming never closes claimed work"),
             ),
             Some(protection) => {
@@ -469,7 +474,7 @@ fn protect(batch: &mut Batch<'_>, plan: &GroomPlan, what: &str) -> Result<(), Er
                 if entry.confidence == Confidence::Low {
                     batch.problem(
                         Some(ticket),
-                        "low-confidence-close",
+                        GroomRule::LowConfidenceClose,
                         format!("{what} closes `{ticket}` on a `low`-confidence verdict"),
                     );
                 } else if protection == Protection::Todo
@@ -477,7 +482,7 @@ fn protect(batch: &mut Batch<'_>, plan: &GroomPlan, what: &str) -> Result<(), Er
                 {
                     batch.problem(
                         Some(ticket),
-                        "todo-close-below-bar",
+                        GroomRule::TodoCloseBelowBar,
                         format!(
                             "{what} closes the Todo ticket `{ticket}` on a `{}`-confidence verdict whose deciding commit is {}: a Todo ticket closes only on a `high`-confidence verdict whose `deciding_commit` is verified on the fetched `main`",
                             match entry.confidence {
@@ -491,7 +496,7 @@ fn protect(batch: &mut Batch<'_>, plan: &GroomPlan, what: &str) -> Result<(), Er
                 } else if !verified {
                     batch.problem(
                         Some(ticket),
-                        "commit-not-on-main",
+                        GroomRule::CommitNotOnMain,
                         format!("{what} closes `{ticket}` on a deciding commit not verified on the fetched `main`"),
                     );
                 }
@@ -503,20 +508,20 @@ fn protect(batch: &mut Batch<'_>, plan: &GroomPlan, what: &str) -> Result<(), Er
         match batch.protection(ticket) {
             None => batch.problem(
                 Some(ticket),
-                "plan-record",
+                GroomRule::PlanRecord,
                 format!("{what} folds `{ticket}`, which the batch did not list as open"),
             ),
             Some(Protection::Claimed) => batch.problem(
                 Some(ticket),
-                "claimed-folded",
+                GroomRule::ClaimedFolded,
                 format!("{what} folds `{ticket}` as a duplicate, and it is Queued or In Progress: grooming never folds claimed work"),
             ),
             Some(Protection::Todo) => batch.problem(
                 Some(ticket),
-                "todo-folded",
+                GroomRule::TodoFolded,
                 format!("{what} folds the Todo ticket `{ticket}` as a duplicate, which grooming never does"),
             ),
-            Some(Protection::Open) => {}
+            Some(Protection::Unprotected) => {}
         }
     }
     Ok(())
@@ -554,7 +559,7 @@ pub fn run(settings: &Settings, args: GroomCheckArgs) -> Result<GroomChecked, Er
             Ok(held) if held.batch == id => protect(&mut batch, &held.plan, "plan.json")?,
             Ok(held) => batch.problem(
                 None,
-                "plan-record",
+                GroomRule::PlanRecord,
                 format!(
                     "{} is batch {}'s plan, not {id}'s",
                     plan_path.display(),
@@ -563,7 +568,7 @@ pub fn run(settings: &Settings, args: GroomCheckArgs) -> Result<GroomChecked, Er
             ),
             Err(error) => batch.problem(
                 None,
-                "plan-record",
+                GroomRule::PlanRecord,
                 format!(
                     "{}: {error}; next: remove it, and check writes the plan",
                     plan_path.display()
@@ -593,7 +598,7 @@ pub fn run(settings: &Settings, args: GroomCheckArgs) -> Result<GroomChecked, Er
                     .iter()
                     .map(|problem| format!(
                         "{} ({})",
-                        problem.rule,
+                        problem.rule.as_str(),
                         problem.ticket.as_deref().unwrap_or("the batch")
                     ))
                     .collect::<Vec<_>>()

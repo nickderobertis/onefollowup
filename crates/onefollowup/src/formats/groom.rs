@@ -87,6 +87,105 @@ impl Confidence {
     pub const ALL: [&'static str; 3] = ["high", "medium", "low"];
 }
 
+/// A rule `groom check` holds a batch to, as a problem names it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum GroomRule {
+    /// A verdict line is not one JSON object.
+    VerdictRecord,
+    /// A verdict record is not schema 1.
+    SchemaVersion,
+    /// A verdict record carries a key the record does not have.
+    UnknownKey,
+    /// A verdict record leaves out a key.
+    MissingField,
+    /// A value is outside its enum or shape.
+    InvalidValue,
+    /// A verdict's evidence is empty.
+    EvidenceRequired,
+    /// A closing verdict names no deciding commit, or another verdict names one.
+    DecidingCommit,
+    /// A verdict names a duplicate and no root cause.
+    RootCauseRequired,
+    /// A verdict names its own ticket as its duplicate.
+    DuplicateOfSelf,
+    /// A verdict names a duplicate that is no open ticket of the snapshot.
+    DuplicateOfUnknown,
+    /// A verdict names a ticket its shard does not list.
+    UnknownTicket,
+    /// A shard's ticket has no verdict.
+    MissingVerdict,
+    /// A shard's ticket has more than one verdict.
+    DuplicateVerdict,
+    /// A closing verdict is `low` confidence.
+    LowConfidenceClose,
+    /// A closing verdict's deciding commit is not on the fetched `main`.
+    CommitNotOnMain,
+    /// A plan closes a Queued or In Progress ticket.
+    ClaimedClosed,
+    /// A plan folds a Queued or In Progress ticket as a duplicate.
+    ClaimedFolded,
+    /// A plan folds a Todo ticket as a duplicate.
+    TodoFolded,
+    /// A plan closes a Todo ticket short of definitely outdated.
+    TodoCloseBelowBar,
+    /// The batch's plan is not this batch's, or plans a ticket it did not list.
+    PlanRecord,
+}
+
+impl GroomRule {
+    /// Every rule, in the order `README.md` states them.
+    pub const ALL: [Self; 20] = [
+        Self::VerdictRecord,
+        Self::SchemaVersion,
+        Self::UnknownKey,
+        Self::MissingField,
+        Self::InvalidValue,
+        Self::EvidenceRequired,
+        Self::DecidingCommit,
+        Self::RootCauseRequired,
+        Self::DuplicateOfSelf,
+        Self::DuplicateOfUnknown,
+        Self::UnknownTicket,
+        Self::MissingVerdict,
+        Self::DuplicateVerdict,
+        Self::LowConfidenceClose,
+        Self::CommitNotOnMain,
+        Self::ClaimedClosed,
+        Self::ClaimedFolded,
+        Self::TodoFolded,
+        Self::TodoCloseBelowBar,
+        Self::PlanRecord,
+    ];
+
+    /// The rule as a problem spells it.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::VerdictRecord => "verdict-record",
+            Self::SchemaVersion => "schema-version",
+            Self::UnknownKey => "unknown-key",
+            Self::MissingField => "missing-field",
+            Self::InvalidValue => "invalid-value",
+            Self::EvidenceRequired => "evidence-required",
+            Self::DecidingCommit => "deciding-commit",
+            Self::RootCauseRequired => "root-cause-required",
+            Self::DuplicateOfSelf => "duplicate-of-self",
+            Self::DuplicateOfUnknown => "duplicate-of-unknown",
+            Self::UnknownTicket => "unknown-ticket",
+            Self::MissingVerdict => "missing-verdict",
+            Self::DuplicateVerdict => "duplicate-verdict",
+            Self::LowConfidenceClose => "low-confidence-close",
+            Self::CommitNotOnMain => "commit-not-on-main",
+            Self::ClaimedClosed => "claimed-closed",
+            Self::ClaimedFolded => "claimed-folded",
+            Self::TodoFolded => "todo-folded",
+            Self::TodoCloseBelowBar => "todo-close-below-bar",
+            Self::PlanRecord => "plan-record",
+        }
+    }
+}
+
 /// One comment a record holds as verified inside the comment overlap before its
 /// `verified_at`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -144,10 +243,50 @@ impl GroomRecord {
                 reads: SCHEMA_VERSION,
             });
         }
-        serde_json::from_value(value.clone()).map_err(|error| FormatError::Malformed {
+        let record: Self =
+            serde_json::from_value(value.clone()).map_err(|error| FormatError::Malformed {
+                format: Self::FORMAT,
+                message: error.to_string(),
+            })?;
+        let malformed = |message: String| FormatError::Malformed {
             format: Self::FORMAT,
-            message: error.to_string(),
-        })
+            message,
+        };
+        if !is_commit(&record.commit) {
+            return Err(malformed(format!(
+                "`commit` is {:?}, not a full 40-hex commit id",
+                record.commit
+            )));
+        }
+        if !is_repository(&record.repository) {
+            return Err(malformed(format!(
+                "`repository` is {:?}, not `host/owner/name`",
+                record.repository
+            )));
+        }
+        let times = std::iter::once(&record.verified_at)
+            .chain(record.overlap_comments.iter().map(|one| &one.edited_at));
+        for time in times {
+            if chrono::DateTime::parse_from_rfc3339(time).is_err() {
+                return Err(malformed(format!("{time:?} is not an RFC 3339 time")));
+            }
+        }
+        if let Some(path) = record
+            .evidence_paths
+            .iter()
+            .find(|path| !is_relative_path(path))
+        {
+            return Err(malformed(format!(
+                "the evidence path {path:?} is not repository-relative"
+            )));
+        }
+        if !record.content_digest.starts_with("sha256:") {
+            return Err(malformed(format!(
+                "`content_digest` is {:?}, not `sha256:<hex>`",
+                record.content_digest
+            )));
+        }
+        Ok(record)
     }
 
     /// The record as a ticket's metadata holds it.
@@ -183,8 +322,8 @@ pub struct VerdictRecord {
     pub seam_repository: Option<String>,
 }
 
-/// One rule a verdict record breaks: the rule's name and what is wrong.
-pub type Broken = (&'static str, String);
+/// One rule a verdict record breaks, and what is wrong.
+pub type Broken = (GroomRule, String);
 
 /// The keys a verdict record holds, every one required.
 pub const VERDICT_KEYS: [&str; 10] = [
@@ -248,7 +387,7 @@ impl VerdictRecord {
                 return Err((
                     None,
                     vec![(
-                        "verdict-record",
+                        GroomRule::VerdictRecord,
                         format!("the line is not one JSON object: {error}"),
                     )],
                 ));
@@ -257,7 +396,10 @@ impl VerdictRecord {
         let Value::Object(map) = value else {
             return Err((
                 None,
-                vec![("verdict-record", "the line is not a JSON object".to_owned())],
+                vec![(
+                    GroomRule::VerdictRecord,
+                    "the line is not a JSON object".to_owned(),
+                )],
             ));
         };
         let ticket = map
@@ -275,7 +417,7 @@ impl VerdictRecord {
                         return Ok(record);
                     }
                 }
-                Err(error) => broken.push(("invalid-value", error.to_string())),
+                Err(error) => broken.push((GroomRule::InvalidValue, error.to_string())),
             }
         }
         Err((ticket, broken))
@@ -286,7 +428,7 @@ impl VerdictRecord {
         for key in map.keys() {
             if !VERDICT_KEYS.contains(&key.as_str()) {
                 broken.push((
-                    "unknown-key",
+                    GroomRule::UnknownKey,
                     format!(
                         "`{key}` is not a verdict record key; the keys are {}",
                         VERDICT_KEYS.join(", ")
@@ -297,7 +439,7 @@ impl VerdictRecord {
         for key in VERDICT_KEYS {
             if !map.contains_key(key) {
                 broken.push((
-                    "missing-field",
+                    GroomRule::MissingField,
                     format!("`{key}` is required (write `null` where the schema allows it)"),
                 ));
             }
@@ -306,7 +448,7 @@ impl VerdictRecord {
             && (schema.as_u64() != Some(SCHEMA_VERSION) || schema.is_f64())
         {
             broken.push((
-                "schema-version",
+                GroomRule::SchemaVersion,
                 format!(
                     "the verdict record is schema {schema}, and this reads schema {SCHEMA_VERSION}"
                 ),
@@ -315,7 +457,7 @@ impl VerdictRecord {
         let text = |key: &str| map.get(key).map(|value| (value, value.as_str()));
         if let Some((value, None)) = text("ticket") {
             broken.push((
-                "invalid-value",
+                GroomRule::InvalidValue,
                 format!("`ticket` is {value}, not a ticket id"),
             ));
         }
@@ -327,20 +469,23 @@ impl VerdictRecord {
                 && !word.is_some_and(|word| allowed.contains(&word))
             {
                 broken.push((
-                    "invalid-value",
+                    GroomRule::InvalidValue,
                     format!("`{key}` is {value}; it is one of {}", allowed.join(", ")),
                 ));
             }
         }
         if let Some((value, None)) = text("evidence") {
-            broken.push(("invalid-value", format!("`evidence` is {value}, not text")));
+            broken.push((
+                GroomRule::InvalidValue,
+                format!("`evidence` is {value}, not text"),
+            ));
         }
         if let Some((value, word)) = text("deciding_commit")
             && !value.is_null()
             && !word.is_some_and(is_commit)
         {
             broken.push((
-                "invalid-value",
+                GroomRule::InvalidValue,
                 format!("`deciding_commit` is {value}, not a full 40-hex commit id or null"),
             ));
         }
@@ -352,7 +497,7 @@ impl VerdictRecord {
             });
             if !valid {
                 broken.push((
-                    "invalid-value",
+                    GroomRule::InvalidValue,
                     format!("`evidence_paths` is {paths}, not a list of repository-relative paths"),
                 ));
             }
@@ -363,7 +508,7 @@ impl VerdictRecord {
                 && !word.is_some_and(|word| !word.trim().is_empty() && !word.contains('\n'))
             {
                 broken.push((
-                    "invalid-value",
+                    GroomRule::InvalidValue,
                     format!("`{key}` is {value}, not one line of text or null"),
                 ));
             }
@@ -373,7 +518,7 @@ impl VerdictRecord {
             && !word.is_some_and(is_repository)
         {
             broken.push((
-                "invalid-value",
+                GroomRule::InvalidValue,
                 format!("`seam_repository` is {value}, not `host/owner/name` or null"),
             ));
         }
@@ -383,7 +528,7 @@ impl VerdictRecord {
     fn rules(&self, broken: &mut Vec<Broken>) {
         if self.evidence.trim().is_empty() {
             broken.push((
-                "evidence-required",
+                GroomRule::EvidenceRequired,
                 format!(
                     "a `{}` verdict states its evidence: `evidence` is empty",
                     self.verdict.as_str()
@@ -392,14 +537,14 @@ impl VerdictRecord {
         }
         match (self.verdict.closes(), &self.deciding_commit) {
             (true, None) => broken.push((
-                "deciding-commit",
+                GroomRule::DecidingCommit,
                 format!(
                     "a `{}` verdict names the `main` commit that decided it in `deciding_commit`",
                     self.verdict.as_str()
                 ),
             )),
             (false, Some(_)) => broken.push((
-                "deciding-commit",
+                GroomRule::DecidingCommit,
                 format!(
                     "a `{}` verdict's `deciding_commit` is null",
                     self.verdict.as_str()
@@ -409,14 +554,14 @@ impl VerdictRecord {
         }
         if self.duplicate_of.is_some() && self.root_cause.is_none() {
             broken.push((
-                "root-cause-required",
+                GroomRule::RootCauseRequired,
                 "a verdict naming `duplicate_of` states the shared root cause in `root_cause`"
                     .to_owned(),
             ));
         }
         if self.verdict.closes() && self.confidence == Confidence::Low {
             broken.push((
-                "low-confidence-close",
+                GroomRule::LowConfidenceClose,
                 format!(
                     "a `{}` verdict closes the ticket, which `low` confidence never does: raise the evidence to `medium` or `high`, or answer `keep` or `unresolved`",
                     self.verdict.as_str()
@@ -425,7 +570,7 @@ impl VerdictRecord {
         }
         if self.duplicate_of.as_deref() == Some(self.ticket.as_str()) {
             broken.push((
-                "duplicate-of-self",
+                GroomRule::DuplicateOfSelf,
                 "`duplicate_of` names the ticket itself".to_owned(),
             ));
         }
@@ -436,9 +581,9 @@ impl VerdictRecord {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Protection {
-    /// At a non-claimable status (the proposal or deferred role's, or unknown): it may be
-    /// closed or folded as a duplicate.
-    Open,
+    /// At a non-claimable status (the proposal or deferred role's, or one no role maps): it
+    /// may be closed or folded as a duplicate.
+    Unprotected,
     /// At the accepted role's status (Todo): never folded, and closed only when definitely
     /// outdated.
     Todo,
@@ -580,6 +725,22 @@ pub struct PlanEntry {
     pub left_for_person: Option<String>,
 }
 
+/// The rule of the survivor order that chose a cluster's survivor over the runner-up.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SurvivorRule {
+    /// It is claimed (Queued or In Progress) and the runner-up is not.
+    Claimed,
+    /// It is Todo and the runner-up is not.
+    Todo,
+    /// It is in the repository most members name as the seam's, and the runner-up is not.
+    SeamRepository,
+    /// It has more evidence: more evidence paths, then longer evidence.
+    MostEvidence,
+    /// It is the older, or, where no creation time tells them apart, the first by id.
+    Oldest,
+}
+
 /// One duplicate cluster's survivor.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -589,7 +750,7 @@ pub struct Survivor {
     /// Every member of its cluster, the survivor among them.
     pub members: Vec<String>,
     /// Why it survived: the first rule of the priority order that decided it.
-    pub chosen_by: String,
+    pub chosen_by: SurvivorRule,
 }
 
 /// What a passing `groom check` plans: `plan.json`, what `groom-verb`'s publish sends.

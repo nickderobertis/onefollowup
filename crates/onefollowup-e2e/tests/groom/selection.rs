@@ -229,6 +229,47 @@ pub fn each_change_alone_selects_exactly_its_ticket(runner: &dyn Runner) {
             &["ov"],
         ),
         (
+            "a ticket moved to another repository",
+            Box::new(|g: &Groomed| {
+                g.world.edit_ticket(
+                    "wa",
+                    &format!("repositories: [{WIDGETS}]"),
+                    &format!("repositories: [{GADGETS}]"),
+                );
+            }),
+            &["wa"],
+        ),
+        (
+            "a record whose commit main no longer holds",
+            Box::new(|g: &Groomed| {
+                let gone = "1111111111111111111111111111111111111111";
+                let record =
+                    g.world
+                        .groomed("wb", &g.verified_at, WIDGETS, gone, &["src/b.rs"], &[]);
+                g.world.record("wb", &record.to_value());
+            }),
+            &["wb"],
+        ),
+        (
+            "a record this does not read",
+            Box::new(|g: &Groomed| {
+                let mut record = g
+                    .world
+                    .groomed(
+                        "gb",
+                        &g.verified_at,
+                        GADGETS,
+                        &g.gadgets,
+                        &["lib/y.rs"],
+                        &[],
+                    )
+                    .to_value();
+                record["commit"] = json!("--output=/tmp/elsewhere");
+                g.world.record("gb", &record);
+            }),
+            &["gb"],
+        ),
+        (
             "a move touching none of a ticket's paths",
             Box::new(|g: &Groomed| {
                 g.world

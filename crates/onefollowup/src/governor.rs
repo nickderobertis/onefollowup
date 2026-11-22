@@ -12,7 +12,9 @@
 //! (`resets_at`): admission is against every window not yet past its reset, the least of them
 //! deciding, and a remaining that rises inside one window before its reset is ignored — a token
 //! is answered from two windows of one resource at once, and `GET /rate_limit` now and then
-//! reports the other's figures. A request of estimated cost `c` is admitted while
+//! reports the other's figures. Recovery before a reset is therefore a refreshed reading above
+//! the governor's own estimate (the last reading less own spend since) and not above that last
+//! reading: own spend estimated higher than it cost. A request of estimated cost `c` is admitted while
 //! `remaining - own spend since that reading - c >= floor + reserve`, where the floor is
 //! `floor_percent` of the limit and the reserve is others' peak burn rate times the seconds to
 //! the window's reset times `reserve_factor`. Otherwise it waits, refreshing the reading every
@@ -27,8 +29,11 @@
 //! headers) therefore holds the slot to its call's end, and a later request of the same call
 //! waits until then — a hang that `quota-governor-writes` closes by releasing on the
 //! request-ended signal onetaskgraph's `request-completion` adds (manager ruling `a4`). The
-//! slot is only for requests to a backend whose responses report readings: a source's write
-//! to its own files (`local`, local-md's) neither takes nor waits for it (manager ruling `a5`).
+//! slot is only for requests to a backend whose responses report readings, decided by the
+//! resource the request names (manager ruling `a6`): onetaskgraph's request-gate contract
+//! reserves `local` for a source's write to its own files (local-md's), which neither takes nor
+//! waits for the slot, though it is still admitted against any reading of `local`; every other
+//! resource, `stdio` included, takes it. Nothing here names a plugin.
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};

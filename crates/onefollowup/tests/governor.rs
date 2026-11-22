@@ -332,6 +332,45 @@ fn a_remaining_that_rises_within_one_window_before_its_reset_is_ignored() {
 }
 
 #[test]
+fn recovery_before_the_reset_is_a_reading_above_the_own_estimate_and_never_above_the_last_reading()
+{
+    // Reserve off, floor 1000. 1002 read at the first call; a request of 1 is admitted and its
+    // response reports nothing, so the governor's own estimate is 1001. A request of 2 would
+    // take that to 999: held. Each case's refreshes then read the same window, before its reset.
+    let mut settings = shipped();
+    settings.reserve_factor = 0.0;
+    let held = |refreshed: u64| {
+        let reads = Arc::new(Mutex::new(0));
+        let counted = Arc::clone(&reads);
+        let harness = Harness::new(settings.clone(), instant(T0), move |_| {
+            let mut count = counted.lock().unwrap();
+            *count += 1;
+            let remaining = if *count == 1 { 1002 } else { refreshed };
+            vec![
+                reading("graphql", remaining, T0 + 600),
+                reading("core", 5000, T0 + 3600),
+            ]
+        });
+        assert_eq!(harness.request(Kind::Read, "graphql", Some(1)), 0.0);
+        harness.end();
+        let waited = harness.request(Kind::Read, "graphql", Some(2));
+        (waited, harness.notices())
+    };
+    // Read again at 1002, the last reading: above the estimate, so the spend it showed was
+    // less than estimated — recovery, admitted at the first refresh while held.
+    let (waited, notices) = held(1002);
+    assert_eq!(waited, 30.0);
+    assert!(
+        notices[0].contains("remaining 1001 of 5000, floor 1000"),
+        "{notices:?}"
+    );
+    // Read again at 4500, above the last reading before the reset: another window's figures,
+    // ignored, so the request waits out the reset.
+    let (waited, _) = held(4500);
+    assert_eq!(waited, 600.0, "held to the reset");
+}
+
+#[test]
 fn graphql_and_core_reset_apart_and_each_is_admitted_on_its_own_window() {
     // Both ample when the call is admitted; then a GraphQL response shows its window at 1010
     // until its reset at 90 s, while core, resetting 150 s later, still has plenty.
@@ -448,6 +487,64 @@ fn within_one_process_own_spend_crosses_the_floor_by_at_most_one_requests_estima
     );
     assert_eq!(harness.waits()[0].reason, Reason::Floor);
     assert!(harness.elapsed(T0) >= 3600.0);
+}
+
+#[test]
+fn a_local_write_neither_takes_nor_waits_for_the_slot_yet_is_admitted_against_its_reading() {
+    // A GraphQL request is in flight, its response not yet told, so it holds the slot. A write
+    // a source makes to its own files (`local`) goes meanwhile, without waiting for it; and a
+    // `local` window under its floor still holds such a write until a reading admits it.
+    let mut settings = shipped();
+    settings.reserve_factor = 0.0;
+    let harness = Harness::new(settings, instant(T0), |at| {
+        let local = if at.timestamp() >= T0 + 60 {
+            reading("local", 5000, T0 + 3660)
+        } else {
+            reading("local", 1000, T0 + 60)
+        };
+        vec![
+            reading("graphql", 5000, T0 + 3600),
+            reading("core", 5000, T0 + 3600),
+            local,
+        ]
+    });
+    let local = Request {
+        resource: "local".to_owned(),
+        cost_hint: None,
+    };
+    let admitted = harness.runtime.block_on(async {
+        harness
+            .governor
+            .admit_call(&[DESTINATION.to_owned()], Kind::Write)
+            .await;
+        harness
+            .governor
+            .before_request(&Request {
+                resource: "graphql".to_owned(),
+                cost_hint: Some(1),
+            })
+            .await;
+        // Real time, not the virtual clock: a write waiting on the slot would never return.
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            harness.governor.before_request(&local),
+        )
+        .await
+    });
+    assert!(
+        admitted.is_ok(),
+        "the local write waited for the slot the GraphQL request holds"
+    );
+    assert_eq!(
+        harness.elapsed(T0),
+        60.0,
+        "held on its own window's floor until the reading at its reset"
+    );
+    let waits = harness.waits();
+    assert_eq!(waits.len(), 1, "{waits:?}");
+    assert_eq!(waits[0].resource, "local");
+    assert_eq!(waits[0].reason, Reason::Floor);
+    harness.end();
 }
 
 #[test]

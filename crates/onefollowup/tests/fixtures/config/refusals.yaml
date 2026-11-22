@@ -202,6 +202,38 @@ cases:
     key: 'snapshot.launchable_for'
     message: 'not a duration'
   - document: |
+      governor: {floor_percent: 150}
+    key: 'governor.floor_percent'
+    message: 'is not a percentage: use a number from 0 to 100'
+  - document: |
+      governor: {floor_percent: -1}
+    key: 'governor.floor_percent'
+    message: 'is not a percentage'
+  - document: |
+      governor: {reserve_factor: -0.5}
+    key: 'governor.reserve_factor'
+    message: 'is not a factor'
+  - document: |
+      governor: {peak_window_seconds: 0}
+    key: 'governor.peak_window_seconds'
+    message: 'a peak rate is measured over at least one second'
+  - document: |
+      governor: {burn_history_seconds: 60}
+    key: 'governor.burn_history_seconds'
+    message: 'shorter than `peak_window_seconds`'
+  - document: |
+      governor: {min_peak_per_minute: {graphql: -3}}
+    key: 'governor.min_peak_per_minute.graphql'
+    message: 'is not a rate'
+  - document: |
+      governor: {sample_seconds: soon}
+    key: 'governor.sample_seconds'
+    message: 'invalid type'
+  - document: |
+      governor: {pace: fast}
+    key: 'governor.pace'
+    message: 'unknown field `pace`'
+  - document: |
       batch_id_pattern: '('
     key: 'batch_id_pattern'
     message: 'not a regular expression'

@@ -78,6 +78,18 @@ fn with_nothing_configured_it_prints_every_default() {
         ("hooks", json!({})),
         ("snapshot", json!({"launchable_for": "24h"})),
         ("comments", json!({})),
+        (
+            "governor",
+            json!({
+                "enabled": true,
+                "floor_percent": 20.0,
+                "reserve_factor": 1.0,
+                "peak_window_seconds": 300,
+                "burn_history_seconds": 86400,
+                "min_peak_per_minute": {"core": 60.0, "graphql": 40.0},
+                "sample_seconds": 30,
+            }),
+        ),
     ] {
         assert_eq!(config[key], expected, "{key}");
     }
@@ -443,6 +455,13 @@ fn case(key: &str) -> Option<Case> {
                 json!(["s", "{snapshot}"]),
             ],
         ),
+        "governor" => simple(
+            "governor: {floor_percent: 30}",
+            ("ONEFOLLOWUP_GOVERNOR__FLOOR_PERCENT", "40"),
+            "governor.floor_percent=50",
+            "/governor/floor_percent",
+            [json!(30.0), json!(40.0), json!(50.0)],
+        ),
         _ => return None,
     })
 }
@@ -665,4 +684,45 @@ fn every_rule_refuses_naming_its_key_and_the_file() {
         );
         assert!(stderr.contains(&case.message), "{document}: {stderr}");
     }
+}
+
+#[test]
+fn the_governor_s_keys_merge_one_by_one_and_each_layer_is_named() {
+    let directory = support::tempdir();
+    let file = directory.path().join("onefollowup.yaml");
+    std::fs::write(
+        &file,
+        "governor:\n  floor_percent: 25\n  min_peak_per_minute: {graphql: 50}\n",
+    )
+    .expect("written");
+    let shown = show(
+        directory.path(),
+        &[("ONEFOLLOWUP_GOVERNOR__SAMPLE_SECONDS", "10")],
+        &[],
+    );
+    assert_eq!(
+        shown["config"]["governor"],
+        json!({
+            "enabled": true,
+            "floor_percent": 25.0,
+            "reserve_factor": 1.0,
+            "peak_window_seconds": 300,
+            "burn_history_seconds": 86400,
+            "min_peak_per_minute": {"core": 60.0, "graphql": 50.0},
+            "sample_seconds": 10,
+        }),
+        "every key the governor has, each from the layer that last stated it"
+    );
+    assert_eq!(
+        shown["sources"]["governor"],
+        json!({"layer": "env", "name": "ONEFOLLOWUP_GOVERNOR__SAMPLE_SECONDS"}),
+        "{}",
+        shown["sources"]
+    );
+    let stderr = refusal(directory.path(), &[], &["--set", "governor.floor_percent=101"]);
+    assert!(
+        stderr.contains("`governor.floor_percent` from the flag --set"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("use a number from 0 to 100"), "{stderr}");
 }

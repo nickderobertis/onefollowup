@@ -552,6 +552,7 @@ key, the layer its value came from.
 | `hooks` | none | Commands run at named moments, and the `owner` a context file names (below). |
 | `snapshot` | `launchable_for: 24h` | How long a dry run's comment snapshot stays launchable. |
 | `comments` | none | `launch_command`: the argv `comments answer` runs once per launched batch, in onefollowup's working directory and environment, with `{"schema_version": 1, "batch", "feedback", "snapshot"}` on its stdin and, wherever an argument holds one, `{batch}` replaced with the batch, `{feedback}` with the path of the feedback file `comments launches` rendered for it, and `{snapshot}` with the snapshot directory. Its stdout and stderr are not printed; its exit code decides whether the pass settles. Without it `comments answer` is refused. |
+| `governor` | `enabled: true`, `floor_percent: 20`, `reserve_factor: 1`, `peak_window_seconds: 300`, `burn_history_seconds: 86400`, `min_peak_per_minute: {graphql: 40, core: 60}`, `sample_seconds: 30` | How every destination call is paced against the quota its destination reports (The quota governor, below): the floor as a percentage of each window's limit, the factor on the reserve kept for others, the span others' peak burn is measured over and how long it is remembered, the least rate in points a minute others are ever assumed to spend each resource at (a resource not named, 0), and the longest a reading is used before it is taken again. `enabled: false` sends every call at once. |
 
 No key says *when* the loop runs; that is the host's schedule.
 
@@ -637,7 +638,51 @@ candidate: only what the destination held when `prepare` searched is.
 **The shipped ticket shape.** The verifying agent writes every part plain
 ([`ticket-template.md.j2`](crates/onefollowup/defaults/ticket-template.md.j2)): `## Root cause`;
 `## Impact`'s labelled parts, the impact values in the record's `impact` alone;
-`## Examples`; `## Suggested fix`; the optional `## Rejected fixes` and `## Related tickets`;
+`## The quota governor
+
+Every destination call onefollowup makes, in every verb, is paced by a governor, so a pass
+never spends a token it shares with others below their share, and never waits while quota is
+ample. It reads what the destination reports through onetaskgraph (`GET /rate_limit` on a
+GitHub source, and every response's `x-ratelimit-*` headers); a destination that reports
+nothing — local-md, a stdio peer without `quota` — is never held.
+
+- **Where.** At the store, once per destination call before it is sent, and once per backend
+  request inside it through onetaskgraph's request gate, so one batched call is paced request
+  by request. It only ever waits, never refuses: a batch it paces completes, however long it
+  takes. No verb knows it is there.
+- **The line.** For each resource (`graphql`, `core`, …) and each rate-limit window of it that
+  has not reset, a request estimated to cost `c` goes at once while
+  `remaining - own spend since that reading - c >= floor + reserve`. The floor is
+  `floor_percent` of the window's limit; the reserve is others' peak burn rate × the seconds
+  until that window resets × `reserve_factor`, so it shrinks to nothing as the reset nears and
+  a pass may then spend down to the floor. A request's cost is the destination's hint when it
+  gives one, else the mean cost observed of a read or a write on that resource (1 before any).
+- **Windows.** One token can be answered from two windows of one resource, each with its own
+  reset, and `GET /rate_limit` now and then reports the other's figures. Readings are kept per
+  window: admission is against the least of the windows not yet past their reset, and a
+  remaining that rises inside one window before its reset is ignored.
+- **Others' burn.** The fall in remaining between two readings of one window, less
+  onefollowup's own spend in between, over the interval. The reserve uses the peak over any
+  `peak_window_seconds` within the last `burn_history_seconds`, never less than
+  `min_peak_per_minute` — 40 GraphQL and 60 core points a minute, just above the 5-minute peaks
+  measured on the shared token (35.6 and 57.1) — so a fresh process is protected before it has
+  measured anything, and a quiet hour cannot shrink the reserve to nothing.
+- **Waiting.** A held request prints one line on standard error naming the destination, the
+  resource, the remaining, the floor and reserve, others' mean and peak burn and the expected
+  resume, then re-reads every 30 seconds — that read itself passing the gate — and goes as soon
+  as a reading admits it, or the window resets.
+- **What it guarantees.** Each request is admitted only against the latest reading, less
+  onefollowup's own spend since; one process has one request in flight, so its own spend can
+  take a window under the floor by at most one request's estimate error. When others' spend
+  takes remaining under the floor plus the reserve, nothing more is sent until a reading
+  admits it. **It does not hold the floor against others**: another machine or consumer of
+  the token can cross the floor by its own spend, which no reading shows until after.
+- **Reported.** Each verb's result carries `quota_reads` — the readings taken, which no
+  `store_operations` entry counts — and `governor`, `{"waits": [{"source", "resource",
+  "seconds", "reason"}]}`, `reason` `floor` or `reserve`; both are absent when the verb reached
+  no destination.
+
+## Examples`; `## Suggested fix`; the optional `## Rejected fixes` and `## Related tickets`;
 and `## Evidence`, last, prose about what happened and nothing the record holds. The shipped
 render ([`ticket-render.md.j2`](crates/onefollowup/defaults/ticket-render.md.j2)) ends
 `## Impact` with a collapsed `Cost of the workaround` block, its first bullet the `- Workaround:`

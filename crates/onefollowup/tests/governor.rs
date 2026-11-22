@@ -8,99 +8,13 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use onefollowup::config::GovernorSettings;
-use onefollowup::governor::{Clock, Governor, Kind, Pending, Reading, Readings, Reason, Request};
+use onefollowup::governor::{Clock as _, Governor, Kind, Reading, Reason, Request};
 
-const DESTINATION: &str = "followups";
-
-/// A clock that moves only when told to or waited on: a wait passes at once, its length added.
-struct Virtual {
-    now: Mutex<DateTime<Utc>>,
-    waited: Mutex<Option<DateTime<Utc>>>,
-    /// Past this a wait fails the case rather than running on.
-    limit: Mutex<Option<DateTime<Utc>>>,
-}
-
-impl Virtual {
-    fn at(start: DateTime<Utc>) -> Arc<Self> {
-        Arc::new(Self {
-            now: Mutex::new(start),
-            waited: Mutex::new(None),
-            limit: Mutex::new(Some(start + chrono::Duration::days(2))),
-        })
-    }
-
-    fn advance(&self, seconds: f64) {
-        let mut now = self.now.lock().unwrap();
-        *now += chrono::Duration::milliseconds((seconds * 1000.0).round() as i64);
-    }
-}
-
-impl Clock for Virtual {
-    fn now(&self) -> DateTime<Utc> {
-        *self.now.lock().unwrap()
-    }
-
-    fn sleep(&self, duration: Duration) -> Pending<'_, ()> {
-        self.advance(duration.as_secs_f64());
-        let now = self.now();
-        assert!(
-            self.waited
-                .lock()
-                .unwrap()
-                .replace(now)
-                .is_none_or(|last| now > last),
-            "a wait moves the clock"
-        );
-        if let Some(limit) = *self.limit.lock().unwrap() {
-            assert!(now < limit, "the case waited past {limit}");
-        }
-        Box::pin(async {})
-    }
-}
-
-type Script = dyn Fn(DateTime<Utc>) -> Vec<Reading> + Send + Sync;
-
-/// GitHub's rate-limit state as a script of virtual time, recording when it was read.
-struct Scripted {
-    clock: Arc<Virtual>,
-    script: Box<Script>,
-    reads: Mutex<Vec<DateTime<Utc>>>,
-}
-
-impl Readings for Scripted {
-    fn read<'a>(&'a self, source: &'a str) -> Pending<'a, Result<Vec<Reading>, String>> {
-        assert_eq!(source, DESTINATION, "only the destination is read");
-        let now = self.clock.now();
-        self.reads.lock().unwrap().push(now);
-        let readings = (self.script)(now);
-        Box::pin(async move { Ok(readings) })
-    }
-}
-
-fn instant(seconds: i64) -> DateTime<Utc> {
-    DateTime::from_timestamp(seconds, 0).unwrap()
-}
-
-/// 2026-11-22T00:00:00Z: the start of every scripted case.
-const T0: i64 = 1_795_305_600;
-
-fn reading(resource: &str, remaining: u64, resets_at: i64) -> Reading {
-    Reading {
-        resource: resource.to_owned(),
-        limit: 5000,
-        remaining,
-        resets_at: instant(resets_at),
-    }
-}
-
-/// The shipped defaults, read from the shipped file.
-fn shipped() -> GovernorSettings {
-    onefollowup::config::defaults("test-host").governor
-}
+mod support;
+use support::{DESTINATION, Scripted, T0, Virtual, instant, reading, shipped};
 
 struct Harness {
     clock: Arc<Virtual>,
@@ -117,11 +31,7 @@ impl Harness {
         script: impl Fn(DateTime<Utc>) -> Vec<Reading> + Send + Sync + 'static,
     ) -> Self {
         let clock = Virtual::at(start);
-        let readings = Arc::new(Scripted {
-            clock: Arc::clone(&clock),
-            script: Box::new(script),
-            reads: Mutex::new(Vec::new()),
-        });
+        let readings = Scripted::new(&clock, script);
         let notices = Arc::new(Mutex::new(Vec::new()));
         let sink = Arc::clone(&notices);
         let governor = Governor::new(
@@ -468,7 +378,7 @@ fn with_quota_ample_both_traces_admit_every_request_of_a_full_and_a_weekly_pass_
                     "the governor object is reported, with no wait"
                 );
                 assert!(
-                    !harness.readings.reads.lock().unwrap().is_empty(),
+                    !harness.readings.reads().is_empty(),
                     "the doubled reading was read"
                 );
             }
@@ -504,7 +414,7 @@ fn when_the_reserve_is_not_covered_a_request_waits_says_so_and_resumes_at_the_re
     );
     // It read at the start, before refusing, then every 30 s while held: the admitting
     // reading is the last.
-    let reads = harness.readings.reads.lock().unwrap().clone();
+    let reads = harness.readings.reads();
     assert_eq!(reads.last().copied(), Some(instant(T0 + 180)));
     assert_eq!(
         reads.iter().filter(|read| **read > instant(T0)).count(),
@@ -540,7 +450,7 @@ fn a_spike_in_others_spend_under_the_floor_stops_every_request_until_a_reading_s
     let waits = harness.waits();
     assert_eq!(waits.len(), 1);
     assert_eq!(waits[0].reason, Reason::Floor);
-    let reads = harness.readings.reads.lock().unwrap().clone();
+    let reads = harness.readings.reads();
     assert_eq!(
         reads.last().copied(),
         Some(instant(T0 + 120)),
@@ -821,7 +731,10 @@ fn within_one_process_own_spend_crosses_the_floor_by_at_most_one_requests_estima
     // (3 - 1) at most; after that response, nothing went until the reset's reading.
     assert_eq!(sent, 7);
     assert_eq!(lowest, 999);
-    assert!(1000 - lowest < 3, "under the floor by less than the actual cost");
+    assert!(
+        1000 - lowest < 3,
+        "under the floor by less than the actual cost"
+    );
     assert_eq!(harness.waits()[0].reason, Reason::Floor);
     assert!(harness.elapsed(T0) >= 3600.0);
 

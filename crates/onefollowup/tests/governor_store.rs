@@ -1,0 +1,659 @@
+//! The governor at the store's real chokepoint, over a real local-md destination, on a
+//! virtual clock: GitHub's rate-limit state — the doubled reading — is the only thing doubled.
+//!
+//! A held destination call must send nothing until a reading admits it. For a write that is
+//! read off the destination's files, unchanged at every reading taken while held; for a read
+//! it is that the call answers what a person changed at the recovering reading, which a read
+//! sent earlier could not have seen.
+
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+
+use chrono::{DateTime, Utc};
+use onefollowup::governor::{self, Clock as _, Parts, Reading, Reason};
+use onefollowup::store::{
+    CopyBatch, EdgeWrite, HeldUpdate, Narrowing, NewTask, Search, SearchIn, Store, TaskChange,
+};
+use serde_json::Value;
+
+mod support;
+use support::{DESTINATION, Scripted, T0, Virtual, instant, reading};
+
+/// A store of two local-md sources, `drafts` (local) and the destination.
+struct World {
+    _directory: tempfile::TempDir,
+    root: PathBuf,
+}
+
+impl World {
+    fn new() -> Self {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().to_path_buf();
+        let mut store = String::from("sources:\n");
+        for source in ["drafts", DESTINATION] {
+            std::fs::create_dir_all(root.join(format!("{source}-root/tasks"))).unwrap();
+            store.push_str(&format!(
+                "  {source}:\n    plugin: local-md\n    config:\n      root: {source}-root\n"
+            ));
+        }
+        std::fs::write(root.join("onetaskgraph.yaml"), store).unwrap();
+        Self {
+            _directory: directory,
+            root,
+        }
+    }
+
+    fn environment(&self) -> Vec<(String, String)> {
+        let home = self.root.join("home");
+        vec![
+            ("HOME".to_owned(), home.display().to_string()),
+            (
+                "XDG_CONFIG_HOME".to_owned(),
+                home.join("config").display().to_string(),
+            ),
+            (
+                "XDG_CACHE_HOME".to_owned(),
+                home.join("cache").display().to_string(),
+            ),
+        ]
+    }
+
+    /// A store governed as a verb's is, by the system's clock and the store's own readings.
+    fn store(&self) -> Store {
+        Store::open(Some(&self.root), &self.root, &self.environment())
+            .unwrap()
+            .with_local("drafts")
+    }
+
+    /// A store whose governor reads `readings` and `clock`, its wait lines kept in `notices`.
+    fn governed(
+        &self,
+        clock: &Arc<Virtual>,
+        readings: &Arc<Scripted>,
+        notices: &Arc<Mutex<Vec<String>>>,
+    ) -> Store {
+        let sink = Arc::clone(notices);
+        let parts = Parts {
+            clock: clock.clone(),
+            readings: Some(readings.clone()),
+            notices: Arc::new(move |line: &str| sink.lock().unwrap().push(line.to_owned())),
+        };
+        governor::with_parts(parts, || self.store())
+    }
+
+    /// Every file under the destination's root, with its text.
+    fn destination(&self) -> BTreeMap<PathBuf, String> {
+        destination_files(&self.root)
+    }
+
+    fn task_file(&self, id: &str) -> PathBuf {
+        let native = id.split_once(':').unwrap().1;
+        self.root
+            .join(format!("{DESTINATION}-root/tasks/{native}.md"))
+    }
+}
+
+/// Every file under the destination's root in the store at `root`, with its text.
+fn destination_files(root: &Path) -> BTreeMap<PathBuf, String> {
+    fn walk(directory: &Path, into: &mut BTreeMap<PathBuf, String>) {
+        for entry in std::fs::read_dir(directory).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                walk(&path, into);
+            } else {
+                into.insert(
+                    path.clone(),
+                    std::fs::read_to_string(&path).unwrap_or_default(),
+                );
+            }
+        }
+    }
+    let mut files = BTreeMap::new();
+    walk(&root.join(format!("{DESTINATION}-root")), &mut files);
+    files
+}
+
+fn new_task(source: &str, project: &str, title: &str) -> NewTask {
+    NewTask {
+        source: source.to_owned(),
+        project: project.to_owned(),
+        title: title.to_owned(),
+        body: format!("{title}, as a pass found it.\n"),
+        status: "backlog".to_owned(),
+        priority: "none".to_owned(),
+        labels: Vec::new(),
+        repositories: Vec::new(),
+        metadata: BTreeMap::new(),
+        assignee: None,
+    }
+}
+
+/// The destination's project and `count` tasks in it, written by an ungoverned-for-quota
+/// store (local-md reports no reading, so nothing waits).
+fn seeded(world: &World, count: usize) -> Vec<String> {
+    let store = world.store();
+    store
+        .ensure_project(DESTINATION, "board", "Board", &BTreeMap::new(), false)
+        .unwrap();
+    (0..count)
+        .map(|at| {
+            store
+                .create_task(&new_task(DESTINATION, "board", &format!("Task {at:03}")))
+                .unwrap()
+                .id
+        })
+        .collect()
+}
+
+/// Under the floor until the GraphQL window resets at 60 s, a full window after it.
+fn held_until_reset(at: DateTime<Utc>) -> Vec<Reading> {
+    let graphql = if at < instant(T0 + 60) {
+        reading("graphql", 900, T0 + 60)
+    } else {
+        reading("graphql", 5000, T0 + 3660)
+    };
+    vec![graphql, reading("core", 5000, T0 + 3600)]
+}
+
+/// One case: `call` made through a store held under the floor until 60 s. A write's files are
+/// unchanged at every reading taken while held; `at_recovery` runs at the reading that admits
+/// it. Answers what the call answered.
+fn held_call<T>(
+    world: &World,
+    write: bool,
+    at_recovery: impl Fn() + Send + Sync + 'static,
+    call: impl FnOnce(&Store) -> T,
+) -> T {
+    let clock = Virtual::at(instant(T0));
+    let readings = Scripted::new(&clock, held_until_reset);
+    let notices = Arc::new(Mutex::new(Vec::new()));
+    let store = world.governed(&clock, &readings, &notices);
+    let before = world.destination();
+    let root = world.root.clone();
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let kept = Arc::clone(&seen);
+    let recovered = Mutex::new(false);
+    readings.on_read(move |now| {
+        if now < instant(T0 + 60) {
+            if write {
+                assert_eq!(
+                    destination_files(&root),
+                    before,
+                    "nothing was written while held"
+                );
+            }
+        } else if !std::mem::replace(&mut *recovered.lock().unwrap(), true) {
+            at_recovery();
+        }
+        kept.lock().unwrap().push(now);
+    });
+    let answered = call(&store);
+    let report = store
+        .governor_report()
+        .expect("the governor governed the call");
+    assert_eq!(report.waits.len(), 1, "{report:?}");
+    assert_eq!(report.waits[0].reason, Reason::Floor);
+    assert_eq!(report.waits[0].seconds, 60);
+    assert_eq!(
+        clock.now(),
+        instant(T0 + 60),
+        "it went at the recovering reading"
+    );
+    assert!(
+        seen.lock()
+            .unwrap()
+            .iter()
+            .any(|read| *read < instant(T0 + 60)),
+        "it was read while held"
+    );
+    assert_eq!(notices.lock().unwrap().len(), 1);
+    assert_eq!(
+        store.operations().len(),
+        1,
+        "the call was sent once: {:?}",
+        store.operations()
+    );
+    answered
+}
+
+/// A store, opened on its own thread, as another process — a person's edit — would write.
+fn elsewhere(root: &Path, change: impl FnOnce(&Store) + Send) {
+    std::thread::scope(|scope| {
+        scope
+            .spawn(|| {
+                let world = World {
+                    _directory: tempfile::tempdir().unwrap(),
+                    root: root.to_path_buf(),
+                };
+                change(&world.store());
+            })
+            .join()
+            .unwrap();
+    });
+}
+
+#[test]
+fn a_held_write_sends_nothing_until_a_reading_shows_recovery_then_lands_once() {
+    // ensure_project, create_task, update_task, copy, set_parents, add_links: each its own
+    // engine call.
+    let world = World::new();
+    let ids = seeded(&world, 3);
+
+    let project = held_call(
+        &world,
+        true,
+        || {},
+        |store| {
+            store
+                .ensure_project(
+                    DESTINATION,
+                    "other-board",
+                    "Other board",
+                    &BTreeMap::new(),
+                    false,
+                )
+                .unwrap()
+        },
+    );
+    assert_eq!(project, "other-board");
+
+    let created = held_call(
+        &world,
+        true,
+        || {},
+        |store| {
+            store
+                .create_task(&new_task(DESTINATION, "board", "Created while held"))
+                .unwrap()
+        },
+    );
+    let created_files: Vec<_> = world
+        .destination()
+        .into_values()
+        .filter(|text| text.contains("Created while held"))
+        .collect();
+    assert_eq!(created_files.len(), 1, "created once");
+    assert_eq!(created.title, "Created while held");
+
+    let updated = held_call(
+        &world,
+        true,
+        || {},
+        |store| {
+            store
+                .update_task(
+                    &ids[0],
+                    &TaskChange {
+                        title: Some("Renamed while held".to_owned()),
+                        ..TaskChange::default()
+                    },
+                )
+                .unwrap()
+        },
+    );
+    assert_eq!(updated.title, "Renamed while held");
+
+    // A draft, copied into the destination: the drafts source is local, the copy governed.
+    let draft = {
+        let store = world.store();
+        store
+            .ensure_project("drafts", "batch", "Batch", &BTreeMap::new(), false)
+            .unwrap();
+        store
+            .create_task(&new_task("drafts", "batch", "A draft to copy"))
+            .unwrap()
+            .id
+    };
+    let copied = held_call(
+        &world,
+        true,
+        || {},
+        |store| {
+            store
+                .copy(&CopyBatch {
+                    destination: DESTINATION.to_owned(),
+                    items: vec![draft.clone()],
+                    create: true,
+                    preserve_status: false,
+                    versions: Vec::new(),
+                })
+                .unwrap()
+        },
+    );
+    assert_eq!(copied.len(), 1);
+    assert_eq!(copied[0].action, "created", "{copied:?}");
+    assert_eq!(
+        world
+            .destination()
+            .values()
+            .filter(|text| text.contains("A draft to copy"))
+            .count(),
+        1
+    );
+
+    let parented = held_call(
+        &world,
+        true,
+        || {},
+        |store| {
+            store
+                .set_parents(&[EdgeWrite {
+                    from: ids[1].clone(),
+                    to: ids[0].clone(),
+                    link_type: "parent".to_owned(),
+                }])
+                .unwrap()
+        },
+    );
+    assert_eq!(parented.len(), 1);
+    assert!(parented[0].reason.is_none(), "{parented:?}");
+
+    let linked = held_call(
+        &world,
+        true,
+        || {},
+        |store| {
+            store
+                .add_links(&[EdgeWrite {
+                    from: ids[2].clone(),
+                    to: ids[0].clone(),
+                    link_type: "relates-to".to_owned(),
+                }])
+                .unwrap()
+        },
+    );
+    assert_eq!(linked.len(), 1);
+    assert!(linked[0].reason.is_none(), "{linked:?}");
+    let relations = world.store().relations(&ids).unwrap();
+    assert_eq!(relations[1].parent.as_deref(), Some(ids[0].as_str()));
+    assert_eq!(relations[2].links.len(), 1, "linked once: {relations:?}");
+}
+
+#[test]
+fn a_held_read_sends_nothing_until_a_reading_shows_recovery_then_reads_once() {
+    // find, read, comments_since, relations: each its own engine call, each answering what a
+    // person changed at the recovering reading.
+    let world = World::new();
+    let ids = seeded(&world, 2);
+
+    let root = world.root.clone();
+    let found = held_call(
+        &world,
+        false,
+        move || {
+            elsewhere(&root, |store| {
+                store
+                    .create_task(&new_task(DESTINATION, "board", "Filed at recovery"))
+                    .unwrap();
+            });
+        },
+        |store| {
+            store
+                .find(
+                    DESTINATION,
+                    &[Search {
+                        key: "recovery".to_owned(),
+                        text: Some("Filed at recovery".to_owned()),
+                        within: SearchIn::Title,
+                        ..Search::default()
+                    }],
+                )
+                .unwrap()
+        },
+    );
+    assert_eq!(found[0].items.len(), 1, "{found:?}");
+
+    let file = world.task_file(&ids[0]);
+    let read = held_call(
+        &world,
+        false,
+        move || {
+            let text = std::fs::read_to_string(&file).unwrap();
+            std::fs::write(
+                &file,
+                text.replace("Task 000", "Task 000, edited at recovery"),
+            )
+            .unwrap();
+        },
+        |store| store.read(&[ids[0].clone()], false).unwrap(),
+    );
+    assert_eq!(
+        read[0].item.as_ref().map(|item| item.title.as_str()),
+        Some("Task 000, edited at recovery")
+    );
+
+    let root = world.root.clone();
+    let item = ids[1].clone();
+    let listed = held_call(
+        &world,
+        false,
+        move || {
+            let item = item.clone();
+            elsewhere(&root, move |store| {
+                store
+                    .add_comments(
+                        DESTINATION,
+                        &[onefollowup::store::CommentPost {
+                            item,
+                            body: "Commented at recovery.".to_owned(),
+                        }],
+                    )
+                    .unwrap();
+            });
+        },
+        |store| {
+            store
+                .comments_since(
+                    DESTINATION,
+                    &DateTime::<Utc>::from_timestamp(0, 0).unwrap(),
+                    &Narrowing::default(),
+                )
+                .unwrap()
+        },
+    );
+    assert_eq!(listed.comments.len(), 1, "{listed:?}");
+    assert_eq!(listed.comments[0].body, "Commented at recovery.");
+
+    let root = world.root.clone();
+    let (child, parent) = (ids[1].clone(), ids[0].clone());
+    let related = held_call(
+        &world,
+        false,
+        move || {
+            let edge = EdgeWrite {
+                from: child.clone(),
+                to: parent.clone(),
+                link_type: "parent".to_owned(),
+            };
+            elsewhere(&root, move |store| {
+                store.set_parents(&[edge]).unwrap();
+            });
+        },
+        |store| store.relations(&ids).unwrap(),
+    );
+    assert_eq!(related[1].parent.as_deref(), Some(ids[0].as_str()));
+}
+
+#[test]
+fn one_update_many_of_100_waits_after_the_40th_record_until_a_reading_admits_the_41st() {
+    // local-md names its record writes `local`; the doubled reading meters that resource as
+    // GitHub meters one: 1000, floor 200, 240 left less every record written, resetting at
+    // 90 s to a full window. Nothing reserves for others on `local` (no seeded peak, no
+    // history), so the line is the floor: the 41st record would take it to 199.
+    let world = World::new();
+    let ids = seeded(&world, 100);
+    let root = world.root.clone();
+    let written = move || {
+        std::fs::read_dir(root.join(format!("{DESTINATION}-root/tasks")))
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| {
+                std::fs::read_to_string(entry.path())
+                    .unwrap_or_default()
+                    .contains("updated in one batch")
+            })
+            .count() as u64
+    };
+    let count = written.clone();
+    let clock = Virtual::at(instant(T0));
+    let readings = Scripted::new(&clock, move |at| {
+        let written = count();
+        let local = if at < instant(T0 + 90) {
+            reading("local", 0, T0 + 90)
+        } else {
+            reading("local", 0, T0 + 3690)
+        };
+        let remaining = if at < instant(T0 + 90) {
+            240 - written
+        } else {
+            1000 - (written - 40)
+        };
+        vec![
+            Reading {
+                limit: 1000,
+                remaining,
+                ..local
+            },
+            reading("graphql", 5000, T0 + 3600),
+            reading("core", 5000, T0 + 3600),
+        ]
+    });
+    let held_at = Arc::new(Mutex::new(Vec::new()));
+    let kept = Arc::clone(&held_at);
+    let during = written.clone();
+    readings.on_read(move |now| kept.lock().unwrap().push((now, during())));
+    let notices = Arc::new(Mutex::new(Vec::new()));
+    let store = world.governed(&clock, &readings, &notices);
+    let updates: Vec<HeldUpdate> = ids
+        .iter()
+        .map(|id| HeldUpdate {
+            item: id.clone(),
+            body: Some(format!("{id}, updated in one batch.\n")),
+            ..HeldUpdate::default()
+        })
+        .collect();
+    let answers = store.update_many(DESTINATION, &updates).unwrap();
+
+    assert_eq!(answers.len(), 100, "every item answered");
+    assert!(
+        answers.iter().all(|answer| answer.reason.is_none()),
+        "{answers:?}"
+    );
+    let answered: std::collections::BTreeSet<&str> =
+        answers.iter().map(|answer| answer.item.as_str()).collect();
+    assert_eq!(answered.len(), 100);
+    assert_eq!(written(), 100, "every record landed");
+    for id in &ids {
+        let text = std::fs::read_to_string(world.task_file(id)).unwrap();
+        assert_eq!(
+            text.matches("updated in one batch").count(),
+            1,
+            "{id} written once"
+        );
+    }
+    let reads = held_at.lock().unwrap().clone();
+    let held: Vec<_> = reads
+        .iter()
+        .filter(|(at, _)| *at > instant(T0) && *at < instant(T0 + 90))
+        .collect();
+    assert!(!held.is_empty(), "read while held: {reads:?}");
+    assert!(
+        reads
+            .iter()
+            .filter(|(at, _)| *at < instant(T0 + 90))
+            .all(|(_, written)| *written <= 40),
+        "the 41st was not written before the reading that admits it: {reads:?}"
+    );
+    assert!(
+        reads
+            .iter()
+            .any(|(at, written)| *at == instant(T0 + 90) && *written == 40),
+        "{reads:?}"
+    );
+    let report = store.governor_report().unwrap();
+    assert_eq!(report.waits.len(), 1, "{report:?}");
+    assert_eq!(report.waits[0].resource, "local");
+    assert_eq!(report.waits[0].seconds, 90);
+    assert_eq!(report.waits[0].reason, Reason::Floor);
+    assert_eq!(store.operations().len(), 1, "one update-many");
+    // The reading said 200; local-md answers no record write with a reading, so the 40 it
+    // admitted stay unanswered until the call ends and are still counted against it.
+    let line = notices.lock().unwrap()[0].clone();
+    assert!(
+        line.contains("on local: remaining 160 of 1000, floor 200"),
+        "{line}"
+    );
+}
+
+#[test]
+fn one_follow_up_batch_over_local_md_which_reports_no_reading_is_admitted_without_waiting() {
+    // The store's own readings: local-md reports none.
+    let world = World::new();
+    let clock = Virtual::at(instant(T0));
+    let notices = Arc::new(Mutex::new(Vec::new()));
+    let sink = Arc::clone(&notices);
+    let store = governor::with_parts(
+        Parts {
+            clock: clock.clone(),
+            readings: None,
+            notices: Arc::new(move |line: &str| sink.lock().unwrap().push(line.to_owned())),
+        },
+        || world.store(),
+    );
+    store
+        .ensure_project(DESTINATION, "board", "Board", &BTreeMap::new(), false)
+        .unwrap();
+    let ids: Vec<String> = (0..10)
+        .map(|at| {
+            store
+                .create_task(&new_task(DESTINATION, "board", &format!("Filed {at}")))
+                .unwrap()
+                .id
+        })
+        .collect();
+    let updates: Vec<HeldUpdate> = ids
+        .iter()
+        .map(|id| HeldUpdate {
+            item: id.clone(),
+            status: Some("todo".to_owned()),
+            ..HeldUpdate::default()
+        })
+        .collect();
+    store.update_many(DESTINATION, &updates).unwrap();
+    store
+        .add_comments(
+            DESTINATION,
+            &ids.iter()
+                .map(|id| onefollowup::store::CommentPost {
+                    item: id.clone(),
+                    body: "Evidence.".to_owned(),
+                })
+                .collect::<Vec<_>>(),
+        )
+        .unwrap();
+    assert_eq!(
+        clock.now(),
+        instant(T0),
+        "no virtual time passed in admission"
+    );
+    assert_eq!(
+        store.governor_report().map(|report| report.waits),
+        Some(Vec::new())
+    );
+    assert!(notices.lock().unwrap().is_empty());
+    assert!(
+        store.quota_reads() >= 1,
+        "the destination was asked for its reading"
+    );
+    let destination_ops: Vec<Value> = store
+        .operations()
+        .iter()
+        .map(|op| serde_json::to_value(op).unwrap())
+        .collect();
+    assert_eq!(
+        destination_ops.len(),
+        13,
+        "the governor's reads are no store operation"
+    );
+}

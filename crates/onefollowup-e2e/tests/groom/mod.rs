@@ -19,6 +19,7 @@ macro_rules! groom_journeys {
             prepare::a_zero_shard_size_is_refused,
             prepare::an_unreachable_repository_fails_naming_it,
             prepare::a_configured_task_template_and_persona_shape_the_task,
+            prepare::a_dry_run_writes_nothing_with_or_without_a_clone,
             check::verdicts_are_held_to_the_rules_and_planned,
             check::malformed_verdict_records_are_refused_by_rule,
             check::a_plan_breaking_protection_is_refused_and_kept,

@@ -60,6 +60,7 @@ impl World {
         std::fs::write(root.join("onefollowup.yaml"), "{}\n").expect("the configuration");
         std::fs::create_dir_all(root.join("home/config")).expect("home");
         std::fs::create_dir_all(root.join("repos")).expect("repos");
+        std::fs::create_dir_all(root.join("tmp")).expect("a temporary directory");
         std::fs::write(
             root.join("home/.gitconfig"),
             format!(
@@ -96,6 +97,10 @@ impl World {
                 "/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin".to_owned(),
             ),
             ("GIT_CONFIG_NOSYSTEM".to_owned(), "1".to_owned()),
+            (
+                "TMPDIR".to_owned(),
+                self.root.join("tmp").display().to_string(),
+            ),
         ]
     }
 

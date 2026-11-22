@@ -317,3 +317,121 @@ pub fn a_configured_task_template_and_persona_shape_the_task(runner: &dyn Runner
         ran.stderr
     );
 }
+
+/// Every directory and file under `directory`, each file with its bytes.
+fn tree(directory: &std::path::Path) -> std::collections::BTreeMap<String, Option<Vec<u8>>> {
+    fn walk(
+        root: &std::path::Path,
+        at: &std::path::Path,
+        into: &mut std::collections::BTreeMap<String, Option<Vec<u8>>>,
+    ) {
+        let Ok(entries) = std::fs::read_dir(at) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = path
+                .strip_prefix(root)
+                .expect("under the root")
+                .display()
+                .to_string();
+            if path.is_dir() {
+                into.insert(name, None);
+                walk(root, &path, into);
+            } else {
+                into.insert(name, Some(std::fs::read(&path).expect("readable")));
+            }
+        }
+    }
+    let mut found = std::collections::BTreeMap::new();
+    walk(directory, directory, &mut found);
+    found
+}
+
+/// The paths whose presence or bytes differ between `before` and `after`.
+fn changed(
+    before: &std::collections::BTreeMap<String, Option<Vec<u8>>>,
+    after: &std::collections::BTreeMap<String, Option<Vec<u8>>>,
+) -> Vec<String> {
+    before
+        .keys()
+        .chain(after.keys())
+        .filter(|path| before.get(*path) != after.get(*path))
+        .cloned()
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
+pub fn a_dry_run_writes_nothing_with_or_without_a_clone(runner: &dyn Runner) {
+    const WIDGETS: &str = "github.com/example/widgets";
+    let world = World::new();
+    let commit = world.repository(WIDGETS, &[("src/a.rs", "a\n"), ("src/b.rs", "b\n")]);
+    for (id, path) in [("wa", "src/a.rs"), ("wb", "src/b.rs")] {
+        world.ticket(
+            id,
+            &format!("widgets: {id}"),
+            "backlog",
+            &[WIDGETS],
+            "Its body.",
+        );
+        let record = world.groomed(id, &super::world::ago(600), WIDGETS, &commit, &[path], &[]);
+        world.record(id, &record.to_value());
+    }
+    world.ticket("wn", "widgets: a new ticket", "backlog", &[WIDGETS], "New.");
+    let work = world.root.join(".onefollowup");
+    let clone = work.join("groom/clones").join(WIDGETS);
+
+    // No clone yet: a dry run leaves no clone, no batch and no temporary file behind.
+    let before = tree(&work);
+    let dry = world.json(runner, 0, &["groom", "prepare", "--dry-run"]);
+    assert_eq!(
+        changed(&before, &tree(&work)),
+        Vec::<String>::new(),
+        "a dry run with no clone writes nothing"
+    );
+    assert!(!clone.exists(), "a dry run makes no clone");
+    assert_eq!(
+        tree(&world.root.join("tmp")).keys().collect::<Vec<_>>(),
+        Vec::<&String>::new(),
+        "its fetch is cleaned up"
+    );
+    let printed = world.json(runner, 0, &["groom", "prepare"]);
+    assert_eq!(
+        counts(&dry),
+        counts(&printed),
+        "with no clone, a dry run counts as prepare does"
+    );
+    assert_eq!(printed["selected"], 1, "only the new ticket: {printed}");
+    assert!(clone.join(".git").exists(), "prepare keeps its clone");
+
+    // The clone exists and the remote's main moved past it, touching `wa`'s evidence.
+    let moved = world.commit(WIDGETS, &[("src/a.rs", "a, changed\n")], "change a");
+    let before = tree(&work);
+    let dry = world.json(runner, 0, &["groom", "prepare", "--dry-run"]);
+    assert_eq!(
+        dry["selected"], 2,
+        "the move selects `wa` beside the new ticket: {dry}"
+    );
+    assert_eq!(
+        changed(&before, &tree(&work)),
+        Vec::<String>::new(),
+        "a dry run fetches nothing into the clone and writes no batch"
+    );
+    assert_eq!(
+        tree(&world.root.join("tmp")).keys().collect::<Vec<_>>(),
+        Vec::<&String>::new(),
+        "its fetch is cleaned up"
+    );
+    let printed = world.json(runner, 0, &["groom", "prepare"]);
+    assert_eq!(
+        counts(&dry),
+        counts(&printed),
+        "after a move, a dry run counts as prepare does"
+    );
+    assert_eq!(
+        world.git(&clone, &["rev-parse", "HEAD"]),
+        moved,
+        "prepare itself fetches the clone to the moved main"
+    );
+}

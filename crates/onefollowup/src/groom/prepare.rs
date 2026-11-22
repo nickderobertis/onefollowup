@@ -237,11 +237,24 @@ pub fn run(settings: &Settings, args: GroomPrepareArgs) -> Result<GroomPrepared,
         // A repository is a path under the clones and part of a URL: only `host/owner/name`.
         .filter(|repository| is_repository(repository))
         .collect();
-    let clones = groom.clones();
+    // A dry run writes nothing: its clones are made in temporary storage, removed when the
+    // verb returns, and the configured clones are neither created nor fetched.
+    let scratch = if args.dry_run {
+        Some(git::Scratch::new(settings.environment())?)
+    } else {
+        None
+    };
+    let clones = scratch
+        .as_ref()
+        .map_or_else(|| groom.clones(), |scratch| scratch.path().to_path_buf());
     let mut fetched: BTreeMap<String, FetchedRepository> = BTreeMap::new();
     for repository in named {
         let clone = git::clone_path(&clones, repository);
-        let commit = git::fetch(groom.git(), repository, &clone)?;
+        let commit = if scratch.is_some() {
+            git::fetch_temporary(groom.git(), repository, &clone)?
+        } else {
+            git::fetch(groom.git(), repository, &clone)?
+        };
         fetched.insert(
             repository.to_owned(),
             FetchedRepository {

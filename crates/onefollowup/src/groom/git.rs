@@ -122,6 +122,83 @@ pub fn fetch(git: Git<'_>, repository: &str, clone: &Path) -> Result<String, Err
     Ok(commit)
 }
 
+/// Clone `repository` bare and blob-less into the new directory `clone`, for a dry run that
+/// keeps no clone, and answer its `main` commit. Its trees answer every question selection
+/// asks, and nothing is checked out.
+///
+/// # Errors
+///
+/// `git` that cannot run, or a clone that fails.
+pub fn fetch_temporary(git: Git<'_>, repository: &str, clone: &Path) -> Result<String, Error> {
+    let source = url(repository);
+    let cloned = git.run(
+        None,
+        &[
+            "clone",
+            "--quiet",
+            "--bare",
+            "--filter=blob:none",
+            "--branch",
+            MAIN,
+            &source,
+            &clone.to_string_lossy(),
+        ],
+    )?;
+    ran(&cloned, &format!("cloning {source}"))?;
+    ran(
+        &git.run(
+            Some(clone),
+            &["rev-parse", "--verify", &format!("refs/heads/{MAIN}")],
+        )?,
+        &format!("reading {repository}'s `{MAIN}`"),
+    )
+}
+
+/// A directory of the verb's temporary storage, removed with everything in it when dropped.
+#[derive(Debug)]
+pub struct Scratch {
+    path: PathBuf,
+}
+
+impl Scratch {
+    /// A new directory under the environment's `TMPDIR`, or the system's temporary directory.
+    ///
+    /// # Errors
+    ///
+    /// A directory that cannot be created.
+    pub fn new(environment: &[(String, String)]) -> Result<Self, Error> {
+        let base = environment
+            .iter()
+            .find(|(name, value)| name == "TMPDIR" && !value.is_empty())
+            .map_or_else(std::env::temp_dir, |(_, value)| PathBuf::from(value));
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |since| since.as_nanos());
+        let path = base.join(format!(
+            "onefollowup-groom-dry-run-{}-{stamp}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&path).map_err(|error| {
+            Error::Failed(format!("{}: could not be created: {error}", path.display()))
+        })?;
+        Ok(Self { path })
+    }
+
+    /// The directory.
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        // Temporary storage: a removal the system refuses leaves it to the system's own sweep,
+        // and the verb's answer does not depend on it.
+        let _ignored = std::fs::remove_dir_all(&self.path);
+    }
+}
+
 /// Whether `commit` is an ancestor of `main` (or is it) in `clone`. A commit the clone does
 /// not hold is not.
 ///

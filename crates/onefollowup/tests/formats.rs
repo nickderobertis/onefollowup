@@ -579,14 +579,40 @@ fn a_receipt_journal_with_a_line_of_another_schema_is_refused() {
     }
 }
 
+/// A schema-1 record, read as schema 2 and written as it: byte for byte the same but for the
+/// schema it states, since schema 2 only adds an optional member.
+fn reads_schema_one<T: Versioned + std::fmt::Debug>(path: &str) -> T {
+    let text = fixture(path);
+    assert!(text.contains("\"schema\": 1,"), "{path} is schema 1");
+    let parsed = T::parse(&text).unwrap_or_else(|error| panic!("{path}: {error}"));
+    assert_eq!(
+        parsed.render(),
+        text.replacen("\"schema\": 1,", "\"schema\": 2,", 1),
+        "{path} re-rendered as schema 2"
+    );
+    parsed
+}
+
 #[test]
-fn dispositions_round_trip_with_and_without_kind() {
-    let plain: Dispositions = round_trips("dispositions/dispositions.json");
+fn dispositions_round_trip_with_dismissals_and_still_read_schema_one() {
+    let plain: Dispositions = reads_schema_one("dispositions/dispositions.json");
     assert!(plain.dispositions.iter().all(|entry| entry.kind.is_none()));
-    let kinded: Dispositions = round_trips("dispositions/dispositions-with-kind.json");
+    let kinded: Dispositions = reads_schema_one("dispositions/dispositions-with-kind.json");
     assert_eq!(kinded.dispositions[1].kind.as_deref(), Some("error"));
-    round_trips::<Dispositions>("dispositions/skeleton-first-open.json");
-    let carried: CarriedDispositions = round_trips("dispositions/dispositions.carried.json");
+    assert!(
+        kinded
+            .dispositions
+            .iter()
+            .all(|entry| entry.dismissed.is_empty())
+    );
+    reads_schema_one::<Dispositions>("dispositions/skeleton-first-open.json");
+    let dismissing: Dispositions = round_trips("dispositions/dispositions-with-dismissals.json");
+    assert_eq!(
+        dismissing.dispositions[0].dismissed[0].item,
+        "followups:item-17"
+    );
+    assert!(dismissing.dispositions[1].dismissed.is_empty());
+    let carried: CarriedDispositions = reads_schema_one("dispositions/dispositions.carried.json");
     assert!(
         carried
             .dispositions
@@ -594,24 +620,27 @@ fn dispositions_round_trip_with_and_without_kind() {
             .all(|entry| entry.kind.is_none())
     );
     let carried: CarriedDispositions =
-        round_trips("dispositions/dispositions.carried-with-kind.json");
+        reads_schema_one("dispositions/dispositions.carried-with-kind.json");
     assert!(
         carried
             .dispositions
             .iter()
             .all(|entry| entry.kind.is_some())
     );
+    let carried: CarriedDispositions =
+        round_trips("dispositions/dispositions.carried-with-dismissals.json");
+    assert_eq!(carried.dispositions[0].dismissed.len(), 1);
     refused::<Dispositions>(
-        "dispositions/dispositions-schema2.json",
+        "dispositions/dispositions-schema3.json",
         "dispositions",
-        "2",
-        1,
+        "3",
+        2,
     );
     refused::<CarriedDispositions>(
-        "dispositions/dispositions.carried-schema2.json",
+        "dispositions/dispositions.carried-schema3.json",
         "carried dispositions",
-        "2",
-        1,
+        "3",
+        2,
     );
 }
 

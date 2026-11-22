@@ -1,13 +1,14 @@
 //! `prepare`: snapshot the batch's input set — its drafts and the `batch_preparing` hook's
-//! inputs — read the destination once for the whole batch (one search, one comments read, and
-//! under a configuration with relations one `task relations` read of the tickets found), and
-//! write the verifying agent's task and answers skeleton.
+//! inputs — read the destination once for the whole batch (one search, carrying every input's
+//! duplicate queries, one comments read, and under a configuration with relations one
+//! `task relations` read of the tickets found), and write the verifying agent's task, with
+//! each input's duplicate candidates, and answers skeleton.
 
 use indexmap::IndexMap;
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
-use crate::api::{PrepareArgs, Prepared, SCHEMA_VERSION};
+use crate::api::{DuplicateQuery, DuplicateSearch, PrepareArgs, Prepared, SCHEMA_VERSION};
 use crate::config::{DecidedBy, Duplicates, PriorityModel, Settings};
 use crate::error::Error;
 use crate::formats::Versioned;
@@ -16,6 +17,7 @@ use crate::formats::dispositions::{CarriedDispositions, DispositionEntry, Dispos
 use crate::formats::draft::DraftRecord;
 use crate::formats::existing_tickets::ExistingTickets;
 use crate::store::{Search, SearchIn, Store};
+use crate::verify::candidates;
 use crate::verify::context::Batch;
 use crate::verify::hook;
 use crate::verify::relations::{self, Graph, Scope};
@@ -304,23 +306,37 @@ pub fn run(settings: &Settings, args: PrepareArgs) -> Result<Prepared, Error> {
         .filter(|input| !args.unanswered || !answered.iter().any(|entry| entry.draft == input.id))
         .collect();
 
+    // Each input's duplicate queries: its title, and under a kind whose duplicates the agent
+    // judges, its distinctive terms and file names, all riding the one search below.
+    let judged = batch
+        .config
+        .kinds
+        .iter()
+        .any(|kind| kind.duplicates == Duplicates::Agent);
+    let plans: Vec<(&Input, candidates::Plan)> = scoped
+        .iter()
+        .map(|input| {
+            let mut plan = candidates::plan(input);
+            if !judged {
+                plan.queries
+                    .retain(|query| query.kind == candidates::QueryKind::Title);
+            }
+            (*input, plan)
+        })
+        .collect();
+
     // The destination, read once: one search per destination, one comments read.
     let tickets = batch.tickets()?;
     let bound = crate::verify::journal::bound(&crate::verify::journal::read(&batch)?);
     let receipted: Vec<&String> = bound.keys().collect();
     let mut searched_values = Vec::new();
     let mut reads: Vec<Read> = Vec::new();
+    // How many items the store answered each search with, before its limit.
+    let mut answered: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
     for destination in batch.destinations() {
         let mut searches: Vec<Search> = Vec::new();
-        for (at, input) in scoped.iter().enumerate() {
-            if !input.title.trim().is_empty() {
-                searches.push(Search {
-                    key: format!("input:{at}"),
-                    text: Some(input.title.trim().to_owned()),
-                    within: SearchIn::Both,
-                    ..Search::default()
-                });
-            }
+        for (_, plan) in &plans {
+            searches.extend(candidates::searches(plan));
         }
         for ticket in &tickets {
             let Some(kind) = ticket.kind(batch.config) else {
@@ -417,6 +433,7 @@ pub fn run(settings: &Settings, args: PrepareArgs) -> Result<Prepared, Error> {
             continue;
         }
         for found in store.find(&destination, &searches)? {
+            *answered.entry(found.key.clone()).or_default() += found.total;
             for item in found.items {
                 match reads.iter_mut().find(|read| read.item.id == item.id) {
                     Some(read) => read.found_by.push(found.key.clone()),
@@ -543,7 +560,42 @@ pub fn run(settings: &Settings, args: PrepareArgs) -> Result<Prepared, Error> {
                    "detail": input.body})
         })
         .collect();
-    let task = render_task(&batch, &drafts, &inputs)?;
+    let hits = candidates::hits(&state.reads);
+    let duplicate_searches: Vec<DuplicateSearch> = if judged {
+        plans
+            .iter()
+            .map(|(input, plan)| {
+                let ranked = candidates::ranked(&batch, input, plan, &state.reads);
+                DuplicateSearch {
+                    input: input.id.clone(),
+                    stoplisted: plan.stoplisted.clone(),
+                    queries: plan
+                        .queries
+                        .iter()
+                        .map(|query| {
+                            let found = answered.get(&query.key).copied().unwrap_or_default();
+                            DuplicateQuery {
+                                text: query.text.clone(),
+                                kind: query.kind,
+                                hits: found,
+                                retained: hits.get(query.key.as_str()).copied().unwrap_or_default(),
+                                capped: found > candidates::HIT_CAP,
+                            }
+                        })
+                        .collect(),
+                    matching: ranked.matching,
+                    candidates: ranked.rendered,
+                }
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let rendered: Map<String, Value> = duplicate_searches
+        .iter()
+        .map(|search| (search.input.clone(), json!(search.candidates)))
+        .collect();
+    let task = render_task(&batch, &drafts, &inputs, &rendered)?;
     let task_path = batch.work.task(&batch.batch);
     work::write_text(&task_path, &task)?;
     Ok(Prepared {
@@ -555,12 +607,18 @@ pub fn run(settings: &Settings, args: PrepareArgs) -> Result<Prepared, Error> {
         task_template: task_path,
         absent_targets: graph.absent,
         missing_links,
+        duplicate_searches,
         store_operations: store.operations(),
     })
 }
 
 /// The verifying agent's task, rendered from the configured task template.
-fn render_task(batch: &Batch<'_>, drafts: &[Value], inputs: &[Value]) -> Result<String, Error> {
+fn render_task(
+    batch: &Batch<'_>,
+    drafts: &[Value],
+    inputs: &[Value],
+    candidates: &Map<String, Value>,
+) -> Result<String, Error> {
     let config = batch.config;
     let kinds: Vec<Value> = crate::api::kinds(batch.settings, crate::api::NoArgs {})?
         .kinds
@@ -633,6 +691,7 @@ fn render_task(batch: &Batch<'_>, drafts: &[Value], inputs: &[Value]) -> Result<
             "tickets": batch.work.tickets(&batch.batch),
             "drafts": drafts,
             "inputs": inputs,
+            "candidates": candidates,
             "destination": config.destination,
             "namespace": config.namespace,
             "kinds": kinds,

@@ -7,7 +7,9 @@
 //! - [`routes`], [`command`], [`template`] — routes, configured commands and templates.
 //! - [`journal`] — what the receipt journal says.
 //! - [`relations`] — the batch's edges, held to the configured relations.
+//! - [`candidates`] — each input's duplicate queries and ranked candidates.
 
+pub mod candidates;
 pub mod check;
 pub mod command;
 pub mod context;

@@ -5,7 +5,9 @@
 //! its current version, so nothing already written is rewritten: rendering what was parsed
 //! reproduces it byte for byte. **Each format reads only its current schema** and refuses
 //! any other, naming the format, the schema found and the schema it reads; there is no
-//! migration. The batch id stands where today's records say `run`, with no change to the
+//! migration. The one exception is a format whose new schema only adds optional members
+//! (`Versioned::ALSO_READS`): it reads the earlier schema as the current one, and writes the
+//! current one. The batch id stands where today's records say `run`, with no change to the
 //! bytes: the Rust fields are named `batch` and serialize as `run`.
 
 pub mod batch;
@@ -60,6 +62,9 @@ pub trait Versioned: Serialize + DeserializeOwned {
     const FORMAT: &'static str;
     /// The schema this reads and writes.
     const SCHEMA: u64;
+    /// Earlier schemas this still reads, each a subset of [`Self::SCHEMA`]'s shape: a record
+    /// of one is read as the current schema, and written as it.
+    const ALSO_READS: &'static [u64] = &[];
     /// How it is spelled.
     const STYLE: Style;
     /// Whether the file ends with a newline.
@@ -76,7 +81,7 @@ pub trait Versioned: Serialize + DeserializeOwned {
             format: Self::FORMAT,
             message: format!("it is not JSON: {error}"),
         })?;
-        from_value(value, Self::FORMAT, Self::SCHEMA)
+        from_value_of(value, Self::FORMAT, Self::SCHEMA, Self::ALSO_READS)
     }
 
     /// Write this document as its format spells it.
@@ -96,12 +101,26 @@ pub(crate) fn from_value<T: DeserializeOwned>(
     format: &'static str,
     schema: u64,
 ) -> Result<T, FormatError> {
+    from_value_of(value, format, schema, &[])
+}
+
+/// Check `value`'s `schema` is `schema` or one of `earlier`, and read the rest of it as `T`.
+fn from_value_of<T: DeserializeOwned>(
+    value: Value,
+    format: &'static str,
+    schema: u64,
+    earlier: &[u64],
+) -> Result<T, FormatError> {
     let malformed = |message: String| FormatError::Malformed { format, message };
     let Value::Object(mut map) = value else {
         return Err(malformed("it is not a JSON object".to_owned()));
     };
     match map.shift_remove("schema") {
-        Some(Value::Number(number)) if number.as_u64() == Some(schema) && !number.is_f64() => {}
+        Some(Value::Number(number))
+            if !number.is_f64()
+                && number
+                    .as_u64()
+                    .is_some_and(|found| found == schema || earlier.contains(&found)) => {}
         Some(found) => {
             return Err(FormatError::Schema {
                 format,

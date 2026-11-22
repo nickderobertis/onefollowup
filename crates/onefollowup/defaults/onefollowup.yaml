@@ -198,8 +198,8 @@ dispositions:
   - name: filed
     description: >-
       Its claim holds, and its evidence reached the destination: as a ticket this batch
-      wrote, or as this batch's evidence comment on an existing open item for the same root
-      cause. Names every root cause it supports, each the root cause of a ticket this batch
+      wrote, or as this batch's evidence comment on an existing item, open or closed, for the
+      same root cause. Names every root cause it supports, each the root cause of a ticket this batch
       holds whose drafts name this input.
     requires: [ticket]
   - name: not-reproducible

@@ -14,9 +14,10 @@ use clap::CommandFactory as _;
 use indexmap::IndexMap;
 use onefollowup::api::{
     AnsweredLaunch, AnsweredPass, BoardComment, BoardStatus, Checked, CommentsAnswered,
-    CommentsChecked, CommentsSettled, Drafted, Gathered, HookRun, ItemStatus, Launch, Launches,
-    Prepared, Problem, PublishOutcome, Published, RoleStatus, SearchHit, SearchResults, Settled,
-    SettledLaunch, Snapshotted, Staged, StagedOp, StatusesShown, TicketValidated,
+    CommentsChecked, CommentsSettled, Drafted, DuplicateCandidate, DuplicateQuery, DuplicateSearch,
+    Gathered, HookRun, ItemStatus, Launch, Launches, Prepared, Problem, PublishOutcome, Published,
+    QueryKind, RoleStatus, SearchHit, SearchResults, Settled, SettledLaunch, Snapshotted, Staged,
+    StagedOp, StatusesShown, TicketValidated,
 };
 use onefollowup::cli::Cli;
 use onefollowup::config::StatusRole;
@@ -76,6 +77,55 @@ fn examples() -> BTreeMap<&'static str, Value> {
                 task_template: PathBuf::from(format!("tasks/{BATCH}/task.md")),
                 absent_targets: Vec::new(),
                 missing_links: Vec::new(),
+                duplicate_searches: vec![DuplicateSearch {
+                    input: format!(
+                        "drafts:{BATCH}/drafts/20261101T101500Z-layout-save-loses-resize"
+                    ),
+                    stoplisted: vec!["after".to_owned()],
+                    queries: vec![
+                        DuplicateQuery {
+                            text: "layout save loses its size after a resize".to_owned(),
+                            kind: QueryKind::Title,
+                            hits: 0,
+                            retained: 0,
+                            capped: false,
+                        },
+                        DuplicateQuery {
+                            text: "layout".to_owned(),
+                            kind: QueryKind::Term,
+                            hits: 31,
+                            retained: 21,
+                            capped: true,
+                        },
+                        DuplicateQuery {
+                            text: "resize".to_owned(),
+                            kind: QueryKind::Term,
+                            hits: 2,
+                            retained: 2,
+                            capped: false,
+                        },
+                        DuplicateQuery {
+                            text: "layout.rs".to_owned(),
+                            kind: QueryKind::File,
+                            hits: 1,
+                            retained: 1,
+                            capped: false,
+                        },
+                    ],
+                    matching: 1,
+                    candidates: vec![DuplicateCandidate {
+                        item: "followups:item-17".to_owned(),
+                        title: "widgets: a resize must keep the saved layout".to_owned(),
+                        status: onefollowup::store::ItemStatus {
+                            category: "done".to_owned(),
+                            name: "Done".to_owned(),
+                        },
+                        url: None,
+                        root_cause: "resize-keeps-layout".to_owned(),
+                        shared: vec!["resize".to_owned(), "layout.rs".to_owned()],
+                        capped: vec!["layout".to_owned()],
+                    }],
+                }],
                 store_operations: Vec::new(),
             })),
         ),
@@ -92,6 +142,7 @@ fn examples() -> BTreeMap<&'static str, Value> {
                     source: "drafts".to_owned(),
                     destination: false,
                     items: 3,
+                    searches: Some(1),
                 }],
             })),
         ),

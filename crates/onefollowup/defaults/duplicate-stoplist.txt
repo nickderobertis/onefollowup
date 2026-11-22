@@ -1,0 +1,31 @@
+# The words `prepare` never searches a destination for when it looks for an input's
+# duplicates: common English, and words frequent on a follow-up board, where a search for one
+# returns hundreds of unrelated tickets. Lower case, whitespace-separated; `#` starts a comment.
+
+# Common English.
+about above across after again against all also although always among and another any are
+around because been before being below between both but can cannot could did does doing done
+down during each either else even ever every few for from further had has have having her
+here hers him his how however into its itself just least less like made make makes many may
+might more most much must near need needs never next nor not now off often once one only onto
+other others our out over own per rather same she should since some still such than that the
+their theirs them then there these they this those though through thus too toward towards
+under unless until upon very via was were what when where whether which while who whom whose
+why will with within without would yet you your instead already getting gets got give given
+goes going keep keeps kept left let lets put puts said says see seen seems set sets show shows
+shown take takes taken tell tells told use used uses using way ways well work works
+something anything nothing everything someone instead whole first last second third
+
+# Frequent on a follow-up board: the vocabulary every ticket about building, testing and
+# filing software shares.
+test tests testing tested fail fails failed failing failure failures error errors run runs
+running ran check checks checked host hosts journey journeys fixture fixtures configuration
+config configured setting settings ticket tickets item items batch batches draft drafts
+follow-up follow-ups followup followups repository repositories repo repos agent agents
+worker workers dispatch dispatches node nodes plan plans store stores source sources shape
+shapes private public initial initially current currently new old file files change changes
+changed path paths value values result results report reports reported state states status
+case cases time times step steps line lines code bug bugs issue issues task tasks command
+commands output outputs input inputs data default defaults expected actual option options
+support supports supported process processes call calls called read reads write writes
+written open opens closed close

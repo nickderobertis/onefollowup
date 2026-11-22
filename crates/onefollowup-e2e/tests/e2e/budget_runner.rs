@@ -1,8 +1,9 @@
 //! The one runner of `budgets.yaml`, which every budget there names as its command.
 //!
 //! [`report`] measures nothing: it reads the telemetry the budget's journey recorded while the
-//! journeys ran — the budget is the one `ONEBUDGETSPEC_BUDGET_ID` names — and hands that figure
-//! to `onebudgetspec check` through `onebudgetspec_core::report`; the comparison with the
+//! journeys ran — the budget is the one `ONEBUDGETSPEC_BUDGET_ID` names, and for a budget
+//! several journeys measure, the larger of their figures — and hands that figure to
+//! `onebudgetspec check` through `onebudgetspec_core::report`; the comparison with the
 //! threshold is onebudgetspec's alone. In an ordinary run no budget is named, so it reports
 //! nothing and passes.
 
@@ -65,4 +66,29 @@ fn the_runner_reports_what_was_recorded_and_refuses_what_it_cannot_read() {
     let missing = run("budget-unrecorded");
     assert!(!missing.status.success());
     assert!(String::from_utf8_lossy(&missing.stderr).contains("no telemetry"));
+
+    // A budget two journeys measure reports the larger figure, naming both.
+    let parts = directory.path().join("budget-measured-twice");
+    std::fs::create_dir_all(&parts).expect("a directory");
+    for (journey, value) in [("realistic", 6), ("crowded", 5)] {
+        std::fs::write(
+            parts.join(format!("{journey}.json")),
+            format!(r#"{{"value": {value}, "detail": "{value} operations"}}"#),
+        )
+        .expect("written");
+    }
+    let reported = run("budget-measured-twice");
+    assert!(reported.status.success(), "{reported:?}");
+    let written: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&result).expect("a result")).expect("JSON");
+    assert_eq!(written["value"], 6.0);
+    let detail = written["detail"].as_str().unwrap_or_default();
+    assert!(
+        detail.contains("realistic's") && detail.contains("[crowded: 5 — 5 operations]"),
+        "{detail}"
+    );
+    std::fs::write(parts.join("broken.json"), "{").expect("written");
+    let broken = run("budget-measured-twice");
+    assert!(!broken.status.success());
+    assert!(String::from_utf8_lossy(&broken.stderr).contains("is not JSON"));
 }

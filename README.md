@@ -30,7 +30,7 @@ library is the `onefollowup` crate.
 |---|---|
 | `draft --batch <ID> --title <T> --repository <ORIGIN> [--path <P>]... [--author <LABEL>] [--stamp <KEY=VALUE>]...` | Record one draft; its body is read from stdin. Filed under the batch's drafts project, `<drafts_source>:<batch>`; see Private drafts, below. |
 | `snapshot --batch <ID> [--alias <ID>]...` | Run `prepare`'s input-set step alone — the drafts search for the batch and its aliases, and the `batch_preparing` hook — and say whether the batch holds anything to verify: `empty` is `true` exactly when the input set holds no draft and no hook input. It reads no destination and renders no task. An empty batch leaves no working file; a non-empty first pass is saved as the batch's state, which the next `prepare` continues without running the hook again. After a settled pass it reports the new pass's input set but saves nothing — the batch state cannot mark a pass open once its last one settled — so the next `prepare` opens that pass itself, running the hook and the drafts search again. Prints `{"schema_version": 1, "batch", "drafts", "inputs", "empty", "store_operations"}`. |
-| `prepare --batch <ID> [--alias <ID>]... [--unanswered]` | Snapshot the batch's inputs (its drafts and the `batch_preparing` hook's inputs), make its destination reads in one batched search and one comments read — under relations, also one `task relations` read of the tickets found and one read of the tickets at their edges' other ends — and write the verifying agent's task; it continues a pass `snapshot` opened, running no hook again. Prints `{"schema_version": 1, "batch", "drafts", "inputs", "answers", "task_template"}`, with `absent_targets` and `missing_links` when there are any (Relations, below). |
+| `prepare --batch <ID> [--alias <ID>]... [--unanswered]` | Snapshot the batch's inputs (its drafts and the `batch_preparing` hook's inputs), make its destination reads in one batched search — carrying every input's duplicate queries (Duplicate candidates, below) — and one comments read — under relations, also one `task relations` read of the tickets found and one read of the tickets at their edges' other ends — and write the verifying agent's task, each input's duplicate candidates rendered in it; it continues a pass `snapshot` opened, running no hook again. Prints `{"schema_version": 1, "batch", "drafts", "inputs", "answers", "task_template"}`, with `absent_targets` and `missing_links` when there are any (Relations, below) and `duplicate_searches` under a kind whose duplicates the agent judges. |
 | `ticket validate --batch <ID> <TICKET>` | Hold one ticket to the rules; `absent_targets` names each edge its fields derive whose target does not exist. |
 | `ticket board-status --batch <ID> <ITEM>` | Read one destination item's state and comments from the batch's prepared reads. |
 | `ticket search --batch <ID> --ticket <TICKET> <QUERY>` | Search the destination for a ticket's duplicates. |
@@ -38,7 +38,7 @@ library is the `onefollowup` crate.
 | `ticket comment --batch <ID> (--item <ITEM> \| --field <NAME=VALUE>...) [--root-cause <RC>] [--sources-file <F>] [--bears-on-file <F>] [--question-file <F>]` | **Stage** the batch's evidence comment (read from stdin) on an item; given the declared fields observed, on the most specific existing ticket they name. The root cause defaults to the item's own. `--sources-file` is one JSON object of exactly `host`, `basis`, `drafts` and `witnesses`, validated as a ticket record's are (each draft one of the batch's inputs, each witness at the commit `basis` records); each draft's source and transcript are read from the draft. `--bears-on-file` and `--question-file` hold the paragraph saying what the evidence bears on and the question it asks. The comment is `comment_templates.evidence` rendered, then its marker (Templates, below). |
 | `ticket re-estimate --batch <ID> <ITEM>` | **Stage** an item's re-estimate. |
 | `ticket relate --batch <ID> --relation <NAME> --from <TICKET> --to <TICKET>` | **Stage** an edge of a relation the agent decides; a ticket is its root cause, its file, or an item the batch read. |
-| `check --batch <ID>` | Hold the batch's dispositions, tickets, edges and staged writes to the rules before anything is written; exit 0 when sound. |
+| `check --batch <ID>` | Hold the batch's dispositions — each that files a ticket to its input's duplicate candidates too — tickets, edges and staged writes to the rules before anything is written; exit 0 when sound. |
 | `publish --batch <ID>` | Send the staged writes in batched store calls — under relations, the batch's edges in one `task parent set-many` and one `task link add-many` — and receipt every outcome. |
 | `settle --batch <ID>` | Read back only the writes no answer confirmed, run the `batch_settled` hook, retire the batch's working files. |
 | `comments gather [--batch <ID> \| --item <ID>] [--dry-run]` | List each destination's comments since its watermark in one comments-since listing — or every comment of the one item, or every item the batch filed — select each one to answer for the batch owning its item, and write the snapshot every later step reads (The comment pass, below). A dry run's result carries the `launch_command` that launches exactly that snapshot. |
@@ -213,7 +213,65 @@ and `settled` is `null`, since nothing was settled.
   "drafts": 3,
   "inputs": 1,
   "answers": "dispositions/nightly-2026-11-01.json",
-  "task_template": "tasks/nightly-2026-11-01/task.md"
+  "task_template": "tasks/nightly-2026-11-01/task.md",
+  "duplicate_searches": [
+    {
+      "input": "drafts:nightly-2026-11-01/drafts/20261101T101500Z-layout-save-loses-resize",
+      "stoplisted": [
+        "after"
+      ],
+      "queries": [
+        {
+          "text": "layout save loses its size after a resize",
+          "kind": "title",
+          "hits": 0,
+          "retained": 0,
+          "capped": false
+        },
+        {
+          "text": "layout",
+          "kind": "term",
+          "hits": 31,
+          "retained": 21,
+          "capped": true
+        },
+        {
+          "text": "resize",
+          "kind": "term",
+          "hits": 2,
+          "retained": 2,
+          "capped": false
+        },
+        {
+          "text": "layout.rs",
+          "kind": "file",
+          "hits": 1,
+          "retained": 1,
+          "capped": false
+        }
+      ],
+      "matching": 1,
+      "candidates": [
+        {
+          "item": "followups:item-17",
+          "title": "widgets: a resize must keep the saved layout",
+          "status": {
+            "category": "done",
+            "name": "Done"
+          },
+          "url": null,
+          "root_cause": "resize-keeps-layout",
+          "shared": [
+            "resize",
+            "layout.rs"
+          ],
+          "capped": [
+            "layout"
+          ]
+        }
+      ]
+    }
+  ]
 }
 ```
 
@@ -270,7 +328,8 @@ and `settled` is `null`, since nothing was settled.
       "op": "find",
       "source": "drafts",
       "destination": false,
-      "items": 3
+      "items": 3,
+      "searches": 1
     }
   ]
 }
@@ -540,6 +599,29 @@ listed field is equal after trimming whitespace and case-folding, and a ticket w
 listed field empty never merges. `priority: {model: estimate}` is the severity × frequency
 estimate over `rubric` and `estimate`; `{fixed: <priority>}` gives every ticket that
 priority.
+
+**Duplicate candidates.** A duplicate worded differently shares no sentence with the ticket it
+repeats, only a few distinctive words and the failing file, and a destination's text search
+matches a query's words exactly. So under a kind whose duplicates the agent judges, `prepare`
+searches each input for them itself, inside its one batched search: its title, then one query
+per distinctive term — up to 5 words of its title, then of its body's opening paragraph,
+longest first, never a word of the shipped stoplist
+([`duplicate-stoplist.txt`](crates/onefollowup/defaults/duplicate-stoplist.txt): common English
+and words frequent on a follow-up board), the repository's own name, a word with a digit or a
+path — and one per file name it names, up to 2, its paths' first. Every follow-up ticket another
+batch filed that those queries found, at any status, open or closed, is a **candidate**, ranked by
+how many of the uncapped queries found it, then the capped, then by how few items those queries
+answered; a query answering more than 20 items is capped: it keeps only 21 of them, so its
+reads and candidates stay bounded however crowded the destination, and what only it found ranks
+last. The
+first 8 are rendered into the task under their draft or input and printed as
+`duplicate_searches`; these numbers are onefollowup's constants, not settings. `check` refuses
+an answer whose disposition requires a ticket while a rendered candidate of its input is neither
+**related** — this batch's evidence comment staged or published on it, under a root cause the
+answer names — nor **dismissed** in the answer's `dismissed` (`[{"item", "reason"}]`) with a
+reason; an earlier pass's carried answers stand as they are. A second ticket of one root cause
+filed by the same batch, or one a concurrent batch files after this batch searched, is never a
+candidate: only what the destination held when `prepare` searched is.
 
 **The shipped ticket shape.** The verifying agent writes every part plain
 ([`ticket-template.md.j2`](crates/onefollowup/defaults/ticket-template.md.j2)): `## Root cause`;
@@ -1006,8 +1088,8 @@ the batch id stands where they say `run`.
 | Draft record | 1 | A draft's `<namespace>.follow-up-draft` metadata. |
 | Comment markers | — | `<!-- <namespace>:follow-up-comment run="…" root_cause="…" -->`, the last line of an evidence comment or (with `kind="reply" answers="…" verdict="…"`) a reply, which alone names the comment's owner and kind; the quoted-comment and feedback anchors. |
 | Receipt journal | 3 | `receipts/<batch>.jsonl`, one line per write outcome. Two line kinds onefollowup adds within 3, written only under relations or an assignee: `relate` (an edge's `relation`, `store`, `from`, `to`, `to_card`, `derived`, `action` of `written`, `exists` or `failed`, and its `error`) and `assign` (the `assignee`, the `when` it was held to, `action` of `written`, `held` or `failed`, and its `error`, `assignee-held` when a person's assignment stood). |
-| Dispositions | 1 | `dispositions/<batch>.json`; each entry may carry `kind`, which `check` requires. |
-| Carried dispositions | 1 | `dispositions/<batch>.carried.json`. |
+| Dispositions | 2 | `dispositions/<batch>.json`; each entry may carry `kind`, which `check` requires, and from 2 `dismissed` (`[{"item", "reason"}]`, the duplicate candidates it dismisses), omitted when empty. Schema 1, the same without `dismissed`, is still read, and written back as 2. |
+| Carried dispositions | 2 | `dispositions/<batch>.carried.json`; its entries are the dispositions' own, and schema 1 is still read. |
 | Responses | 3 | `feedback/<batch>/<stamp>.responses.json`. |
 | Snapshot | 2 | `feedback/.snapshots/<stamp>/snapshot.json`, with its `launched.json` (1). An item's `snapshot_id` names its file under the snapshot's `last-written/`, and its `version` the version its batch's receipts last recorded. |
 | Gathering | 1 | `feedback/.snapshots/<stamp>/gathering.json`, new in onefollowup: each destination's comments-since listing, what onefollowup last wrote to each selected item, and — under a rollup — the relations and related tickets read. |

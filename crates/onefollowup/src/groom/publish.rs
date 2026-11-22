@@ -294,7 +294,7 @@ impl Publishing<'_> {
             (Protection::Unprotected, _) => Ok(()),
             (Protection::Todo, PublishAction::Close) if ticket.definitely_outdated => Ok(()),
             (Protection::Todo, PublishAction::Close) => Err(format!(
-                "publish's status read found it {}, Todo, which grooming closes only on a high-confidence verdict whose deciding commit is verified on main",
+                "publish's status read found it {}, Todo, which grooming closes only on a high-confidence verdict whose deciding commit is verified on the default branch",
                 found.status.name
             )),
             (Protection::Todo, _) => Err(format!(

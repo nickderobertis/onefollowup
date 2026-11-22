@@ -12,7 +12,7 @@ until it passes.
 
 ## Repositories
 
-Each repository is a blob-less clone checked out at the `main` commit this batch fetched. Read
+Each repository is a blob-less clone checked out at the default-branch commit this batch fetched. Read
 code there, and use `git log`, `git show` and `git merge-base --is-ancestor` for history; a
 `deciding_commit` is a commit of that history.
 
@@ -37,11 +37,11 @@ Every key is required, and no other key is read: `null` where the schema allows 
 
 - `evidence` is never empty: what you read that decides the verdict, naming files, commits and
   behaviour.
-- `deciding_commit` is the `main` commit that fixed (`fixed`) or obsoleted (`obsolete`) the
+- `deciding_commit` is the default-branch commit that fixed (`fixed`) or obsoleted (`obsolete`) the
   ticket, as its full 40-hex id, and `null` for `keep` and `unresolved`.
 - `evidence_paths` lists the repository-relative paths your verdict rests on, possibly `[]`. A
-  later pass verifies the ticket again when `main` touches one of them; with none, whenever
-  `main` moves at all.
+  later pass verifies the ticket again when the default branch touches one of them; with none, whenever
+  the default branch moves at all.
 - `duplicate_of` names another open ticket of the snapshot that has the same root cause, the
   same invariant broken, however differently it is worded; `root_cause` states that root cause
   in one line, and is `null` exactly when `duplicate_of` is. Name the duplicate whichever of the
@@ -52,11 +52,11 @@ Every key is required, and no other key is read: `null` where the schema allows 
 
 - Every ticket below has exactly one verdict record.
 - A `fixed` or `obsolete` verdict's `confidence` is `medium` or `high`, never `low`, and its
-  `deciding_commit` is an ancestor of that repository's fetched `main` commit above.
+  `deciding_commit` is an ancestor of that repository's fetched default-branch commit above.
 - A ticket at a claimed status (the `queued` or `in-progress` role's) is never closed or folded
   as a duplicate, and a ticket at the `accepted` role's status (Todo) is never folded; a Todo
   ticket is closed only on a `high`-confidence `fixed` or `obsolete` verdict whose
-  `deciding_commit` is verified on `main`. Answer such a ticket as you judge it all the same:
+  `deciding_commit` is verified on the default branch. Answer such a ticket as you judge it all the same:
   a closing or duplicate verdict on it is left for a person, with your evidence.
 - Duplicate links are joined into clusters, which tickets closing as `fixed` or `obsolete` leave.
   Each cluster keeps one survivor: a claimed ticket first, then a Todo ticket, then one in the

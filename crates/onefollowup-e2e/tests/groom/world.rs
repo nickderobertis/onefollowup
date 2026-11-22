@@ -159,13 +159,23 @@ impl World {
 
     /// Create `repository` with one commit on `main` holding `files`, and answer that commit.
     pub fn repository(&self, repository: &str, files: &[(&str, &str)]) -> String {
+        self.repository_on(repository, "main", files)
+    }
+
+    /// Create `repository` whose default branch, and only branch, is `branch`, with one commit
+    /// on it holding `files`, and answer that commit.
+    pub fn repository_on(&self, repository: &str, branch: &str, files: &[(&str, &str)]) -> String {
         let path = self.repository_path(repository);
         std::fs::create_dir_all(&path).expect("the repository's directory");
-        self.git(&path, &["init", "--quiet", "--initial-branch=main"]);
+        self.git(
+            &path,
+            &["init", "--quiet", &format!("--initial-branch={branch}")],
+        );
         self.commit(repository, files, "the first commit")
     }
 
-    /// Commit `files` to `repository`'s `main`, and answer the commit.
+    /// Commit `files` to `repository`'s checked-out branch — its default branch — and answer
+    /// the commit.
     pub fn commit(&self, repository: &str, files: &[(&str, &str)], message: &str) -> String {
         let path = self.repository_path(repository);
         for (file, text) in files {

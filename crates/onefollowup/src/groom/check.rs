@@ -2,7 +2,7 @@
 //!
 //! Every rule is code. The agent's verdicts are read and refused where a record is malformed,
 //! a shard's ticket has no verdict or two, a closing verdict is `low`, or its `deciding_commit`
-//! is not an ancestor of the `main` commit prepare fetched. Duplicate links are unioned into
+//! is not an ancestor of the default-branch commit prepare fetched. Duplicate links are unioned into
 //! clusters, members closing as `fixed` or `obsolete` leave them, and each cluster's survivor is
 //! chosen by a fixed order, whichever ticket the agent named. A Queued or In Progress ticket is
 //! never closed or folded, a Todo ticket never folded and closed only when definitely outdated:
@@ -30,7 +30,7 @@ use crate::work;
 struct Judged<'a> {
     verdict: VerdictRecord,
     ticket: &'a SelectedTicket,
-    /// For a closing verdict, the repository whose fetched `main` holds its commit.
+    /// For a closing verdict, the repository whose fetched default branch holds its commit.
     verified: Option<(String, String)>,
 }
 
@@ -60,7 +60,7 @@ impl Batch<'_> {
         self.record.selected.iter().find(|one| one.ticket == ticket)
     }
 
-    /// The repository of `ticket`'s whose fetched `main` holds `commit`, with that `main`.
+    /// The repository of `ticket`'s whose fetched default branch holds `commit`, with that default branch.
     fn verify(
         &self,
         ticket: &SelectedTicket,
@@ -84,7 +84,7 @@ impl Batch<'_> {
         Ok(None)
     }
 
-    fn main_of(&self, ticket: &SelectedTicket) -> (Option<String>, Option<String>) {
+    fn default_branch_of(&self, ticket: &SelectedTicket) -> (Option<String>, Option<String>) {
         ticket
             .repositories
             .iter()
@@ -199,7 +199,7 @@ fn verdicts<'a>(batch: &mut Batch<'a>) -> Result<Vec<Judged<'a>>, Error> {
             {
                 verified = batch.verify(selected, commit)?;
                 if verified.is_none() {
-                    let mains: Vec<String> = selected
+                    let heads: Vec<String> = selected
                         .repositories
                         .iter()
                         .filter_map(|named| {
@@ -214,12 +214,12 @@ fn verdicts<'a>(batch: &mut Batch<'a>) -> Result<Vec<Judged<'a>>, Error> {
                         Some(&ticket),
                         GroomRule::CommitNotOnMain,
                         format!(
-                            "the `{}` verdict's `deciding_commit` {commit} is not an ancestor of the fetched `main` of {}",
+                            "the `{}` verdict's `deciding_commit` {commit} is not an ancestor of the fetched default branch of {}",
                             verdict.verdict.as_str(),
-                            if mains.is_empty() {
+                            if heads.is_empty() {
                                 "any repository: the ticket names none".to_owned()
                             } else {
-                                mains.join(" or ")
+                                heads.join(" or ")
                             }
                         ),
                     );
@@ -238,7 +238,7 @@ fn verdicts<'a>(batch: &mut Batch<'a>) -> Result<Vec<Judged<'a>>, Error> {
 
 fn entry(batch: &Batch<'_>, judged: &Judged<'_>, left_for_person: Option<String>) -> PlanEntry {
     let (repository, commit) = judged.verified.clone().map_or_else(
-        || batch.main_of(judged.ticket),
+        || batch.default_branch_of(judged.ticket),
         |(repository, commit)| (Some(repository), Some(commit)),
     );
     PlanEntry {
@@ -352,7 +352,7 @@ fn plan(batch: &Batch<'_>, judged: &[Judged<'_>]) -> GroomPlan {
             Some(Protection::Todo)
                 if one.verdict.confidence != Confidence::High || one.verified.is_none() =>
             {
-                left.insert(ticket, "it is Todo, which grooming closes only on a high-confidence verdict whose deciding commit is verified on main".to_owned());
+                left.insert(ticket, "it is Todo, which grooming closes only on a high-confidence verdict whose deciding commit is verified on the default branch".to_owned());
             }
             _ => {
                 closed.insert(ticket);
@@ -483,20 +483,20 @@ fn protect(batch: &mut Batch<'_>, plan: &GroomPlan, what: &str) -> Result<(), Er
                         Some(ticket),
                         GroomRule::TodoCloseBelowBar,
                         format!(
-                            "{what} closes the Todo ticket `{ticket}` on a `{}`-confidence verdict whose deciding commit is {}: a Todo ticket closes only on a `high`-confidence verdict whose `deciding_commit` is verified on the fetched `main`",
+                            "{what} closes the Todo ticket `{ticket}` on a `{}`-confidence verdict whose deciding commit is {}: a Todo ticket closes only on a `high`-confidence verdict whose `deciding_commit` is verified on the fetched default branch",
                             match entry.confidence {
                                 Confidence::High => "high",
                                 Confidence::Medium => "medium",
                                 Confidence::Low => "low",
                             },
-                            if verified { "on `main`" } else { "not verified on `main`" }
+                            if verified { "on the default branch" } else { "not verified on the default branch" }
                         ),
                     );
                 } else if !verified {
                     batch.problem(
                         Some(ticket),
                         GroomRule::CommitNotOnMain,
-                        format!("{what} closes `{ticket}` on a deciding commit not verified on the fetched `main`"),
+                        format!("{what} closes `{ticket}` on a deciding commit not verified on the fetched default branch"),
                     );
                 }
             }

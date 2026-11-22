@@ -3,27 +3,19 @@
 
 use serde_json::{Value, json};
 
-use crate::journey::front;
-// Only the read-back journey uses these, and it runs where it can make a file read-only.
-#[cfg(unix)]
-use crate::journey::comments;
-use crate::world::{COMMIT, HOST, REPOSITORY, World, answer};
-#[cfg(unix)]
-use crate::world::{Ticket, filed_body, filed_item};
+use crate::journey::{comments, front};
+use crate::world::{COMMIT, HOST, REPOSITORY, Ticket, World, answer, filed_body, filed_item};
 
 const BATCH: &str = "nightly-2026-11-07";
 
-#[cfg(unix)]
+/// Make the file `path` writable or read-only, as every host can: a read-only file refuses
+/// to be opened for writing on Unix and Windows alike.
 fn writable(path: &std::path::Path, writable: bool) {
-    use std::os::unix::fs::PermissionsExt as _;
-    std::fs::set_permissions(
-        path,
-        std::fs::Permissions::from_mode(if writable { 0o644 } else { 0o444 }),
-    )
-    .expect("permissions");
+    let mut permissions = std::fs::metadata(path).expect("the file").permissions();
+    permissions.set_readonly(!writable);
+    std::fs::set_permissions(path, permissions).expect("permissions");
 }
 
-#[cfg(unix)]
 #[test]
 fn settle_reads_back_exactly_the_write_whose_answer_was_lost() {
     let mut world = World::new(&["followups"], "host_label: build-host-1\n");

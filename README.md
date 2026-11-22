@@ -1391,7 +1391,9 @@ survivor `status` (its status name), `claimed_as` (`todo`, `queued`, `in-progres
 `evidence` (their distinct evidence). onefollowup appends a blank line and the marker
 `<!-- <namespace>:follow-up-comment run="<batch>" kind="groom" verdict="<verdict>" -->`, which
 names no root cause, so `comments gather` leaves a grooming comment out as maintenance, never as
-a person's to answer; a template writing a marker itself is refused.
+a person's to answer. Every comment a run could post is rendered before its first store
+operation, so a template that cannot render, or writes a marker itself, is refused (exit 2)
+before any ticket is closed.
 
 ## Record formats
 

@@ -92,40 +92,32 @@ fn first_receipts(
         .iter()
         .map(|ticket| (ticket.ticket.as_str(), ticket))
         .collect();
-    let describe = |ticket: &str| -> (String, Option<String>, HeldStatus) {
-        listed.get(ticket).map_or_else(
-            || {
-                (
-                    ticket.to_owned(),
-                    None,
-                    HeldStatus {
-                        category: "unknown".to_owned(),
-                        name: "unknown".to_owned(),
-                    },
-                )
-            },
-            |one| (one.title.clone(), one.url.clone(), one.status.clone()),
-        )
+    // Check plans only tickets of the snapshot; one it does not hold is refused here.
+    let describe = |ticket: &str| -> Result<(String, Option<String>, HeldStatus), Error> {
+        let one = listed.get(ticket).ok_or_else(|| {
+            Error::Failed(format!(
+                "{ticket} is planned and not in {SNAPSHOT_RECORD}; next: prepare and check the batch again"
+            ))
+        })?;
+        Ok((one.title.clone(), one.url.clone(), one.status.clone()))
     };
     let git = groom.git();
     let outdated = |entry: &PlanEntry| -> Result<bool, Error> {
-        if !entry.verdict.closes() || entry.confidence != Confidence::High {
-            return Ok(false);
+        let fetched = batch.repositories.iter().find(|one| {
+            Some(&one.repository) == entry.repository.as_ref()
+                && Some(&one.commit) == entry.commit.as_ref()
+        });
+        match (fetched, &entry.deciding_commit) {
+            // Only a full commit id reaches git, so a plan's value is never read as an option.
+            (Some(fetched), Some(commit))
+                if entry.verdict.closes()
+                    && entry.confidence == Confidence::High
+                    && is_commit(commit) =>
+            {
+                git::is_ancestor(git, Path::new(&fetched.clone), commit, &fetched.commit)
+            }
+            _ => Ok(false),
         }
-        let (Some(commit), Some(repository)) = (&entry.deciding_commit, &entry.repository) else {
-            return Ok(false);
-        };
-        let Some(fetched) = batch
-            .repositories
-            .iter()
-            .find(|one| &one.repository == repository)
-        else {
-            return Ok(false);
-        };
-        // Only a full commit id reaches git, so a plan's value is never read as an option.
-        Ok(is_commit(commit)
-            && entry.commit.as_deref() == Some(fetched.commit.as_str())
-            && git::is_ancestor(git, Path::new(&fetched.clone), commit, &fetched.commit)?)
     };
     let record = |entry: &PlanEntry| -> Option<GroomRecord> {
         let selected = batch
@@ -166,7 +158,7 @@ fn first_receipts(
             (action, entry)
         }));
     for (action, entry) in planned {
-        let (title, url, listed) = describe(&entry.ticket);
+        let (title, url, listed) = describe(&entry.ticket)?;
         let record = match action {
             PublishAction::Keep => None,
             _ => record(entry),
@@ -205,8 +197,8 @@ fn first_receipts(
         .survivors
         .iter()
         .map(|survivor| {
-            let (title, url, listed) = describe(&survivor.ticket);
-            SurvivorReceipt {
+            let (title, url, listed) = describe(&survivor.ticket)?;
+            Ok(SurvivorReceipt {
                 ticket: survivor.ticket.clone(),
                 title,
                 url,
@@ -215,9 +207,9 @@ fn first_receipts(
                 chosen_by: survivor.chosen_by,
                 named: Vec::new(),
                 comment: None,
-            }
+            })
         })
-        .collect();
+        .collect::<Result<_, Error>>()?;
     Ok(GroomReceipts {
         schema_version: SCHEMA_VERSION,
         batch: plan.batch.clone(),
@@ -576,6 +568,27 @@ impl Publishing<'_> {
         self.save()
     }
 
+    /// Render every comment this run could post, before any store operation: a template that
+    /// cannot render, or writes a marker itself, is refused before a ticket is closed.
+    fn preflight(&self) -> Result<(), Error> {
+        for ticket in &self.receipts.tickets {
+            if unconfirmed(ticket) || owed_evidence(ticket) {
+                self.evidence(ticket)?;
+            }
+        }
+        for survivor in &self.receipts.survivors {
+            if survivor.comment.is_none() {
+                let folded: Vec<String> = self
+                    .folded_into(&survivor.ticket)
+                    .iter()
+                    .map(|one| one.ticket.clone())
+                    .collect();
+                self.consolidation(survivor, &folded)?;
+            }
+        }
+        Ok(())
+    }
+
     fn located(&self) -> Located {
         Located::of(&self.groom.config.groom.comment_template, |path| {
             self.groom.settings.path("groom", path)
@@ -633,11 +646,7 @@ impl Publishing<'_> {
                 "ticket": ticket.ticket,
                 "title": ticket.title,
                 "url": ticket.url,
-                "confidence": match entry.confidence {
-                    Confidence::High => "high",
-                    Confidence::Medium => "medium",
-                    Confidence::Low => "low",
-                },
+                "confidence": entry.confidence.as_str(),
                 "evidence": entry.evidence,
                 "deciding_commit": entry.deciding_commit,
                 "repository": entry.repository,
@@ -929,11 +938,7 @@ fn markdown(report: &GroomReport) -> String {
                 one.url.as_ref().map_or_else(|| one.title.clone(), |url| format!("[{}]({url})", one.title)),
                 one.status.name,
                 one.verdict.as_str(),
-                match one.confidence {
-                    Confidence::High => "high",
-                    Confidence::Medium => "medium",
-                    Confidence::Low => "low",
-                },
+                one.confidence.as_str(),
                 one.deciding_commit.as_deref().unwrap_or("none"),
                 one.survivor.as_deref().map_or_else(|| "none".to_owned(), |one| format!("`{one}`")),
                 one.reason,
@@ -984,19 +989,14 @@ fn cell(text: &str) -> String {
 
 /// Remove every working file of the batch but what a re-run reads and its reports.
 fn retire(directory: &Path) -> Result<(), Error> {
-    let entries = std::fs::read_dir(directory).map_err(|error| {
+    let unreadable = |error: std::io::Error| {
         Error::Failed(format!(
             "{}: could not be read: {error}",
             directory.display()
         ))
-    })?;
-    for entry in entries {
-        let entry = entry.map_err(|error| {
-            Error::Failed(format!(
-                "{}: could not be read: {error}",
-                directory.display()
-            ))
-        })?;
+    };
+    for entry in std::fs::read_dir(directory).map_err(unreadable)? {
+        let entry = entry.map_err(unreadable)?;
         let path = entry.path();
         if KEPT.iter().any(|kept| entry.file_name() == *kept) {
             continue;
@@ -1062,6 +1062,7 @@ pub fn run(settings: &Settings, args: GroomPublishArgs) -> Result<GroomPublished
         receipts,
         path,
     };
+    publishing.preflight()?;
     if !rerun {
         publishing.save()?;
     }

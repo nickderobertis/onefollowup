@@ -37,6 +37,7 @@ macro_rules! groom_journeys {
             selection::a_record_this_does_not_read_selects_its_ticket,
             publish::publish_closes_what_its_status_read_admits_and_leaves_the_rest,
             publish::publish_refuses_a_batch_no_check_passed,
+            publish::a_refused_close_is_sent_again_by_the_rerun,
             watermark::a_partial_publish_leaves_the_refused_ticket_selected,
             watermark::an_abandoned_batch_moves_no_record,
             watermark::a_comment_made_during_verification_selects_its_ticket_next_pass,

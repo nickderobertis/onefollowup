@@ -126,6 +126,7 @@ fn the_surface_is_the_v1_surface_and_has_no_re_key() {
         "comments answer",
         "groom prepare",
         "groom check",
+        "groom publish",
         "statuses",
         "kinds",
         "config show",

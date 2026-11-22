@@ -11,8 +11,8 @@ use std::collections::BTreeMap;
 use onefollowup::formats::groom::record_key;
 use serde_json::{Value, json};
 
-use crate::groom::workload::{self, Ticket};
-use crate::groom::world::{NAMESPACE, World, grooming_marker, keep, verdict};
+use crate::groom::workload::{self, Ticket, Workload};
+use crate::groom::world::{NAMESPACE, World, ago, grooming_marker, keep, verdict};
 use crate::grooming::Binary;
 use crate::telemetry;
 
@@ -20,6 +20,77 @@ use crate::telemetry;
 const FULL: &str = "groom-pass-store-operations";
 /// The repeat pass's budget.
 const REPEAT: &str = "groom-repeat-pass-store-operations";
+
+/// The open statuses the workload's open tickets cycle through.
+pub const OPEN_STATUSES: [&str; 7] = [
+    "backlog",
+    "todo",
+    "backlog",
+    "draft",
+    "queued",
+    "backlog",
+    "in-progress",
+];
+
+/// Generate `repositories` one-commit repositories as [`workload::generate`] does, then `open` open
+/// tickets cycling through [`OPEN_STATUSES`] and `closed` closed ones, round-robin over the
+/// repositories, each holding `comments` comments a person made two days ago.
+pub fn destination(
+    world: &World,
+    repositories: usize,
+    files: usize,
+    open: usize,
+    closed: usize,
+    comments: usize,
+) -> Workload {
+    let generated = workload::generate(world, repositories, files, 0);
+    let made = ago(2 * 86_400);
+    let tickets: Vec<Ticket> = (0..open + closed)
+        .map(|index| {
+            let repository = generated.repositories[index % repositories]
+                .repository
+                .clone();
+            let path = format!("src/module_{}.rs", index % files.max(1));
+            let status = if index < open {
+                OPEN_STATUSES[index % OPEN_STATUSES.len()]
+            } else if index % 2 == 0 {
+                "done"
+            } else {
+                "cancelled"
+            };
+            let ticket = Ticket {
+                id: format!("ticket-{index:04}"),
+                status,
+                repository,
+                path,
+            };
+            let mut body = format!(
+                "`{}` in `{}` answers a value its callers do not expect, number {index}.\n\n## Comments\n",
+                ticket.path, ticket.repository
+            );
+            for at in 0..comments {
+                body.push_str(&format!(
+                    "\n<!-- onetaskgraph:comment id=\"c-{index:04}-{at}\" author=\"person\" created_at=\"{made}\" updated_at=\"{made}\" -->\n### person — {made}\n\nSeen again, note {at}.\n\n<!-- /onetaskgraph:comment -->\n"
+                ));
+            }
+            world.ticket(
+                &ticket.id,
+                &format!(
+                    "service: `{}` answers the wrong value ({index})",
+                    ticket.path
+                ),
+                ticket.status,
+                &[&ticket.repository],
+                &body,
+            );
+            ticket
+        })
+        .collect();
+    Workload {
+        repositories: generated.repositories,
+        tickets,
+    }
+}
 
 /// What the scripted agents answer one ticket with.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -114,7 +185,7 @@ fn kept_state(world: &World, ids: &[String]) -> Vec<Value> {
 #[test]
 fn a_full_grooming_pass_then_a_repeat_record_their_store_operations() {
     let world = World::new();
-    let generated = workload::destination(&world, 6, 4, 600, 1_400, 2);
+    let generated = destination(&world, 6, 4, 600, 1_400, 2);
     let main: BTreeMap<String, String> = generated
         .repositories
         .iter()

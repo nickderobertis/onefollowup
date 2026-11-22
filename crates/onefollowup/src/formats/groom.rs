@@ -86,6 +86,12 @@ pub enum Confidence {
 impl Confidence {
     /// Every confidence, as the record spells it.
     pub const ALL: [&'static str; 3] = ["high", "medium", "low"];
+
+    /// The confidence as the record spells it.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        Self::ALL[self as usize]
+    }
 }
 
 /// A rule `groom check` holds a batch to, as a problem names it.

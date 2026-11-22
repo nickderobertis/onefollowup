@@ -14,7 +14,7 @@ use super::world::{NAMESPACE, Runner, World, grooming_marker, keep, verdict};
 const WIDGETS: &str = "github.com/example/widgets";
 
 /// Each ticket: its id and status.
-const TICKETS: [(&str, &str); 13] = [
+const TICKETS: [(&str, &str); 19] = [
     ("b-fixed", "backlog"),
     ("b-obsolete", "backlog"),
     ("b-dup", "backlog"),
@@ -28,6 +28,12 @@ const TICKETS: [(&str, &str); 13] = [
     ("k-keep", "backlog"),
     ("q-keep", "queued"),
     ("u-unres", "backlog"),
+    ("m-b3", "backlog"),
+    ("g-gone", "backlog"),
+    ("c-closed", "backlog"),
+    ("p-surv", "in-progress"),
+    ("b-dup2", "backlog"),
+    ("n-norepo", "backlog"),
 ];
 
 /// What the world's agents answer each ticket with.
@@ -36,7 +42,9 @@ fn verdicts(fix: &str) -> impl Fn(&str) -> Value + '_ {
         "b-fixed" | "t-fixed" | "m-todo" => {
             verdict(id, "fixed", "high", Some(fix), &["src/a.rs"], None)
         }
-        "b-obsolete" => verdict(id, "obsolete", "medium", Some(fix), &["src/a.rs"], None),
+        "b-obsolete" | "m-b3" => verdict(id, "obsolete", "medium", Some(fix), &["src/a.rs"], None),
+        "g-gone" | "c-closed" => verdict(id, "fixed", "high", Some(fix), &["src/a.rs"], None),
+        "b-dup2" => verdict(id, "keep", "high", None, &["src/b.rs"], Some("p-surv")),
         "t-medium" => verdict(id, "fixed", "medium", Some(fix), &["src/a.rs"], None),
         "b-dup" | "m-b1" | "m-b2" => {
             verdict(id, "keep", "high", None, &["src/b.rs"], Some("t-surv"))
@@ -78,22 +86,26 @@ pub fn publish_closes_what_its_status_read_admits_and_leaves_the_rest(runner: &d
     world.repository(WIDGETS, &[("src/a.rs", "a\n"), ("src/b.rs", "b\n")]);
     let fix = world.commit(WIDGETS, &[("src/a.rs", "a fixed\n")], "fix the save");
     for (id, status) in TICKETS {
+        let repositories: &[&str] = if id == "n-norepo" { &[] } else { &[WIDGETS] };
         world.ticket(
             id,
             &format!("widgets: ticket {id}"),
             status,
-            &[WIDGETS],
+            repositories,
             &format!("The body of {id}."),
         );
     }
-    let batch = world.checked(runner, verdicts(&fix)).expect("a batch");
-
-    // Another process moves three tickets after check and before publish's status read.
+    let batch = world.checked(runner, verdicts(&fix)).expect("a batch"); // After check and before publish's status read, another process moves four tickets, a
+    // person closes one by hand, and another deletes one.
     world.move_to("m-todo", "in-progress");
     world.move_to("m-b1", "todo");
     world.move_to("m-b2", "in-progress");
+    world.move_to("m-b3", "todo");
+    world.move_to("c-closed", "done");
+    std::fs::remove_file(world.ticket_path("g-gone")).expect("g-gone is deleted");
     let untouched = [
-        "t-dup", "t-medium", "m-todo", "m-b1", "m-b2", "k-keep", "q-keep", "u-unres",
+        "t-dup", "t-medium", "m-todo", "m-b1", "m-b2", "m-b3", "c-closed", "k-keep", "q-keep",
+        "u-unres", "n-norepo",
     ];
     let before: Vec<(&str, String, Value)> = untouched
         .iter()
@@ -102,15 +114,15 @@ pub fn publish_closes_what_its_status_read_admits_and_leaves_the_rest(runner: &d
 
     let published = world.json(runner, 0, &["groom", "publish", "--batch", &batch]);
     assert_eq!(published["batch"], batch.as_str());
-    assert_eq!(published["mismatched"], json!([]), "{published:#}");
-    // The four closed tickets and the four recorded ones, the survivor among them.
-    assert_eq!(published["confirmed"], 8, "{published:#}");
+    assert_eq!(published["mismatched"], json!([]), "{published:#}"); // The five closed tickets and the five recorded ones, the survivors among them.
+    assert_eq!(published["confirmed"], 10, "{published:#}");
 
     for (id, status, mark) in [
         ("b-fixed", "done", "fixed"),
         ("t-fixed", "done", "fixed"),
         ("b-obsolete", "cancelled", "obsolete"),
         ("b-dup", "cancelled", "duplicate"),
+        ("b-dup2", "cancelled", "duplicate"),
     ] {
         assert_eq!(world.status(id), status, "{id} reads closed");
         let comments = world.comments(id);
@@ -153,12 +165,25 @@ pub fn publish_closes_what_its_status_read_admits_and_leaves_the_rest(runner: &d
         "{}",
         survivor[0]
     );
+    let claimed = world.comments("p-surv");
+    assert_eq!(claimed.len(), 1, "{claimed:?}");
+    assert!(
+        claimed[0].contains("followups:b-dup2")
+            && claimed[0].contains("This ticket is in-progress"),
+        "{}",
+        claimed[0]
+    );
 
     // Left for a person: open, unchanged byte for byte, with no record. Kept and verified:
     // body and every other key unchanged, a record at main.
     for (id, text, read) in &before {
         let now = world.ticket_text(id);
-        if ["k-keep", "q-keep", "u-unres"].contains(id) {
+        if *id == "n-norepo" {
+            assert_eq!(
+                &now, text,
+                "a ticket naming no repository has no record to write"
+            );
+        } else if ["k-keep", "q-keep", "u-unres"].contains(id) {
             assert_eq!(
                 &without_record(&world, id),
                 read,
@@ -183,7 +208,9 @@ pub fn publish_closes_what_its_status_read_admits_and_leaves_the_rest(runner: &d
     .expect("JSON");
     assert_eq!(
         ids(&report["left_for_person"]),
-        ["m-b1", "m-b2", "m-todo", "t-dup", "t-medium"],
+        [
+            "c-closed", "g-gone", "m-b1", "m-b2", "m-b3", "m-todo", "t-dup", "t-medium"
+        ],
         "{report:#}"
     );
     for left in report["left_for_person"].as_array().expect("a list") {
@@ -205,6 +232,22 @@ pub fn publish_closes_what_its_status_read_admits_and_leaves_the_rest(runner: &d
     assert_eq!(left("t-dup")["survivor"], "followups:q-keep");
     assert_eq!(left("m-b1")["survivor"], "followups:t-surv");
     assert_eq!(left("m-b1")["status"]["category"], "todo");
+    assert!(
+        left("m-b3")["reason"]
+            .as_str()
+            .is_some_and(|why| why.contains("Todo")),
+        "a Backlog close short of definitely outdated, promoted to Todo"
+    );
+    assert!(
+        left("c-closed")["reason"]
+            .as_str()
+            .is_some_and(|why| why.contains("no longer open"))
+    );
+    assert!(
+        left("g-gone")["reason"]
+            .as_str()
+            .is_some_and(|why| why.contains("no such ticket"))
+    );
     assert_eq!(
         ids(&report["outcomes"]).len(),
         TICKETS.len(),
@@ -212,7 +255,7 @@ pub fn publish_closes_what_its_status_read_admits_and_leaves_the_rest(runner: &d
     );
     let markdown =
         std::fs::read_to_string(published["report"].as_str().expect("a path")).expect("report.md");
-    for id in ["m-b1", "m-b2", "m-todo", "t-dup", "t-medium"] {
+    for id in ["m-b1", "m-b2", "m-b3", "m-todo", "t-dup", "t-medium"] {
         assert!(markdown.contains(&World::qualified(id)), "{id}: {markdown}");
     }
     let kept: Vec<String> = std::fs::read_dir(world.batch(&batch))
@@ -240,6 +283,11 @@ pub fn publish_closes_what_its_status_read_admits_and_leaves_the_rest(runner: &d
     let mut record = world.groom_record("k-keep").expect("a record");
     record["verdict"] = json!("unresolved");
     world.record("k-keep", &record);
+    let fixed = world.read("t-fixed").comments.expect("comments")[0]
+        .id
+        .clone();
+    world.remove_comment("t-fixed", &fixed);
+    std::fs::remove_file(world.ticket_path("u-unres")).expect("u-unres is deleted");
     let again = world.json(runner, 1, &["groom", "publish", "--batch", &batch]);
     let operations: Vec<&str> = again["store_operations"]
         .as_array()
@@ -255,7 +303,7 @@ pub fn publish_closes_what_its_status_read_admits_and_leaves_the_rest(runner: &d
     );
     assert_eq!(
         ids(&again["mismatched"]),
-        ["b-fixed", "b-obsolete", "k-keep"]
+        ["b-fixed", "b-obsolete", "k-keep", "t-fixed", "u-unres"]
     );
     for one in again["mismatched"].as_array().expect("mismatches") {
         assert_ne!(one["expected"], one["found"], "{one}");
@@ -284,6 +332,16 @@ pub fn publish_closes_what_its_status_read_admits_and_leaves_the_rest(runner: &d
             .as_str()
             .is_some_and(|found| found.contains("unresolved"))
     );
+    assert!(
+        mismatch("t-fixed")["found"]
+            .as_str()
+            .is_some_and(|found| found.contains("no such comment"))
+    );
+    assert_eq!(
+        mismatch("u-unres")["expected"],
+        "the ticket",
+        "a deleted ticket"
+    );
     assert_eq!(again["confirmed"], 5, "every untouched ticket is confirmed");
     let markdown =
         std::fs::read_to_string(again["report"].as_str().expect("a path")).expect("report.md");
@@ -296,11 +354,128 @@ pub fn publish_refuses_a_batch_no_check_passed(runner: &dyn Runner) {
     world.repository(WIDGETS, &[("src/a.rs", "a\n")]);
     world.ticket("w1", "widgets: w1", "backlog", &[WIDGETS], "The body.");
     let prepared = world.json(runner, 0, &["groom", "prepare"]);
-    let batch = prepared["batch"].as_str().expect("a batch");
-    let ran = runner.run(&world, &["groom", "publish", "--batch", batch]);
-    assert_eq!(ran.code, 2, "{}", ran.stderr);
-    assert!(ran.stderr.contains("groom check"), "{}", ran.stderr);
-    let ran = runner.run(&world, &["groom", "publish", "--batch", "../elsewhere"]);
-    assert_eq!(ran.code, 2, "{}", ran.stderr);
-    assert!(world.groom_record("w1").is_none(), "nothing was written");
+    let unchecked = prepared["batch"].as_str().expect("a batch").to_owned();
+    let refused = |batch: &str, code: i32, says: &str| {
+        let ran = runner.run(&world, &["groom", "publish", "--batch", batch]);
+        assert_eq!(ran.code, code, "{}", ran.stderr);
+        assert!(ran.stderr.contains(says), "{says}: {}", ran.stderr);
+    };
+    refused(&unchecked, 2, "groom check");
+    refused("../elsewhere", 2, "not a grooming batch id");
+
+    // A plan, or receipts, of another batch.
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    let checked = world.checked(runner, |id| keep(id, &[])).expect("a batch");
+    let plan = |batch: &str| world.batch(batch).join("plan.json");
+    std::fs::copy(plan(&checked), plan(&unchecked)).expect("copied");
+    refused(&unchecked, 2, &format!("is batch {checked}'s plan"));
+    let mut own: Value =
+        serde_json::from_str(&std::fs::read_to_string(plan(&checked)).expect("plan"))
+            .expect("JSON");
+    own["batch"] = json!(unchecked);
+    std::fs::write(plan(&unchecked), own.to_string()).expect("written");
+    let receipts = |batch: &str| world.batch(batch).join("receipts.json");
+    std::fs::write(
+        receipts(&unchecked),
+        json!({"schema_version": 1, "batch": checked, "destination": "followups",
+               "namespace": NAMESPACE, "tickets": [], "survivors": []})
+        .to_string(),
+    )
+    .expect("written");
+    refused(&unchecked, 2, &format!("holds batch {checked}'s receipts"));
+
+    // A batch whose prepared record is gone cannot start a publish.
+    let batch_json = world.batch(&checked).join("batch.json");
+    let held = std::fs::read_to_string(&batch_json).expect("batch.json");
+    std::fs::remove_file(&batch_json).expect("removed");
+    refused(&checked, 1, "batch.json: could not be read");
+    std::fs::write(&batch_json, held).expect("restored");
+
+    // A comment template writing a marker itself is refused before any ticket is closed.
+    std::fs::write(
+        world.root.join("marker.md.j2"),
+        "Closed.\n\n<!-- orchestrator:follow-up-comment run=\"x\" kind=\"groom\" verdict=\"fixed\" -->\n",
+    )
+    .expect("a template");
+    std::fs::write(
+        world.root.join("onefollowup.yaml"),
+        "groom: {comment_template: marker.md.j2}\n",
+    )
+    .expect("the configuration");
+    world.ticket("w2", "widgets: w2", "backlog", &[WIDGETS], "Another body.");
+    let fix = world.commit(WIDGETS, &[("src/a.rs", "a fixed\n")], "fix");
+    let closing = world
+        .checked(runner, |id| {
+            verdict(id, "fixed", "high", Some(&fix), &["src/a.rs"], None)
+        })
+        .expect("a batch");
+    refused(&closing, 2, "writes a comment marker itself");
+    assert_eq!(world.status("w2"), "backlog", "nothing was closed");
+    assert!(world.groom_record("w2").is_none(), "nothing was written");
+}
+
+pub fn a_refused_close_is_sent_again_by_the_rerun(runner: &dyn Runner) {
+    let world = World::new();
+    world.repository(WIDGETS, &[("src/a.rs", "a\n"), ("src/b.rs", "b\n")]);
+    let fix = world.commit(WIDGETS, &[("src/a.rs", "a fixed\n")], "fix the save");
+    for id in ["a", "d", "s"] {
+        world.ticket(
+            id,
+            &format!("widgets: ticket {id}"),
+            "backlog",
+            &[WIDGETS],
+            &format!("The body of {id}."),
+        );
+    }
+    let now = super::world::ago(60);
+    world.comment("d", "c-d", &now, &now, "Is this the same as s?");
+    let batch = world
+        .checked(runner, |id| match id {
+            "a" => verdict(id, "fixed", "high", Some(&fix), &["src/a.rs"], None),
+            "d" => verdict(id, "keep", "high", None, &["src/b.rs"], Some("s")),
+            _ => keep(id, &["src/a.rs", "src/b.rs"]),
+        })
+        .expect("a batch");
+    // Another tool left d's metadata on one line, which the destination will not set a key of.
+    world.edit_ticket(
+        "d",
+        "priority: low\n",
+        "priority: low\nmetadata: {other.key: 1}\n",
+    );
+    let refused = world.json(runner, 1, &["groom", "publish", "--batch", &batch]);
+    assert_eq!(world.status("a"), "done");
+    assert_eq!(world.comments("a").len(), 1);
+    assert_eq!(world.status("d"), "backlog", "d's close was refused");
+    assert_eq!(world.comments("d").len(), 1, "only the person's comment");
+    assert!(
+        world.comments("s").is_empty(),
+        "the survivor's comment waits for its duplicate's close"
+    );
+    let markdown =
+        std::fs::read_to_string(refused["report"].as_str().expect("a path")).expect("report.md");
+    assert!(
+        markdown.contains("## Failed") && markdown.contains("`followups:d`"),
+        "{markdown}"
+    );
+
+    // A person tidies d; the re-run sends only d's close, then its comment and the survivor's.
+    world.edit_ticket(
+        "d",
+        "metadata: {other.key: 1}\n",
+        "metadata:\n  other.key: 1\n",
+    );
+    let published = world.json(runner, 0, &["groom", "publish", "--batch", &batch]);
+    assert_eq!(published["mismatched"], json!([]), "{published:#}");
+    assert_eq!(
+        world.comments("a").len(),
+        1,
+        "a's comment is not posted again"
+    );
+    assert_eq!(world.status("d"), "cancelled");
+    let comments = world.comments("d");
+    assert_eq!(comments.len(), 2, "{comments:?}");
+    assert!(comments[1].contains(&grooming_marker(&batch, "duplicate")));
+    let survivor = world.comments("s");
+    assert_eq!(survivor.len(), 1);
+    assert!(survivor[0].contains("followups:d"), "{}", survivor[0]);
 }

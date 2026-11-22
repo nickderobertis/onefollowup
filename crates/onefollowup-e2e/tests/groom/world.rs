@@ -345,6 +345,20 @@ impl World {
             .collect()
     }
 
+    /// Remove the comment `comment` from the ticket `id`, as a person deleting it would.
+    pub fn remove_comment(&self, id: &str, comment: &str) {
+        let text = self.ticket_text(id);
+        let open = format!("<!-- onetaskgraph:comment id=\"{comment}\"");
+        let start = text.find(&open).expect("the comment is there");
+        let close = "<!-- /onetaskgraph:comment -->\n";
+        let end = start + text[start..].find(close).expect("the comment ends") + close.len();
+        std::fs::write(
+            self.ticket_path(id),
+            format!("{}{}", &text[..start], &text[end..]),
+        )
+        .expect("the comment is removed");
+    }
+
     /// Move the ticket `id` to the status category `status` through the store, as a person's
     /// client or another process would.
     pub fn move_to(&self, id: &str, status: &str) {

@@ -138,6 +138,11 @@ impl World {
             .collect()
     }
 
+    /// The world's root as a shell script names it.
+    pub fn shell_root(&self) -> String {
+        crate::groom::world::shell_path(&self.root)
+    }
+
     /// Write an executable shell script `name` on the world's `PATH`.
     pub fn script(&self, name: &str, body: &str) {
         let path = self.root.join("bin").join(name);
@@ -161,7 +166,10 @@ impl World {
             .env("XDG_CACHE_HOME", self.root.join("home/cache"))
             .env(
                 "PATH",
-                format!("{}:/usr/bin:/bin", self.root.join("bin").display()),
+                crate::groom::world::search_path(
+                    Some(&self.root.join("bin")),
+                    &["/usr/bin", "/bin"],
+                ),
             )
             .envs(self.variables.iter().map(|(name, value)| (name, value)));
         command

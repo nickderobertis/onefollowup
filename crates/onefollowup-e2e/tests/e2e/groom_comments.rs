@@ -17,14 +17,17 @@ fn local_repository(world: &World) {
     let repos = world.root.join("repos");
     let path = repos.join(format!("{REPOSITORY}.git"));
     std::fs::create_dir_all(&path).expect("the repository's directory");
+    // A `file:` URL with forward slashes: git's configuration reads a backslash in a quoted
+    // section name as an escape.
+    let url = crate::groom::world::shell_path(&repos);
+    let url = url.strip_prefix('/').unwrap_or(&url).to_owned();
     std::fs::write(
         world.root.join("home/.gitconfig"),
         format!(
             "[user]\n\tname = Groom Journey\n\temail = groom@example.invalid\n\
-             [url \"file://{}/\"]\n\tinsteadOf = https://\n\
+             [url \"file:///{url}/\"]\n\tinsteadOf = https://\n\
              [uploadpack]\n\tallowFilter = true\n\
-             [protocol \"file\"]\n\tallow = always\n",
-            repos.display()
+             [protocol \"file\"]\n\tallow = always\n"
         ),
     )
     .expect("the git configuration");
@@ -39,7 +42,10 @@ fn local_repository(world: &World) {
             .current_dir(&path)
             .env_clear()
             .env("HOME", world.root.join("home"))
-            .env("PATH", "/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin")
+            .env(
+                "PATH",
+                crate::groom::world::search_path(None, crate::groom::world::UNIX_TOOLS),
+            )
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .output()
             .expect("git runs");

@@ -21,7 +21,7 @@ const HOOKED: &str = "host_label: build-host-1\nhooks:\n  batch_preparing: [inpu
 
 /// The hook: append one line to `preparing.log` per run, then print `inputs`.
 fn hook(world: &World, inputs: &Value) {
-    let root = world.root.display();
+    let root = world.shell_root();
     std::fs::write(
         world.root.join("inputs.json"),
         json!({"schema_version": 1, "inputs": inputs}).to_string(),
@@ -237,9 +237,12 @@ fn a_batch_whose_only_input_is_a_hook_input_is_not_empty() {
 /// `printed` with the world's root and its drafts-source operations taken out: what a
 /// `prepare` that continues a snapshot's pass and one that opened it itself share.
 fn comparable(world: &World, printed: &Value) -> Value {
-    let root = world.root.display().to_string();
+    // The root as it appears inside a JSON string, escaped: a Windows path's backslashes are
+    // doubled there.
+    let quoted = Value::from(world.root.display().to_string()).to_string();
+    let root = &quoted[1..quoted.len() - 1];
     let mut printed: Value =
-        serde_json::from_str(&printed.to_string().replace(&root, "<root>")).expect("JSON");
+        serde_json::from_str(&printed.to_string().replace(root, "<root>")).expect("JSON");
     if let Some(operations) = printed["store_operations"].as_array_mut() {
         operations.retain(|operation| operation["destination"] == true);
     }
@@ -420,11 +423,14 @@ fn a_snapshot_after_a_settled_pass_writes_nothing_and_prepare_opens_the_pass_as_
     );
     assert_eq!(hook_runs(&plain), 2);
     assert_eq!(after["drafts"], 2, "{after}");
+    // The root as it appears inside a JSON string, escaped: a Windows path's backslashes are
+    // doubled there.
     let normalized = |world: &World, printed: &Value| {
+        let quoted = Value::from(world.root.display().to_string()).to_string();
         serde_json::from_str::<Value>(
             &printed
                 .to_string()
-                .replace(&world.root.display().to_string(), "<root>"),
+                .replace(&quoted[1..quoted.len() - 1], "<root>"),
         )
         .expect("JSON")
     };

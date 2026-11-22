@@ -171,7 +171,7 @@ fn each_example_runs_a_batch_to_the_outcome_its_walk_through_states() {
 fn single_root_cause() {
     const BATCH: &str = "nightly-2026-11-10";
     let mut world = world_of("single-root-cause");
-    let root = world.root.display().to_string();
+    let root = world.shell_root();
     world.script(
         "onepipeline",
         &format!(
@@ -360,8 +360,14 @@ fn single_root_cause() {
     let settled =
         std::fs::read_to_string(world.root.join("onepipeline.log")).expect("the settled hook ran");
     assert!(
-        settled.starts_with("human-items raise --phase follow-up-review --context /"),
-        "{settled}"
+        settled
+            .lines()
+            .next()
+            .and_then(
+                |line| line.strip_prefix("human-items raise --phase follow-up-review --context ")
+            )
+            .is_some_and(|path| std::path::Path::new(path).is_absolute()),
+        "the hook is handed the context file's absolute path: {settled}"
     );
     assert!(
         settled.contains("\"session\": \"follow-ups@build-host-1\""),
@@ -814,7 +820,7 @@ fn typed_batch(paging_fails: bool) {
     const BATCH: &str = "nightly-2026-11-10";
     const ON_CALL: &str = "Priya Natarajan";
     let mut world = world_of("typed-destinations");
-    let root = world.root.display().to_string();
+    let root = world.shell_root();
     // The paging CLI the notify script calls: it logs what it was handed and what the bug
     // tracker held at that moment, and names this week's on-call.
     world.script(

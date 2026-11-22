@@ -32,7 +32,7 @@ const README_ROOT: &str = "/srv/follow-ups";
 /// `--context` names, under `raised/<n>/`.
 fn raising_world(config: &str) -> World {
     let mut world = World::new(&["followups"], config);
-    let root = world.root.display().to_string();
+    let root = world.shell_root();
     std::fs::create_dir_all(world.root.join("raised")).expect("raised");
     // A `wc` that pads its count as BSD's (macOS's) does, so the recorder below is held to
     // what every platform's `wc` prints and not to GNU's bare number.
@@ -265,9 +265,11 @@ fn a_settled_hook_is_handed_a_context_file_of_the_batchs_tickets_a_stable_key_an
         readme_block("A worked example: the configuration", "yaml"),
         RAISING
     );
-    let written = serde_json::to_string_pretty(calls[1].2.as_ref().expect("a context"))
-        .expect("JSON")
-        .replace(&world.root.display().to_string(), README_ROOT);
+    let written = serde_json::to_string_pretty(&as_documented(
+        &world.root,
+        calls[1].2.as_ref().expect("a context"),
+    ))
+    .expect("JSON");
     let shown: Value =
         serde_json::from_str(&readme_block("A worked example: the context file", "json"))
             .expect("the README's example is JSON");
@@ -295,7 +297,7 @@ fn a_hook_naming_no_placeholder_is_handed_exactly_its_argv_and_the_settled_docum
     assert_eq!(argv, &["--plain", "{context}"], "argv as configured");
     assert!(context.is_none());
     let document: Value = serde_json::from_str(stdin).expect("stdin is JSON");
-    let receipts = world.work().join(format!("receipts/{BATCH}.jsonl"));
+    let receipts = world.work().join("receipts").join(format!("{BATCH}.jsonl"));
     assert_eq!(
         document,
         json!({
@@ -325,4 +327,39 @@ fn a_hook_naming_the_placeholder_without_an_owner_is_refused_at_load() {
     let stderr = world.fails(2, &["config", "show"], "");
     assert!(stderr.contains("hooks.batch_settled"), "{stderr}");
     assert!(stderr.contains("hooks.owner.session"), "{stderr}");
+}
+
+/// `context` as the README shows it: each path or `file://` URL under `root` moved under
+/// [`README_ROOT`] with forward slashes, however the host spelled the root — as given, or, in
+/// a URL the store states on Windows, as its canonical `\\?\` path.
+fn as_documented(root: &std::path::Path, context: &Value) -> Value {
+    let spellings = [
+        root.display().to_string(),
+        std::fs::canonicalize(root)
+            .expect("the root resolves")
+            .display()
+            .to_string(),
+    ];
+    match context {
+        Value::String(text) => {
+            let (scheme, path) = text
+                .strip_prefix("file://")
+                .map_or(("", text.as_str()), |path| ("file://", path));
+            spellings
+                .iter()
+                .find_map(|spelling| path.strip_prefix(spelling.as_str()))
+                .map_or_else(
+                    || context.clone(),
+                    |rest| Value::from(format!("{scheme}{README_ROOT}{}", rest.replace('\\', "/"))),
+                )
+        }
+        Value::Array(values) => values.iter().map(|one| as_documented(root, one)).collect(),
+        Value::Object(members) => Value::Object(
+            members
+                .iter()
+                .map(|(name, one)| (name.clone(), as_documented(root, one)))
+                .collect(),
+        ),
+        _ => context.clone(),
+    }
 }

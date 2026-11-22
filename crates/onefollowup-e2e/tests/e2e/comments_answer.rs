@@ -34,7 +34,7 @@ struct Call {
 /// `A` and `B` carrying one person's comment: `(world, [(item, comment id)])`.
 fn answering_world(config: &str) -> (World, Vec<(String, String)>) {
     let mut world = World::new(&[DESTINATION], config);
-    let root = world.root.display().to_string();
+    let root = world.shell_root();
     // The answering agent, as a shell script: it records the call, fails where `fail-<batch>`
     // exists, and otherwise answers the one comment its feedback file quotes as that file says.
     world.script(
@@ -134,14 +134,19 @@ fn every_batch_answering_settles_the_pass_as_comments_settle_does() {
         .iter()
         .map(|batch| Call {
             batch: batch.clone(),
-            feedback: format!(
-                "{}/feedback/{batch}/{}.md",
-                world.work().display(),
-                Path::new(&snapshot)
-                    .file_name()
-                    .expect("a stamp")
-                    .to_string_lossy()
-            ),
+            feedback: world
+                .work()
+                .join("feedback")
+                .join(batch)
+                .join(format!(
+                    "{}.md",
+                    Path::new(&snapshot)
+                        .file_name()
+                        .expect("a stamp")
+                        .to_string_lossy()
+                ))
+                .display()
+                .to_string(),
             snapshot: snapshot.clone(),
             feedback_present: true,
         })
@@ -327,8 +332,12 @@ fn a_dry_run_prints_what_comments_gather_dry_run_prints_and_launches_nothing() {
     // Each dry run writes its own snapshot, named by the instant it was taken.
     let theirs = gathered["snapshot"].as_str().expect("a snapshot");
     let ours = answered["snapshot"].as_str().expect("a snapshot");
+    // The path as it appears inside a JSON string, escaped: a Windows path's backslashes are
+    // doubled there, so the bare path would match nothing.
     let normalized = |value: &Value, snapshot: &str| -> Value {
-        serde_json::from_str(&value.to_string().replace(snapshot, "<snapshot>")).expect("JSON")
+        let quoted = Value::from(snapshot).to_string();
+        let escaped = &quoted[1..quoted.len() - 1];
+        serde_json::from_str(&value.to_string().replace(escaped, "<snapshot>")).expect("JSON")
     };
     assert_eq!(
         normalized(&answered, ours),

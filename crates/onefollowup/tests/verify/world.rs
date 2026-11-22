@@ -142,6 +142,12 @@ impl World {
             .collect()
     }
 
+    /// The world's root as a shell script names it: with forward slashes, which a Windows
+    /// shell reads as separators where it reads a backslash as an escape.
+    pub fn shell_root(&self) -> String {
+        self.root.display().to_string().replace('\\', "/")
+    }
+
     /// Write an executable shell script `name` on the world's `PATH`.
     pub fn script(&self, name: &str, body: &str) {
         let path = self.root.join("bin").join(name);
@@ -170,10 +176,7 @@ impl World {
                 "XDG_CACHE_HOME".to_owned(),
                 self.root.join("home/cache").display().to_string(),
             ),
-            (
-                "PATH".to_owned(),
-                format!("{}:/usr/bin:/bin", self.root.join("bin").display()),
-            ),
+            ("PATH".to_owned(), search_path(&self.root.join("bin"))),
         ];
         environment.extend(self.variables.iter().cloned());
         environment
@@ -751,4 +754,22 @@ fn verb(settings: &Settings, command: Command, stdin: &str) -> Result<String, Er
         Command::Kinds(args) => call(settings, args, api::kinds),
         Command::Config(ConfigCommand::Show(args)) => call(settings, args, api::config_show),
     }
+}
+
+/// A `PATH` of `bin`, then where the host keeps the tools a journey's scripts run: `/usr/bin`
+/// and `/bin` off Windows, and on Windows — which keeps them in no fixed directory — each
+/// directory of this process's own `PATH` holding `sh`. Joined as the host joins one.
+fn search_path(bin: &Path) -> String {
+    let host: Vec<PathBuf> = if cfg!(windows) {
+        let inherited = std::env::var_os("PATH").unwrap_or_default();
+        std::env::split_paths(&inherited)
+            .filter(|directory| directory.join("sh.exe").is_file())
+            .collect()
+    } else {
+        vec![PathBuf::from("/usr/bin"), PathBuf::from("/bin")]
+    };
+    std::env::join_paths(std::iter::once(bin.to_path_buf()).chain(host))
+        .expect("a PATH joins")
+        .into_string()
+        .expect("a UTF-8 PATH")
 }

@@ -231,6 +231,9 @@ jobs:
         run: just bootstrap
       - name: Test the affected projects
         shell: bash
+        # .config/nextest.toml: run every test past a failure, so the run names them all.
+        env:
+          NEXTEST_PROFILE: ci
         run: just ci-test
       # What each `budgets` target saved, which the `budgets` job's rows read. Uploaded even
       # after a failure, so the rest of the report keeps its figures, and absent when this
@@ -326,6 +329,9 @@ jobs:
         run: just bootstrap
       - name: Test the affected projects
         shell: bash
+        # .config/nextest.toml: run every test past a failure, so the run names them all.
+        env:
+          NEXTEST_PROFILE: ci
         run: just ci-test
 
       - name: Report cache entries and task executions
@@ -411,6 +417,9 @@ jobs:
         run: just bootstrap
       - name: Test the affected projects
         shell: bash
+        # .config/nextest.toml: run every test past a failure, so the run names them all.
+        env:
+          NEXTEST_PROFILE: ci
         run: just ci-test
 
       - name: Report cache entries and task executions

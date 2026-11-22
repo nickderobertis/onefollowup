@@ -31,12 +31,14 @@ fn bounded(visibility: Option<&str>) -> World {
     let declared = visibility
         .map(|visibility| format!("    visibility: {visibility}\n"))
         .unwrap_or_default();
-    // Named by path: onetaskgraph runs a policy command on its own process's `PATH`.
-    let bin = world.root.join("bin").display().to_string();
+    // Named by path: onetaskgraph runs a policy command on its own process's `PATH`; and
+    // through `sh`, since onetaskgraph starts a script itself only where the host reads its
+    // `#!` line, which Windows does not.
+    let bin = world.shell_root() + "/bin";
     std::fs::write(
         world.root.join("onetaskgraph.yaml"),
         format!(
-            "write_policy:\n  visibility_command: [{bin}/repository-visibility]\n  check_command: [{bin}/boundary-check]\nsources:\n  drafts:\n    plugin: local-md\n{declared}    config:\n      root: drafts-root\n  followups:\n    plugin: local-md\n    config:\n      root: followups-root\n"
+            "write_policy:\n  visibility_command: [sh, {bin}/repository-visibility]\n  check_command: [sh, {bin}/boundary-check]\nsources:\n  drafts:\n    plugin: local-md\n{declared}    config:\n      root: drafts-root\n  followups:\n    plugin: local-md\n    config:\n      root: followups-root\n"
         ),
     )
     .expect("the store");

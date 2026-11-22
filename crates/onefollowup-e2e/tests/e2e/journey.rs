@@ -16,7 +16,7 @@ pub const HOOKED: &str = "host_label: build-host-1\nhooks:\n  batch_preparing: [
 
 /// The hooks: each logs its stdin, and the preparing hook prints `inputs.json`.
 pub fn hooks(world: &World) {
-    let root = world.root.display();
+    let root = world.shell_root();
     world.script(
         "inputs-hook",
         &format!(

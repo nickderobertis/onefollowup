@@ -11,8 +11,38 @@ use onefollowup::formats::groom::{GroomRecord, OverlapComment, content_digest, r
 use onefollowup::store::{ReadItem, Store, TaskChange};
 use serde_json::{Value, json};
 
+/// A `PATH` of `first`, then where the host keeps the tools a journey's commands run: `unix`
+/// off Windows, and on Windows — which keeps them in no fixed directory — each directory of
+/// this process's own `PATH` holding `sh` or `git`. Joined as the host joins one.
+pub fn search_path(first: Option<&Path>, unix: &[&str]) -> String {
+    let host: Vec<PathBuf> = if cfg!(windows) {
+        let inherited = std::env::var_os("PATH").unwrap_or_default();
+        std::env::split_paths(&inherited)
+            .filter(|directory| {
+                ["sh.exe", "git.exe"]
+                    .iter()
+                    .any(|tool| directory.join(tool).is_file())
+            })
+            .collect()
+    } else {
+        unix.iter().map(PathBuf::from).collect()
+    };
+    std::env::join_paths(first.map(Path::to_path_buf).into_iter().chain(host))
+        .expect("a PATH joins")
+        .into_string()
+        .expect("a UTF-8 PATH")
+}
+
+/// `path` as a shell script names it: with forward slashes, which a Windows shell reads as
+/// separators where it reads a backslash as an escape.
+pub fn shell_path(path: &Path) -> String {
+    path.display().to_string().replace('\\', "/")
+}
+
 /// The destination every grooming journey grooms.
 pub const DESTINATION: &str = "followups";
+/// Where git is kept off Windows.
+pub const UNIX_TOOLS: &[&str] = &["/usr/local/bin", "/opt/homebrew/bin", "/usr/bin", "/bin"];
 /// The namespace every journey's records are under.
 pub const NAMESPACE: &str = "orchestrator";
 
@@ -61,16 +91,19 @@ impl World {
         std::fs::create_dir_all(root.join("home/config")).expect("home");
         std::fs::create_dir_all(root.join("repos")).expect("repos");
         std::fs::create_dir_all(root.join("tmp")).expect("a temporary directory");
+        // A `file:` URL with forward slashes: git's configuration reads a backslash in a quoted
+        // section name as an escape, so a Windows path written as it displays loses them all.
+        let repos = shell_path(&root.join("repos"));
+        let repos = repos.strip_prefix('/').unwrap_or(&repos).to_owned();
         std::fs::write(
             root.join("home/.gitconfig"),
             format!(
                 "[user]\n\tname = Groom Journey\n\temail = groom@example.invalid\n\
                  [init]\n\tdefaultBranch = main\n\
-                 [url \"file://{}/\"]\n\tinsteadOf = https://\n\
+                 [url \"file:///{repos}/\"]\n\tinsteadOf = https://\n\
                  [uploadpack]\n\tallowFilter = true\n\
                  [protocol \"file\"]\n\tallow = always\n\
-                 [advice]\n\tdetachedHead = false\n",
-                root.join("repos").display()
+                 [advice]\n\tdetachedHead = false\n"
             ),
         )
         .expect("the git configuration");
@@ -92,10 +125,7 @@ impl World {
                 "XDG_CONFIG_HOME".to_owned(),
                 self.root.join("home/config").display().to_string(),
             ),
-            (
-                "PATH".to_owned(),
-                "/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin".to_owned(),
-            ),
+            ("PATH".to_owned(), search_path(None, UNIX_TOOLS)),
             ("GIT_CONFIG_NOSYSTEM".to_owned(), "1".to_owned()),
             (
                 "TMPDIR".to_owned(),
@@ -270,7 +300,7 @@ impl World {
 
     /// The grooming batch `batch`'s directory.
     pub fn batch(&self, batch: &str) -> PathBuf {
-        self.root.join(".onefollowup/groom").join(batch)
+        self.root.join(".onefollowup").join("groom").join(batch)
     }
 
     /// The batch record `batch` holds.

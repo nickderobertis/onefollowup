@@ -759,7 +759,10 @@ fn the_content_write_caps_and_the_host_state_directory_show_with_their_layer_and
     assert_eq!(
         shown["config"]["governor"]["state_dir"],
         json!(
-            home.join(".local/state/onefollowup/governor")
+            home.join(".local")
+                .join("state")
+                .join("onefollowup")
+                .join("governor")
                 .display()
                 .to_string()
         )
@@ -780,7 +783,13 @@ fn the_content_write_caps_and_the_host_state_directory_show_with_their_layer_and
     );
     assert_eq!(
         shown["config"]["governor"]["state_dir"],
-        json!(state.join("onefollowup/governor").display().to_string())
+        json!(
+            state
+                .join("onefollowup")
+                .join("governor")
+                .display()
+                .to_string()
+        )
     );
 
     // Each overridable like every key, the layer named.

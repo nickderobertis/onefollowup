@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.1](https://github.com/nickderobertis/onefollowup/compare/v0.11.0...v0.11.1) - 2026-11-22
+
+### Fixed
+
+- make onefollowup lint, macOS and Windows CI jobs pass so every check can be required ([#62](https://github.com/nickderobertis/onefollowup/pull/62))
+
 ## [0.11.0](https://github.com/nickderobertis/onefollowup/compare/v0.10.0...v0.11.0) - 2026-11-22
 
 ### Added

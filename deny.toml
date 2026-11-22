@@ -12,8 +12,14 @@ yanked = "deny"
 # release depends on it; the advisory is that it is unmaintained, not a vulnerability, and
 # it names no upgrade. onetaskgraph carries the same exception. Retired by a `yrs` release
 # that drops `smallstr`.
+# `chrono` is reached directly and through onetaskgraph and onebudgetspec, so no change
+# here drops it; its advisory is that it is unmaintained, not a vulnerability, and names
+# no safe upgrade. onetaskgraph and onepipeline carry the same exception. Retired when the
+# graph drops chrono (onepipeline#1687 moves the family to a supported time library) or
+# the advisory is withdrawn.
 ignore = [
     { id = "RUSTSEC-2026-0215", reason = "smallstr is unmaintained, reached only through onetaskgraph-linear -> yrs, whose every release depends on it; remove when a yrs release drops smallstr" },
+    { id = "RUSTSEC-2026-0543", reason = "chrono is unmaintained, with no safe upgrade, and reached directly and through onetaskgraph and onebudgetspec; remove when the dependency graph drops chrono or the advisory is withdrawn" },
 ]
 
 [licenses]

@@ -61,16 +61,19 @@ impl World {
         std::fs::create_dir_all(root.join("home/config")).expect("home");
         std::fs::create_dir_all(root.join("repos")).expect("repos");
         std::fs::create_dir_all(root.join("tmp")).expect("a temporary directory");
+        // A `file:` URL with forward slashes: git's configuration reads a backslash in a quoted
+        // section name as an escape, so a Windows path written as it displays loses them all.
+        let repos = root.join("repos").display().to_string().replace('\\', "/");
+        let repos = repos.strip_prefix('/').unwrap_or(&repos).to_owned();
         std::fs::write(
             root.join("home/.gitconfig"),
             format!(
                 "[user]\n\tname = Groom Journey\n\temail = groom@example.invalid\n\
                  [init]\n\tdefaultBranch = main\n\
-                 [url \"file://{}/\"]\n\tinsteadOf = https://\n\
+                 [url \"file:///{repos}/\"]\n\tinsteadOf = https://\n\
                  [uploadpack]\n\tallowFilter = true\n\
                  [protocol \"file\"]\n\tallow = always\n\
-                 [advice]\n\tdetachedHead = false\n",
-                root.join("repos").display()
+                 [advice]\n\tdetachedHead = false\n"
             ),
         )
         .expect("the git configuration");

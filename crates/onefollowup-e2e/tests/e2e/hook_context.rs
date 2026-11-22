@@ -34,10 +34,13 @@ fn raising_world(config: &str) -> World {
     let mut world = World::new(&["followups"], config);
     let root = world.root.display().to_string();
     std::fs::create_dir_all(world.root.join("raised")).expect("raised");
+    // A `wc` that pads its count as BSD's (macOS's) does, so the recorder below is held to
+    // what every platform's `wc` prints and not to GNU's bare number.
+    world.script("wc", "printf '%8d\\n' \"$(/usr/bin/wc \"$@\")\"");
     world.script(
         "onepipeline",
         &format!(
-            "dir={root}/raised/$(ls {root}/raised | wc -l)\nmkdir -p \"$dir\"\nprintf '%s\\n' \"$@\" > \"$dir/argv\"\ncat > \"$dir/stdin\"\nwhile [ $# -gt 0 ]; do\n  if [ \"$1\" = --context ]; then cp \"$2\" \"$dir/context.json\"; fi\n  shift\ndone"
+            "dir={root}/raised/$(($(ls {root}/raised | wc -l)))\nmkdir -p \"$dir\"\nprintf '%s\\n' \"$@\" > \"$dir/argv\"\ncat > \"$dir/stdin\"\nwhile [ $# -gt 0 ]; do\n  if [ \"$1\" = --context ]; then cp \"$2\" \"$dir/context.json\"; fi\n  shift\ndone"
         ),
     );
     world

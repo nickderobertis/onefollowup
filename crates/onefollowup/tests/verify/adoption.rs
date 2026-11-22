@@ -3,8 +3,13 @@
 
 use serde_json::{Value, json};
 
-use crate::journey::{comments, front};
-use crate::world::{COMMIT, HOST, REPOSITORY, Ticket, World, answer, filed_body, filed_item};
+use crate::journey::front;
+// Only the read-back journey uses these, and it runs where it can make a file read-only.
+#[cfg(unix)]
+use crate::journey::comments;
+use crate::world::{COMMIT, HOST, REPOSITORY, World, answer};
+#[cfg(unix)]
+use crate::world::{Ticket, filed_body, filed_item};
 
 const BATCH: &str = "nightly-2026-11-07";
 

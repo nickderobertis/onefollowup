@@ -16,9 +16,9 @@ use onefollowup::api::{
     AnsweredLaunch, AnsweredPass, BoardComment, BoardStatus, Checked, CommentsAnswered,
     CommentsChecked, CommentsSettled, Drafted, DuplicateCandidate, DuplicateQuery, DuplicateSearch,
     Gathered, Governed, GroomChecked, GroomPrepared, GroomProblem, GroomPublished, GroomShard,
-    HookRun, ItemStatus, Launch, Launches, Prepared, Problem, PublishOutcome, Published,
-    QueryKind, RoleStatus, SearchHit, SearchResults, Settled, SettledLaunch, Snapshotted, Staged,
-    StagedOp, StatusesShown, TicketValidated,
+    HookRun, ItemStatus, Launch, Launches, Prepared, Problem, PublishOutcome, Published, QueryKind,
+    RoleStatus, SearchHit, SearchResults, Settled, SettledLaunch, Snapshotted, Staged, StagedOp,
+    StatusesShown, TicketValidated,
 };
 use onefollowup::cli::Cli;
 use onefollowup::config::StatusRole;

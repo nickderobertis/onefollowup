@@ -35,6 +35,7 @@ struct Judged<'a> {
 
 /// What check reads a batch with.
 struct Batch<'a> {
+    git: git::Git<'a>,
     record: &'a GroomBatch,
     problems: Vec<GroomProblem>,
 }
@@ -68,7 +69,7 @@ impl Batch<'_> {
                 .repositories
                 .iter()
                 .find(|one| &one.repository == named)
-                && git::is_ancestor(Path::new(&fetched.clone), commit, &fetched.commit)?
+                && git::is_ancestor(self.git, Path::new(&fetched.clone), commit, &fetched.commit)?
             {
                 return Ok(Some((fetched.repository.clone(), fetched.commit.clone())));
             }
@@ -540,6 +541,7 @@ pub fn run(settings: &Settings, args: GroomCheckArgs) -> Result<GroomChecked, Er
     })?;
     let record: GroomBatch = parse(&text, "grooming batch")?;
     let mut batch = Batch {
+        git: groom.git(),
         record: &record,
         problems: Vec::new(),
     };

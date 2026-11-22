@@ -5,10 +5,9 @@
 //! A repository `host/owner/name` is fetched from `https://host/owner/name.git`; git's own
 //! `url.<base>.insteadOf` configuration is how a host points that elsewhere.
 
-use std::path::{Path, PathBuf};
-use std::process::Command;
-
 use crate::error::Error;
+use crate::verify::command::{self, Ran};
+use std::path::{Path, PathBuf};
 
 /// The branch every repository is verified at.
 pub const MAIN: &str = "main";
@@ -20,29 +19,39 @@ pub fn url(repository: &str) -> String {
     format!("https://{repository}.git")
 }
 
-fn git(directory: Option<&Path>, args: &[&str]) -> Result<std::process::Output, Error> {
-    let mut command = Command::new("git");
-    if let Some(directory) = directory {
-        command.arg("-C").arg(directory);
-    }
-    command
-        .args(args)
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .output()
-        .map_err(|error| {
-            Error::Failed(format!(
-                "`git` could not be run ({error}); next: install git and put it on PATH"
-            ))
-        })
+/// The `git` the verb runs: the one on its environment's `PATH`, in its working directory and
+/// environment, which are not this process's own when the library was handed others.
+#[derive(Debug, Clone, Copy)]
+pub struct Git<'a> {
+    /// The verb's working directory.
+    pub working_directory: &'a Path,
+    /// The verb's environment.
+    pub environment: &'a [(String, String)],
 }
 
-fn ran(output: &std::process::Output, what: &str) -> Result<String, Error> {
-    if output.status.success() {
-        Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+impl Git<'_> {
+    fn run(&self, directory: Option<&Path>, args: &[&str]) -> Result<Ran, Error> {
+        let mut argv = vec!["git".to_owned()];
+        if let Some(directory) = directory {
+            argv.push("-C".to_owned());
+            argv.push(directory.display().to_string());
+        }
+        argv.extend(args.iter().map(|&arg| arg.to_owned()));
+        let mut environment = self.environment.to_vec();
+        environment.push(("GIT_TERMINAL_PROMPT".to_owned(), "0".to_owned()));
+        command::run(&argv, "", self.working_directory, &environment).map_err(|error| {
+            Error::Failed(format!("{error}; next: install git and put it on PATH"))
+        })
+    }
+}
+
+fn ran(output: &Ran, what: &str) -> Result<String, Error> {
+    if output.exit == 0 {
+        Ok(output.stdout.trim().to_owned())
     } else {
         Err(Error::Failed(format!(
             "{what} failed: {}; next: check the repository is reachable and has a `{MAIN}` branch",
-            String::from_utf8_lossy(&output.stderr).trim()
+            output.stderr.trim()
         )))
     }
 }
@@ -61,10 +70,10 @@ pub fn clone_path(clones: &Path, repository: &str) -> PathBuf {
 /// # Errors
 ///
 /// `git` that cannot run, or a clone or fetch that fails.
-pub fn fetch(repository: &str, clone: &Path) -> Result<String, Error> {
+pub fn fetch(git: Git<'_>, repository: &str, clone: &Path) -> Result<String, Error> {
     let source = url(repository);
     if clone.join(".git").exists() {
-        let fetched = git(
+        let fetched = git.run(
             Some(clone),
             &[
                 "fetch",
@@ -84,7 +93,7 @@ pub fn fetch(repository: &str, clone: &Path) -> Result<String, Error> {
                 ))
             })?;
         }
-        let cloned = git(
+        let cloned = git.run(
             None,
             &[
                 "clone",
@@ -100,11 +109,11 @@ pub fn fetch(repository: &str, clone: &Path) -> Result<String, Error> {
         ran(&cloned, &format!("cloning {source}"))?;
     }
     let commit = ran(
-        &git(Some(clone), &["rev-parse", "--verify", REMOTE_MAIN])?,
+        &git.run(Some(clone), &["rev-parse", "--verify", REMOTE_MAIN])?,
         &format!("reading {repository}'s `{MAIN}`"),
     )?;
     ran(
-        &git(
+        &git.run(
             Some(clone),
             &["checkout", "--quiet", "--force", "--detach", &commit],
         )?,
@@ -119,9 +128,9 @@ pub fn fetch(repository: &str, clone: &Path) -> Result<String, Error> {
 /// # Errors
 ///
 /// `git` that cannot run.
-pub fn is_ancestor(clone: &Path, commit: &str, main: &str) -> Result<bool, Error> {
-    let output = git(Some(clone), &["merge-base", "--is-ancestor", commit, main])?;
-    Ok(output.status.success())
+pub fn is_ancestor(git: Git<'_>, clone: &Path, commit: &str, main: &str) -> Result<bool, Error> {
+    let output = git.run(Some(clone), &["merge-base", "--is-ancestor", commit, main])?;
+    Ok(output.exit == 0)
 }
 
 /// The paths `main` changed since `since`, from trees alone; `None` when the clone does not
@@ -130,16 +139,22 @@ pub fn is_ancestor(clone: &Path, commit: &str, main: &str) -> Result<bool, Error
 /// # Errors
 ///
 /// `git` that cannot run.
-pub fn changed_paths(clone: &Path, since: &str, main: &str) -> Result<Option<Vec<String>>, Error> {
-    let output = git(
+pub fn changed_paths(
+    git: Git<'_>,
+    clone: &Path,
+    since: &str,
+    main: &str,
+) -> Result<Option<Vec<String>>, Error> {
+    let output = git.run(
         Some(clone),
         &["diff", "--name-only", "--no-renames", since, main],
     )?;
-    if !output.status.success() {
+    if output.exit != 0 {
         return Ok(None);
     }
     Ok(Some(
-        String::from_utf8_lossy(&output.stdout)
+        output
+            .stdout
             .lines()
             .filter(|line| !line.is_empty())
             .map(str::to_owned)

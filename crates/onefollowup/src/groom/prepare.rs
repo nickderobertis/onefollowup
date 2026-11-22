@@ -62,6 +62,7 @@ struct Open<'a> {
 
 /// Why `open` is selected, empty when it is not.
 fn reasons(
+    git: git::Git<'_>,
     open: &Open<'_>,
     fetched: &BTreeMap<String, FetchedRepository>,
     verified_at: &DateTime<Utc>,
@@ -105,7 +106,7 @@ fn reasons(
         Some(repository) if open.item.repositories.contains(&record.repository) => {
             if repository.commit != record.commit {
                 let clone = PathBuf::from(&repository.clone);
-                match git::changed_paths(&clone, &record.commit, &repository.commit)? {
+                match git::changed_paths(git, &clone, &record.commit, &repository.commit)? {
                     None => reasons.push(format!(
                         "`{}`'s `main` no longer holds its record's commit {}",
                         record.repository, record.commit
@@ -238,7 +239,7 @@ pub fn run(settings: &Settings, args: GroomPrepareArgs) -> Result<GroomPrepared,
     let mut fetched: BTreeMap<String, FetchedRepository> = BTreeMap::new();
     for repository in named {
         let clone = git::clone_path(&clones, repository);
-        let commit = git::fetch(repository, &clone)?;
+        let commit = git::fetch(groom.git(), repository, &clone)?;
         fetched.insert(
             repository.to_owned(),
             FetchedRepository {
@@ -256,7 +257,15 @@ pub fn run(settings: &Settings, args: GroomPrepareArgs) -> Result<GroomPrepared,
             record,
             activity: activity.get(item.id.as_str()).cloned().unwrap_or_default(),
         };
-        let why = reasons(&open, &fetched, &verified_at, overlap, max_age, args.full)?;
+        let why = reasons(
+            groom.git(),
+            &open,
+            &fetched,
+            &verified_at,
+            overlap,
+            max_age,
+            args.full,
+        )?;
         if !why.is_empty() {
             selected.push((item, why));
         }

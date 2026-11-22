@@ -95,6 +95,15 @@ impl<'a> Groom<'a> {
         .with_local(&self.config.drafts_source))
     }
 
+    /// The `git` the verb runs.
+    #[must_use]
+    pub fn git(&self) -> git::Git<'_> {
+        git::Git {
+            working_directory: self.settings.working_directory(),
+            environment: self.settings.environment(),
+        }
+    }
+
     /// Where every grooming batch is.
     #[must_use]
     pub fn root(&self) -> PathBuf {

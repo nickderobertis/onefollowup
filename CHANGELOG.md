@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0](https://github.com/nickderobertis/onefollowup/compare/v0.11.1...v0.12.0) - 2026-11-22
+
+### Added
+
+- pace every destination call under an adaptive GitHub quota governor ([#66](https://github.com/nickderobertis/onefollowup/pull/66))
+
 ## [0.11.1](https://github.com/nickderobertis/onefollowup/compare/v0.11.0...v0.11.1) - 2026-11-22
 
 ### Fixed

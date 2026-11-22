@@ -310,19 +310,29 @@ pub struct Governor {
 
 fn seconds(from: DateTime<Utc>, to: DateTime<Utc>) -> f64 {
     // Millisecond precision is all a reset or a wait is ever stated in.
-    #[allow(clippy::cast_precision_loss)] // A span of under 2^53 ms is exact.
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "a span of under 2^53 milliseconds converts exactly"
+    )]
     let millis = (to - from).num_milliseconds() as f64;
     millis / 1000.0
 }
 
 fn whole_seconds(span: f64) -> u64 {
     // A wait's length rounded up to whole seconds, never negative.
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // Clamped to 0 first.
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "clamped to 0 first, and a wait is far under u64::MAX seconds"
+    )]
     let whole = span.max(0.0).ceil() as u64;
     whole
 }
 
-#[allow(clippy::cast_precision_loss)] // Quota figures are far under 2^53.
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "quota figures are far under 2^53, which converts exactly"
+)]
 const fn points(value: u64) -> f64 {
     value as f64
 }
@@ -747,7 +757,10 @@ impl Governor {
 
 fn whole_millis(span_seconds: f64) -> i64 {
     // A lead of at most a window's length, in milliseconds.
-    #[allow(clippy::cast_possible_truncation)] // Bounded by the clamp to a day.
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "clamped to a day of milliseconds, far inside i64"
+    )]
     let millis = (span_seconds.clamp(0.0, 86_400.0) * 1000.0) as i64;
     millis
 }

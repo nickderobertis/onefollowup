@@ -1,7 +1,10 @@
 //! What the governor's tests share: a virtual clock and GitHub's rate-limit state as a script
 //! of it — the one thing a case doubles.
 
-#![allow(dead_code)] // Each test crate uses its own part of this module.
+#![allow(
+    dead_code,
+    reason = "each test crate including this module uses its own part of it"
+)]
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;

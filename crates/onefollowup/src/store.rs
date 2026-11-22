@@ -791,6 +791,19 @@ impl Store {
     /// The one chokepoint every call to onetaskgraph passes: `call`, to the sources `named`,
     /// sent once the governor admits it to every destination among them.
     fn send<F: Future>(&self, named: &[&str], kind: Kind, call: F) -> F::Output {
+        self.send_creating(named, kind, None, call)
+    }
+
+    /// [`Self::send`] for a call that may create up to `contents` content items (comments,
+    /// issues), which the governor counts against its content-write caps however the source
+    /// batches them into requests.
+    fn send_creating<F: Future>(
+        &self,
+        named: &[&str],
+        kind: Kind,
+        contents: Option<usize>,
+        call: F,
+    ) -> F::Output {
         let mut destinations: Vec<String> = named
             .iter()
             .filter(|source| self.local.as_deref() != Some(**source))
@@ -802,11 +815,32 @@ impl Store {
             return self.runtime.block_on(call);
         }
         self.runtime.block_on(async {
-            self.governor.admit_call(&destinations, kind).await;
+            match contents {
+                Some(contents) => {
+                    self.governor
+                        .admit_content_call(&destinations, kind, contents)
+                        .await;
+                }
+                None => self.governor.admit_call(&destinations, kind).await,
+            }
             let answered = call.await;
             self.governor.end_call();
             answered
         })
+    }
+
+    /// How many items a call to `named` that may create content takes: the governor's
+    /// [`content_chunk`](crate::governor::Governor::content_chunk), so each call's items fit the
+    /// content-write caps; all of them for a store governing nothing among `named`.
+    fn content_chunk(&self, named: &[&str], items: usize) -> usize {
+        let governed = named
+            .iter()
+            .any(|source| self.local.as_deref() != Some(*source));
+        self.governor
+            .content_chunk()
+            .filter(|_| governed)
+            .unwrap_or(items)
+            .max(1)
     }
 
     /// Every source the store's configuration declares, in name order.
@@ -1323,12 +1357,55 @@ impl Store {
         }))
     }
 
-    /// Copy every task `batch` names into its destination, in one call.
+    /// Copy every task `batch` names into its destination: in one call, or — more items than
+    /// the governor's content-write caps take in one call, since each may be created — in calls
+    /// of as many as they take, in order. A call refused after an earlier one wrote answers each
+    /// of its items `failed` with the refusal, so what the earlier calls wrote is still answered.
     ///
     /// # Errors
     ///
     /// The store's refusal of the whole copy, before any item was written.
     pub fn copy(&self, batch: &CopyBatch) -> Result<Vec<Copied>, StoreError> {
+        let mut named: Vec<&str> = batch
+            .items
+            .iter()
+            .filter_map(|id| id.split_once(':').map(|(source, _)| source))
+            .collect();
+        named.push(&batch.destination);
+        let chunk = self.content_chunk(&[batch.destination.as_str()], batch.items.len());
+        if batch.items.len() <= chunk {
+            return self.copy_call(batch, &named);
+        }
+        let mut copied = Vec::with_capacity(batch.items.len());
+        for (at, items) in batch.items.chunks(chunk).enumerate() {
+            let part = CopyBatch {
+                items: items.to_vec(),
+                versions: batch
+                    .versions
+                    .iter()
+                    .filter(|(id, _)| items.contains(id))
+                    .map(|(id, version)| (id.clone(), version.clone()))
+                    .collect(),
+                ..batch.clone()
+            };
+            match self.copy_call(&part, &named) {
+                Ok(answered) => copied.extend(answered),
+                Err(error) if at == 0 => return Err(error),
+                Err(error) => copied.extend(items.iter().map(|id| Copied {
+                    source: id.clone(),
+                    action: "failed".to_owned(),
+                    item: None,
+                    result: None,
+                    held: None,
+                    error: Some(("store-refused".to_owned(), error.to_string())),
+                })),
+            }
+        }
+        Ok(copied)
+    }
+
+    /// One copy call of `batch`, to the sources `named`, declared to create up to every item.
+    fn copy_call(&self, batch: &CopyBatch, named: &[&str]) -> Result<Vec<Copied>, StoreError> {
         let ids = batch
             .items
             .iter()
@@ -1364,13 +1441,12 @@ impl Store {
                 ..CopyConditions::default()
             },
         };
-        let mut named: Vec<&str> = batch
-            .items
-            .iter()
-            .filter_map(|id| id.split_once(':').map(|(source, _)| source))
-            .collect();
-        named.push(&batch.destination);
-        let report = self.send(&named, Kind::Write, self.engine.copy(&request));
+        let report = self.send_creating(
+            named,
+            Kind::Write,
+            Some(batch.items.len()),
+            self.engine.copy(&request),
+        );
         self.count("copy", &batch.destination, batch.items.len());
         let report = report.map_err(|error| Self::failed("a copy", &batch.destination, error))?;
         Ok(report
@@ -1418,12 +1494,47 @@ impl Store {
             .collect())
     }
 
-    /// Add every comment of `posts`, all on tasks of `source`, in one call.
+    /// Add every comment of `posts`, all on tasks of `source`: in one call, or — more than the
+    /// governor's content-write caps take in one call — in calls of as many as they take, in
+    /// order. A call refused after an earlier one wrote answers each of its comments `error`
+    /// with the refusal, so what the earlier calls wrote is still answered.
     ///
     /// # Errors
     ///
     /// The store's refusal of the whole batch, before anything was written.
     pub fn add_comments(
+        &self,
+        source: &str,
+        posts: &[CommentPost],
+    ) -> Result<Vec<BatchAnswer>, StoreError> {
+        let chunk = self.content_chunk(&[source], posts.len());
+        if posts.len() <= chunk {
+            return self.add_comments_call(source, posts);
+        }
+        let mut answers = Vec::with_capacity(posts.len());
+        for (at, part) in posts.chunks(chunk).enumerate() {
+            match self.add_comments_call(source, part) {
+                Ok(answered) => answers.extend(answered),
+                Err(error) if at == 0 => return Err(error),
+                // No test drives a later call refused whole: onetaskgraph refuses a comment
+                // batch whole only for its schema or a source that takes no comments, which the
+                // first call meets first, so only a doubled engine — which no store test uses —
+                // could. This keeps the earlier calls' written comments answered regardless.
+                Err(error) => answers.extend(part.iter().map(|post| BatchAnswer {
+                    item: post.item.clone(),
+                    outcome: "error".to_owned(),
+                    comment: None,
+                    version: None,
+                    current_version: None,
+                    reason: Some(error.to_string()),
+                })),
+            }
+        }
+        Ok(answers)
+    }
+
+    /// One call adding every comment of `posts`, declared to create each of them.
+    fn add_comments_call(
         &self,
         source: &str,
         posts: &[CommentPost],
@@ -1440,9 +1551,10 @@ impl Store {
                 .collect(),
         };
         let name = source_name(source)?;
-        let added = self.send(
+        let added = self.send_creating(
             &[source],
             Kind::Write,
+            Some(posts.len()),
             self.engine.add_comments(&name, &batch),
         );
         self.count("comment-add-many", source, posts.len());

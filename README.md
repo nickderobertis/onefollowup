@@ -838,10 +838,15 @@ nothing — local-md, a stdio peer without `quota` — is never held.
 - **Content-creating writes.** A request onetaskgraph's gate is told creates content (an
   issue, a comment), in a destination call, goes only while the host's content-creating writes
   to that backend kind in the last minute and the last hour, across every onefollowup process,
-  are under `max_content_writes_per_minute` and `max_content_writes_per_hour`, and is counted
-  as it goes; otherwise it waits — one line on standard error — until the oldest counted write
-  leaves the window. It is never refused. Each request counts one, however many contents a
-  source batches into it, since the gate is told no more.
+  leave room under `max_content_writes_per_minute` and `max_content_writes_per_hour` for every
+  item it may carry, and those items are counted as it goes; otherwise it waits — one line on
+  standard error — until the oldest counted writes leave the window. It is never refused. The
+  caps count items, not requests: a source may batch several comments into one request
+  (GitHub's `comment add-many` does), and the gate is told only that a request creates
+  content, so a comment batch or a copy sends at most the lesser cap's items in one call, in
+  order, and each call's first content-creating request is admitted only with room for all of
+  them and counts all of them. A call refused after an earlier one of the same batch wrote
+  answers each of its items as failed with that refusal.
 - **One state per host.** What the governor learns of a backend kind — its windows, the spend
   every process was admitted and the cost still in flight, others' burn history, observed
   costs and the content-write window — is one state in `state_dir`, one file per backend kind

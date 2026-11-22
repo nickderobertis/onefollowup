@@ -803,3 +803,135 @@ fn with_quota_ample_the_grooming_pass_of_2026_11_20_admits_every_store_call_of_a
  {
     admitted_without_waiting(TRACES[1], "core", 150);
 }
+
+#[test]
+fn a_copy_of_more_tasks_than_a_call_may_create_goes_in_calls_the_caps_take_each_task_once() {
+    // A per-minute cap of 5 and an hour's not binding: a copy creating 12 tasks is sent as calls
+    // of 5, 5 and 2, each declared to create every task it carries, and every task is created
+    // once and answered in order.
+    let world = World::new();
+    let drafted = world.store();
+    drafted
+        .ensure_project("drafts", "inbox", "Inbox", &BTreeMap::new(), false)
+        .unwrap();
+    drafted
+        .ensure_project(DESTINATION, "board", "Board", &BTreeMap::new(), false)
+        .unwrap();
+    let drafts: Vec<String> = (0..12)
+        .map(|at| {
+            drafted
+                .create_task(&new_task("drafts", "inbox", &format!("Draft {at:02}")))
+                .unwrap()
+                .id
+        })
+        .collect();
+    let clock = Virtual::at(instant(T0));
+    let readings = Scripted::new(&clock, |_| vec![reading("graphql", 5000, T0 + 3600)]);
+    let notices = Arc::new(Mutex::new(Vec::new()));
+    let settings = onefollowup::config::GovernorSettings {
+        max_content_writes_per_minute: 5,
+        max_content_writes_per_hour: 1000,
+        ..shipped()
+    };
+    let store = world
+        .governed(&clock, &readings, &notices)
+        .with_governor(&settings);
+    let copied = store
+        .copy(&CopyBatch {
+            destination: DESTINATION.to_owned(),
+            items: drafts.clone(),
+            create: true,
+            preserve_status: true,
+            versions: Vec::new(),
+        })
+        .unwrap();
+
+    let answered: Vec<(&str, &str)> = copied
+        .iter()
+        .map(|one| (one.source.as_str(), one.action.as_str()))
+        .collect();
+    let expected: Vec<(&str, &str)> = drafts.iter().map(|id| (id.as_str(), "created")).collect();
+    assert_eq!(answered, expected, "every task created once, in order");
+    let calls: Vec<usize> = store
+        .operations()
+        .iter()
+        .filter(|op| op.op == "copy")
+        .map(|op| op.items)
+        .collect();
+    assert_eq!(calls, vec![5, 5, 2], "calls of as many as the cap takes");
+    let created = world
+        .destination()
+        .values()
+        .filter(|text| text.contains("Draft "))
+        .count();
+    assert_eq!(created, 12, "the destination holds each task once");
+}
+
+#[test]
+fn a_copy_call_refused_after_an_earlier_one_wrote_answers_its_tasks_failed_and_keeps_the_written() {
+    // A per-minute cap of 2 sends a copy of 3 as calls of 2 and 1; the second names a task that
+    // does not exist, which onetaskgraph refuses as a whole copy. The first call's tasks stay
+    // created and answered so; the refused one answers the refusal.
+    let world = World::new();
+    let drafted = world.store();
+    drafted
+        .ensure_project("drafts", "inbox", "Inbox", &BTreeMap::new(), false)
+        .unwrap();
+    drafted
+        .ensure_project(DESTINATION, "board", "Board", &BTreeMap::new(), false)
+        .unwrap();
+    let mut drafts: Vec<String> = (0..2)
+        .map(|at| {
+            drafted
+                .create_task(&new_task("drafts", "inbox", &format!("Draft {at:02}")))
+                .unwrap()
+                .id
+        })
+        .collect();
+    drafts.push("drafts:never-drafted".to_owned());
+    let clock = Virtual::at(instant(T0));
+    let readings = Scripted::new(&clock, |_| vec![reading("graphql", 5000, T0 + 3600)]);
+    let notices = Arc::new(Mutex::new(Vec::new()));
+    let settings = onefollowup::config::GovernorSettings {
+        max_content_writes_per_minute: 2,
+        max_content_writes_per_hour: 1000,
+        ..shipped()
+    };
+    let store = world
+        .governed(&clock, &readings, &notices)
+        .with_governor(&settings);
+    let copied = store
+        .copy(&CopyBatch {
+            destination: DESTINATION.to_owned(),
+            items: drafts.clone(),
+            create: true,
+            preserve_status: true,
+            versions: Vec::new(),
+        })
+        .expect("the first call wrote, so the copy is answered item by item");
+
+    let actions: Vec<(&str, &str)> = copied
+        .iter()
+        .map(|one| (one.source.as_str(), one.action.as_str()))
+        .collect();
+    assert_eq!(
+        actions,
+        vec![
+            (drafts[0].as_str(), "created"),
+            (drafts[1].as_str(), "created"),
+            (drafts[2].as_str(), "failed"),
+        ]
+    );
+    let (kind, message) = copied[2].error.clone().expect("the refusal");
+    assert_eq!(kind, "store-refused");
+    assert!(
+        message.contains("no item with the id drafts:never-drafted"),
+        "{message}"
+    );
+    let created = world
+        .destination()
+        .values()
+        .filter(|text| text.contains("Draft "))
+        .count();
+    assert_eq!(created, 2, "the first call's tasks stand");
+}

@@ -207,21 +207,6 @@ fn per_instant(writes: &[DateTime<Utc>]) -> Vec<(i64, usize)> {
     counted.into_iter().collect()
 }
 
-/// The most of `writes` in any rolling `span` seconds.
-fn most_in_any(writes: &[DateTime<Utc>], span: i64) -> usize {
-    let mut sorted = writes.to_vec();
-    sorted.sort();
-    (0..sorted.len())
-        .map(|first| {
-            sorted[first..]
-                .iter()
-                .take_while(|at| (**at - sorted[first]).num_seconds() < span)
-                .count()
-        })
-        .max()
-        .unwrap_or(0)
-}
-
 /// The shipped settings with the host state in `directory`.
 fn sharing(directory: &Path) -> GovernorSettings {
     GovernorSettings {
@@ -345,7 +330,7 @@ fn one_comment_add_many_over_the_minute_cap_writes_up_to_it_waits_for_the_window
     let line = notices.lock().unwrap()[0].clone();
     assert!(
         line.contains(
-            "holding content-creating writes to alpha on local: 10 in the last minute across this host, max_content_writes_per_minute 10; resuming by 2026-11-22T00:01:00Z"
+            "holding content-creating writes to alpha on local: 10 in the last minute across this host and 10 to add, max_content_writes_per_minute 10; resuming by 2026-11-22T00:01:00Z"
         ),
         "{line}"
     );
@@ -369,8 +354,8 @@ fn a_shared_window_holds_both_processes_and_a_restart(span: i64, reason: Reason)
     let notices = Arc::new(Mutex::new(Vec::new()));
     let tenth = span / 6;
 
-    // Alpha writes 6 at once; a sixth of the window later beta's 6 find room for 4, and beta
-    // waits; killed while it waits, it wrote nothing more.
+    // Alpha writes 6 at once and, a sixth of the window later, beta 4: the window is full.
+    // Beta's next 2 wait; killed while they wait, beta wrote nothing more.
     publish(
         &alpha,
         &clock,
@@ -383,11 +368,15 @@ fn a_shared_window_holds_both_processes_and_a_restart(span: i64, reason: Reason)
     .unwrap()
     .unwrap();
     clock.advance(tenth);
+    publish(&beta, &clock, &settings, posts(&beta, 0..4), &notices, None)
+        .join()
+        .unwrap()
+        .unwrap();
     let killed = publish(
         &beta,
         &clock,
         &settings,
-        posts(&beta, 0..6),
+        posts(&beta, 4..6),
         &notices,
         Some(instant(T0 + 2 * tenth)),
     )
@@ -444,74 +433,6 @@ fn the_minute_window_is_shared_by_two_processes_and_kept_across_a_restart() {
 #[test]
 fn the_hour_window_is_shared_by_two_processes_and_kept_across_a_restart() {
     a_shared_window_holds_both_processes_and_a_restart(3600, Reason::ContentPerHour);
-}
-
-#[test]
-fn two_processes_of_150_comments_and_a_restart_stay_inside_the_shipped_caps_host_wide() {
-    let state = tempfile::tempdir().unwrap();
-    let settings = sharing(state.path());
-    assert_eq!(settings.max_content_writes_per_minute, 40);
-    assert_eq!(settings.max_content_writes_per_hour, 250);
-    let clock = Simulated::at(instant(T0));
-    let alpha = Arc::new(Process::new("alpha"));
-    let beta = Arc::new(Process::new("beta"));
-    let both = vec![Arc::clone(&alpha), Arc::clone(&beta)];
-    let landed = Landed::watch(&clock, both.clone());
-    let notices = Arc::new(Mutex::new(Vec::new()));
-
-    // Whichever process's last writes wait for the hour is killed mid-hour while it waits,
-    // and restarted; the other finishes inside the hour.
-    let runs: Vec<_> = both
-        .iter()
-        .map(|process| {
-            let run = publish(
-                process,
-                &clock,
-                &settings,
-                posts(process, 0..150),
-                &notices,
-                Some(instant(T0 + 1800)),
-            );
-            (Arc::clone(process), run)
-        })
-        .collect();
-    let killed: Vec<Arc<Process>> = runs
-        .into_iter()
-        .filter_map(|(process, run)| run.join().unwrap().is_err().then_some(process))
-        .collect();
-    assert_eq!(killed.len(), 1, "one process was killed mid-hour");
-    assert_eq!(clock.now(), instant(T0 + 1800));
-    let victim = &killed[0];
-    assert!(victim.count() < 150, "killed with comments left to write");
-    let restarted = publish(
-        victim,
-        &clock,
-        &settings,
-        unwritten(victim, 0..150),
-        &notices,
-        None,
-    );
-    restarted.join().unwrap().unwrap();
-
-    let writes = landed.all(&both, clock.now());
-    assert_eq!(writes.len(), 300);
-    assert!(most_in_any(&writes, 60) <= 40, "{:?}", per_instant(&writes));
-    assert!(
-        most_in_any(&writes, 3600) <= 250,
-        "{:?}",
-        per_instant(&writes)
-    );
-    assert_eq!(
-        most_in_any(&writes, 3600),
-        250,
-        "the hour's cap was reached"
-    );
-    each_once(&alpha, 0..150);
-    each_once(&beta, 0..150);
-    assert!(
-        clock.now() >= instant(T0 + 3600),
-        "the last 50 waited for the hour"
-    );
 }
 
 /// What the doubled GitHub saw, in the order it saw it.

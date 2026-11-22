@@ -46,11 +46,19 @@
 //!
 //! **Content-creating writes.** A request the gate is told creates content, in a destination
 //! call, is admitted only while the backend kind's writes across the host in the last minute
-//! and the last hour are under `max_content_writes_per_minute` and
-//! `max_content_writes_per_hour`, and is counted as it is admitted; otherwise it waits for the
-//! oldest counted write to leave the window. These are counts because no response reports
-//! GitHub's secondary content-creation limit. Each request counts one, however many contents a
-//! source batches into it, since the gate is told no more.
+//! and the last hour leave room under `max_content_writes_per_minute` and
+//! `max_content_writes_per_hour` for every content item it may carry, and those items are
+//! counted as it is admitted; otherwise it waits for the oldest counted writes to leave the
+//! window. These are counts because no response reports GitHub's secondary content-creation
+//! limit. The gate is told only that a request creates content, never how many contents a
+//! source batched into it (GitHub's `comment add-many` sends several `addComment`s in one
+//! request), so a call that may create several declares how many
+//! ([`Governor::admit_content_call`], at most [`Governor::content_chunk`], which the store splits
+//! its batches by): its first content-creating request is admitted only with room for all of
+//! them and counts all of them, and each later one re-counts the same items at its own instant,
+//! which only ever keeps them in the windows longer — however the source spreads them over its
+//! requests, no item is counted earlier than it is sent and none is left uncounted. A call that
+//! declares nothing counts one per content-creating request.
 
 mod host;
 
@@ -334,6 +342,18 @@ struct Call {
     kind: Kind,
     /// Each (backend, resource)'s [`Metered::own`] when the call began.
     own_at_start: BTreeMap<(String, String), f64>,
+    /// How many content items the call may create, when it declared it
+    /// ([`Governor::admit_content_call`]).
+    contents: Option<usize>,
+}
+
+/// A declared call's content items as last counted: when, and how many, so a later
+/// content-creating request of the call moves them to its own instant rather than adding to
+/// them.
+#[derive(Debug, Clone, Copy)]
+struct Stamp {
+    at: DateTime<Utc>,
+    items: usize,
 }
 
 #[derive(Default)]
@@ -392,6 +412,8 @@ struct ContentBlocked {
     source: String,
     resource: String,
     written: usize,
+    /// How many content items the held request is counted as.
+    items: usize,
     cap: u64,
     resume_by: DateTime<Utc>,
     reason: Reason,
@@ -436,6 +458,9 @@ pub struct Governor {
     admitted: Mutex<Option<Admitted>>,
     /// Woken whenever the slot is given up.
     released: Notify,
+    /// The call in progress's declared content items as last counted; held across a
+    /// content-creating request's admission, so two of one call never move the same count.
+    stamp: tokio::sync::Mutex<Option<Stamp>>,
 }
 
 fn seconds(from: DateTime<Utc>, to: DateTime<Utc>) -> f64 {
@@ -488,6 +513,7 @@ impl Governor {
             process: host::process_name(),
             admitted: Mutex::new(None),
             released: Notify::new(),
+            stamp: tokio::sync::Mutex::new(None),
         }
     }
 
@@ -622,6 +648,34 @@ impl Governor {
     /// be taken under its admission line by the call's estimated cost, and keep them as the
     /// call in progress, whose requests [`Self::before_request`] admits one by one.
     pub async fn admit_call(&self, sources: &[String], kind: Kind) {
+        self.admit_declared(sources, kind, None).await;
+    }
+
+    /// [`Self::admit_call`] for a call that may create up to `contents` content items (comments,
+    /// issues), however its source batches them into requests: every content-creating request
+    /// of the call is admitted only while the content-write windows have room for all of them.
+    /// `contents` above [`Self::content_chunk`] is admitted only into windows otherwise empty,
+    /// so a caller splits its batches by that chunk.
+    pub async fn admit_content_call(&self, sources: &[String], kind: Kind, contents: usize) {
+        self.admit_declared(sources, kind, Some(contents)).await;
+    }
+
+    /// The most content items one call should declare: the lesser cap, or `None` while the
+    /// governor is off.
+    #[must_use]
+    pub fn content_chunk(&self) -> Option<usize> {
+        let settings = self.settings();
+        settings.enabled.then(|| {
+            let cap = settings
+                .max_content_writes_per_minute
+                .min(settings.max_content_writes_per_hour)
+                .max(1);
+            usize::try_from(cap).unwrap_or(usize::MAX)
+        })
+    }
+
+    async fn admit_declared(&self, sources: &[String], kind: Kind, contents: Option<usize>) {
+        *self.stamp.lock().await = None;
         let settings = self.settings().clone();
         let backends = self.backends_of(sources);
         let own_at_start = self.shared(&backends, |shared| {
@@ -643,6 +697,7 @@ impl Governor {
                 sources: sources.to_vec(),
                 kind,
                 own_at_start,
+                contents,
             });
         }
         if !settings.enabled {
@@ -739,6 +794,9 @@ impl Governor {
 
     /// The call in progress has answered: learn what it spent.
     pub fn end_call(&self) {
+        if let Ok(mut stamp) = self.stamp.try_lock() {
+            *stamp = None;
+        }
         let call = {
             let mut state = self.state();
             // Every request of the call is over, answered or not.
@@ -831,13 +889,16 @@ impl Governor {
             // find the headroom come back — the estimate less than it cost — before a reset.
             // A content-creating write is counted at the instant the quota admits it, so it is
             // never counted earlier than it is sent.
-            match self.admit(
-                &sources,
-                &request.resource,
-                cost,
-                content_creating,
-                &settings,
-            ) {
+            match self
+                .admit(
+                    &sources,
+                    &request.resource,
+                    cost,
+                    content_creating,
+                    &settings,
+                )
+                .await
+            {
                 Ok(()) => break,
                 Err(Refusal::Quota(blocked)) => self.hold(*blocked, cost, &settings).await,
                 Err(Refusal::Content(blocked)) => self.hold_content(*blocked).await,
@@ -866,7 +927,10 @@ impl Governor {
     /// cost and its place in flight counted and the content write recorded — all in one
     /// transaction of the host state, so no other process admits against the same headroom
     /// between this one's check and its count.
-    fn admit(
+    ///
+    /// A content-creating request of a call that declared its contents is counted as all of
+    /// them, the count its call's earlier requests made moved to now rather than added to.
+    async fn admit(
         &self,
         sources: &[String],
         resource: &str,
@@ -874,6 +938,10 @@ impl Governor {
         content_creating: bool,
         settings: &GovernorSettings,
     ) -> Result<(), Refusal> {
+        let declared = self.state().call.as_ref().and_then(|call| call.contents);
+        let mut stamp = self.stamp.lock().await;
+        let items = declared.unwrap_or(1).max(1);
+        let previous = (*stamp).filter(|_| declared.is_some());
         let now = self.clock.now();
         let backends = self.backends_of(sources);
         let of: Vec<(String, String)> = sources
@@ -894,7 +962,9 @@ impl Governor {
                 let source = sources.first().cloned().unwrap_or_default();
                 for backend in &backends {
                     let held = shared.entry(backend.clone()).or_default();
-                    if let Some(blocked) = content_in(held, &source, resource, settings, now) {
+                    if let Some(blocked) =
+                        content_in(held, &source, resource, items, previous, settings, now)
+                    {
                         return Err(Refusal::Content(Box::new(blocked)));
                     }
                 }
@@ -902,7 +972,10 @@ impl Governor {
             for backend in &backends {
                 let held = shared.entry(backend.clone()).or_default();
                 if content_creating {
-                    held.content_writes.push_back(now);
+                    if let Some(previous) = previous {
+                        unstamp(held, previous);
+                    }
+                    held.content_writes.extend(std::iter::repeat_n(now, items));
                 }
                 if let Some(metered) = held.resources.get_mut(resource)
                     && !metered.windows.is_empty()
@@ -916,7 +989,11 @@ impl Governor {
                 }
             }
             Ok(())
-        })
+        })?;
+        if content_creating && declared.is_some() {
+            *stamp = Some(Stamp { at: now, items });
+        }
+        Ok(())
     }
 
     /// Wait out a content-write window until the write it holds has room: one line on
@@ -927,8 +1004,13 @@ impl Governor {
             Reason::ContentPerHour => ("hour", "max_content_writes_per_hour"),
             _ => ("minute", "max_content_writes_per_minute"),
         };
+        let adding = if blocked.items > 1 {
+            format!(" and {} to add", blocked.items)
+        } else {
+            String::new()
+        };
         (self.notices)(&format!(
-            "onefollowup: holding content-creating writes to {} on {}: {} in the last {window} across this host, {cap_key} {}; resuming by {}",
+            "onefollowup: holding content-creating writes to {} on {}: {} in the last {window} across this host{adding}, {cap_key} {}; resuming by {}",
             blocked.source,
             blocked.resource,
             blocked.written,
@@ -1211,11 +1293,29 @@ fn decide_in(
     worst.map(|(_, blocked)| blocked)
 }
 
-/// Why `held`'s content-write windows hold a write now, or `None` when both have room.
+/// Take the content items `stamp` counted out of `held`'s window: as many writes of its
+/// instant, which are indistinguishable from any other process's of the same instant.
+fn unstamp(held: &mut Shared, stamp: Stamp) {
+    let mut left = stamp.items;
+    held.content_writes.retain(|written| {
+        if left > 0 && *written == stamp.at {
+            left -= 1;
+            false
+        } else {
+            true
+        }
+    });
+}
+
+/// Why `held`'s content-write windows hold a write of `items` content items now, or `None` when
+/// both have room for all of them. The items `previous` counted for the same call are not
+/// counted against it: this write moves them rather than adding to them.
 fn content_in(
     held: &mut Shared,
     source: &str,
     resource: &str,
+    items: usize,
+    previous: Option<Stamp>,
     settings: &GovernorSettings,
     now: DateTime<Utc>,
 ) -> Option<ContentBlocked> {
@@ -1240,20 +1340,31 @@ fn content_in(
         ),
     ] {
         let since = now - chrono::Duration::seconds(span);
+        let mut moved = previous.map_or(0, |stamp| stamp.items);
         let within: Vec<DateTime<Utc>> = held
             .content_writes
             .iter()
             .copied()
             .filter(|written| *written > since)
+            .filter(|written| {
+                let ours = moved > 0 && previous.is_some_and(|stamp| stamp.at == *written);
+                if ours {
+                    moved -= 1;
+                }
+                !ours
+            })
             .collect();
         let cap_places = usize::try_from(cap).unwrap_or(usize::MAX);
-        if within.len() >= cap_places {
-            // The window has room once all but `cap - 1` of its writes left it.
-            let leaving = within[within.len() - cap_places];
+        // More items than the cap are admitted only into a window otherwise empty.
+        let needed = items.min(cap_places);
+        if within.len() + needed > cap_places {
+            // The window has room once all but `cap - needed` of its writes left it.
+            let leaving = within[within.len() + needed - cap_places - 1];
             return Some(ContentBlocked {
                 source: source.to_owned(),
                 resource: resource.to_owned(),
                 written: within.len(),
+                items,
                 cap,
                 resume_by: leaving + chrono::Duration::seconds(span),
                 reason,

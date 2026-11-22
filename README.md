@@ -1262,8 +1262,8 @@ its verdict and evidence. Duplicate links are unioned into clusters, which membe
 `fixed` or `obsolete` leave. Each cluster's survivor is, in order: claimed (Queued or In
 Progress), then Todo, then a member in the repository most members name as `seam_repository`,
 then the most evidence (the most evidence paths, then the longest evidence), then the oldest;
-any survivor the agent implies is ignored, and a member this batch did not verify is never
-folded. Everything not closed or folded is `kept`, and an `unresolved` one is also listed under
+any survivor the agent implies is ignored. A member this batch did not select is ranked by
+what `snapshot.json` holds of it, its repositories and creation time, and is never folded. Everything not closed or folded is `kept`, and an `unresolved` one is also listed under
 `unresolved`. **A plan is input**: the `plan.json` a batch holds when check runs is what publish
 sends, so check holds it to the protection rules beside the plan it computes, and refuses one
 that breaks them without writing over it; once it is removed or corrected, check passes and

@@ -15,14 +15,14 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-use super::{BATCH_RECORD, Groom, PLAN_RECORD, batch_id, git};
+use super::{BATCH_RECORD, Groom, PLAN_RECORD, SNAPSHOT_RECORD, batch_id, git};
 use crate::api::{GroomCheckArgs, GroomChecked, GroomProblem};
 use crate::config::Settings;
 use crate::error::Error;
 use crate::formats::groom::{
-    Confidence, GroomBatch, GroomPlan, GroomRule, GroomVerdict, PlanEntry, PlanRecord, Protection,
-    SCHEMA_VERSION, SelectedTicket, Survivor, SurvivorRule, VerdictRecord, is_commit, parse,
-    render,
+    Confidence, GroomBatch, GroomPlan, GroomRule, GroomSnapshot, GroomVerdict, PlanEntry,
+    PlanRecord, Protection, SCHEMA_VERSION, SelectedTicket, SnapshotTicket, Survivor, SurvivorRule,
+    VerdictRecord, is_commit, parse, render,
 };
 use crate::work;
 
@@ -38,6 +38,8 @@ struct Judged<'a> {
 struct Batch<'a> {
     git: git::Git<'a>,
     record: &'a GroomBatch,
+    /// Every open ticket prepare listed, selected or not: a cluster's members are ranked by it.
+    open: BTreeMap<&'a str, &'a SnapshotTicket>,
     problems: Vec<GroomProblem>,
 }
 
@@ -284,19 +286,16 @@ fn survivor(
         .iter()
         .max_by(|one, other| one.1.cmp(other.1).then(other.0.cmp(one.0)))
         .map(|(seam, _)| *seam);
-    let created = |member: &str| {
-        batch
-            .selected(member)
-            .and_then(|one| one.created_at.clone())
-    };
+    // A member prepare left unselected is ranked as fully as a selected one: its
+    // repositories and creation time come from the snapshot of every open ticket.
+    let listed = |member: &str| batch.open.get(member).copied();
+    let created = |member: &str| listed(member).and_then(|one| one.created_at.clone());
     // Each member's rank: smaller wins, rule by rule.
     let rank = |member: &String| {
         let protection = batch.protection(member);
         let verdict = judged.get(member.as_str()).map(|one| &one.verdict);
         let in_seam = seam.is_some_and(|seam| {
-            batch
-                .selected(member)
-                .is_some_and(|one| one.repositories.iter().any(|named| named == seam))
+            listed(member).is_some_and(|one| one.repositories.iter().any(|named| named == seam))
         });
         (
             protection != Some(Protection::Claimed),
@@ -545,9 +544,24 @@ pub fn run(settings: &Settings, args: GroomCheckArgs) -> Result<GroomChecked, Er
         ))
     })?;
     let record: GroomBatch = parse(&text, "grooming batch")?;
+    let snapshot_path = directory.join(SNAPSHOT_RECORD);
+    let snapshot: GroomSnapshot = parse(
+        &std::fs::read_to_string(&snapshot_path).map_err(|error| {
+            Error::Failed(format!(
+                "{}: could not be read: {error}; next: run `onefollowup groom prepare` again",
+                snapshot_path.display()
+            ))
+        })?,
+        "grooming snapshot",
+    )?;
     let mut batch = Batch {
         git: groom.git(),
         record: &record,
+        open: snapshot
+            .tickets
+            .iter()
+            .map(|ticket| (ticket.ticket.as_str(), ticket))
+            .collect(),
         problems: Vec::new(),
     };
     let judged = verdicts(&mut batch)?;
@@ -616,4 +630,108 @@ pub fn run(settings: &Settings, args: GroomCheckArgs) -> Result<GroomChecked, Er
         }),
     )?;
     Ok(checked)
+}
+
+#[cfg(test)]
+mod tests {
+    //! The age rule of the survivor order, which no journey can reach: local-md, the one
+    //! source the journeys run on, reports no creation time for a task, so this is the cheapest
+    //! honest proof that an unselected member's age, read from the snapshot, decides.
+
+    use std::collections::BTreeMap;
+    use std::path::Path;
+
+    use super::{Batch, Judged, survivor};
+    use crate::formats::groom::{
+        Confidence, GroomBatch, GroomVerdict, HeldStatus, Protection, SelectedTicket,
+        SnapshotTicket, SurvivorRule, VerdictRecord,
+    };
+    use crate::groom::git::Git;
+
+    fn listed(ticket: &str, created_at: &str) -> SnapshotTicket {
+        SnapshotTicket {
+            ticket: ticket.to_owned(),
+            title: format!("widgets: {ticket}"),
+            status: HeldStatus {
+                category: "backlog".to_owned(),
+                name: "Backlog".to_owned(),
+            },
+            url: None,
+            repositories: vec!["github.com/example/widgets".to_owned()],
+            created_at: Some(created_at.to_owned()),
+            content: String::new(),
+        }
+    }
+
+    #[test]
+    fn an_unselected_member_older_than_the_selected_one_survives_by_age() {
+        let fresh = SelectedTicket {
+            ticket: "followups:fresh".to_owned(),
+            title: "widgets: fresh".to_owned(),
+            status: HeldStatus {
+                category: "backlog".to_owned(),
+                name: "Backlog".to_owned(),
+            },
+            protection: Protection::Unprotected,
+            repositories: vec!["github.com/example/widgets".to_owned()],
+            created_at: Some("2026-11-20T00:00:00Z".to_owned()),
+            content_digest: "sha256:0".to_owned(),
+            overlap_comments: Vec::new(),
+            reasons: vec!["it holds no groom record".to_owned()],
+        };
+        // `settled` sorts after `fresh` by id, so only its age can make it the survivor.
+        let snapshot = [
+            listed("followups:fresh", "2026-11-20T00:00:00Z"),
+            listed("followups:settled", "2026-01-01T00:00:00Z"),
+        ];
+        let record = GroomBatch {
+            schema_version: 1,
+            batch: "groom-20261121T000000000Z".to_owned(),
+            destination: "followups".to_owned(),
+            namespace: "orchestrator".to_owned(),
+            verified_at: "2026-11-21T00:00:00Z".to_owned(),
+            repositories: Vec::new(),
+            open: BTreeMap::from([
+                ("followups:fresh".to_owned(), Protection::Unprotected),
+                ("followups:settled".to_owned(), Protection::Unprotected),
+            ]),
+            selected: vec![fresh.clone()],
+            shards: Vec::new(),
+        };
+        let batch = Batch {
+            git: Git {
+                working_directory: Path::new("."),
+                environment: &[],
+            },
+            record: &record,
+            open: snapshot
+                .iter()
+                .map(|one| (one.ticket.as_str(), one))
+                .collect(),
+            problems: Vec::new(),
+        };
+        let judged = Judged {
+            verdict: VerdictRecord {
+                schema_version: 1,
+                ticket: "followups:fresh".to_owned(),
+                verdict: GroomVerdict::Keep,
+                confidence: Confidence::High,
+                // No evidence to outrank the unselected member, which has no verdict here.
+                evidence: String::new(),
+                deciding_commit: None,
+                evidence_paths: Vec::new(),
+                duplicate_of: Some("followups:settled".to_owned()),
+                root_cause: Some("the save reads the size twice".to_owned()),
+                seam_repository: None,
+            },
+            ticket: &fresh,
+            verified: None,
+        };
+        let by_ticket = BTreeMap::from([("followups:fresh", &judged)]);
+        let members = ["followups:fresh".to_owned(), "followups:settled".to_owned()];
+        assert_eq!(
+            survivor(&batch, &members, &by_ticket),
+            ("followups:settled".to_owned(), SurvivorRule::Oldest)
+        );
+    }
 }

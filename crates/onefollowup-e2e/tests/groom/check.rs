@@ -864,3 +864,70 @@ pub fn a_batch_not_prepared_is_refused(runner: &dyn Runner) {
         ran.stderr
     );
 }
+
+pub fn an_unchanged_duplicate_target_wins_by_seam_repository(runner: &dyn Runner) {
+    // `settled` holds a current record, so prepare leaves it unselected; `fresh` is new, the
+    // only ticket selected, and names `settled` as its duplicate. Both members name the seam as
+    // gadgets, where only `settled` is, so `settled` survives though it has no verdict here.
+    let world = World::new();
+    world.repository(WIDGETS, &[("src/a.rs", "a\n"), ("src/b.rs", "b\n")]);
+    let gadgets = world.repository(GADGETS, &[("lib/x.rs", "x\n")]);
+    world.ticket(
+        "settled",
+        "gadgets: the save reads the size twice",
+        "backlog",
+        &[GADGETS],
+        "The save in lib/x.rs reads the window size twice.",
+    );
+    let record = world.groomed(
+        "settled",
+        &super::world::ago(600),
+        GADGETS,
+        &gadgets,
+        &["lib/x.rs"],
+        &[],
+    );
+    world.record("settled", &record.to_value());
+    world.ticket(
+        "fresh",
+        "widgets: saving a layout is slow",
+        "backlog",
+        &[WIDGETS],
+        "Saving a layout takes twice as long as it should.",
+    );
+    let printed = world.json(runner, 0, &["groom", "prepare"]);
+    let id = printed["batch"].as_str().expect("a batch").to_owned();
+    assert_eq!(
+        world.selected(&id),
+        [t("fresh")],
+        "only the new ticket is selected"
+    );
+    let verdicts = world.batch_record(&id)["shards"][0]["verdicts"]
+        .as_str()
+        .expect("a path")
+        .to_owned();
+    let mut fresh = verdict(
+        "fresh",
+        "keep",
+        "high",
+        None,
+        &["src/a.rs", "src/b.rs"],
+        Some("settled"),
+        Some(GADGETS),
+    );
+    fresh["seam_repository"] = json!(GADGETS);
+    std::fs::write(&verdicts, format!("{fresh}\n")).expect("verdicts written");
+
+    let printed = world.json(runner, 0, &["groom", "check", "--batch", &id]);
+    let plan = &printed["plan"];
+    assert_eq!(
+        plan["survivors"],
+        json!([{"ticket": t("settled"), "members": [t("fresh"), t("settled")], "chosen_by": "seam-repository"}]),
+        "the unchanged ticket in the seam's repository survives: {plan:#}"
+    );
+    assert_eq!(
+        entry(plan, "duplicates", "fresh")["duplicate_of"],
+        t("settled")
+    );
+    assert_eq!(plan["kept"], json!([]));
+}

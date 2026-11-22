@@ -39,9 +39,30 @@ pub fn run(
         .ok_or_else(|| "the command is empty".to_owned())?;
     let (executable, leading) = launcher(program, working_directory, environment, Host::current())
         .map_err(|error| format!("`{program}` could not be started: {error}"))?;
-    let mut child = Command::new(executable)
-        .args(leading)
-        .args(arguments)
+    let mut command = Command::new(executable);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt as _;
+        if leading.is_empty() {
+            command.args(arguments);
+        } else {
+            // An interpreter a `#!` line names is, on Windows, most often a Cygwin or MSYS
+            // shell, whose runtime expands wildcards and braces in every argument not quoted
+            // on its command line: `{context}` would reach the script as `context`. Every
+            // argument is quoted, so each reaches the script as configured.
+            for argument in leading.iter().map(|one| one.to_string_lossy().into_owned()) {
+                command.raw_arg(quoted(&argument));
+            }
+            for argument in arguments {
+                command.raw_arg(quoted(argument));
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        command.args(leading).args(arguments);
+    }
+    let mut child = command
         .current_dir(working_directory)
         .env_clear()
         .envs(environment.iter().map(|(name, value)| (name, value)))
@@ -118,6 +139,33 @@ fn launcher(
     Ok((started, leading))
 }
 
+/// `argument` quoted as a Windows command line quotes one, whatever it holds: within double
+/// quotes, a double quote and the backslashes before it escaped, and the backslashes before
+/// the closing quote doubled.
+#[cfg(any(windows, test))]
+fn quoted(argument: &str) -> String {
+    let mut line = String::from("\"");
+    let mut backslashes = 0;
+    for character in argument.chars() {
+        match character {
+            '\\' => backslashes += 1,
+            '"' => {
+                line.push_str(&"\\".repeat(backslashes * 2 + 1));
+                line.push('"');
+                backslashes = 0;
+            }
+            _ => {
+                line.push_str(&"\\".repeat(backslashes));
+                line.push(character);
+                backslashes = 0;
+            }
+        }
+    }
+    line.push_str(&"\\".repeat(backslashes * 2));
+    line.push('"');
+    line
+}
+
 /// The `#!` line `path` opens with, without the `#!`, or `None` for a file that does not open
 /// with one or cannot be read.
 fn shebang(path: &Path) -> Option<String> {
@@ -183,7 +231,7 @@ mod tests {
     use std::ffi::OsString;
     use std::path::{Path, PathBuf};
 
-    use super::{Host, launcher};
+    use super::{Host, launcher, quoted};
 
     /// A directory holding `files`, each `(name, text)`, and the environment whose `Path`
     /// (spelled as Windows spells it) and `PATHEXT` name it.
@@ -305,5 +353,19 @@ mod tests {
             launcher("hook", root, &environment, Host::Unix),
             Ok((root.join("hook"), Vec::new()))
         );
+    }
+
+    #[test]
+    fn an_argument_is_quoted_as_a_windows_command_line_reads_it_back() {
+        assert_eq!(quoted("{context}"), r#""{context}""#);
+        assert_eq!(quoted("--plain"), r#""--plain""#);
+        assert_eq!(quoted(""), r#""""#);
+        assert_eq!(
+            quoted(r"C:\Users\runner\a file.md"),
+            r#""C:\Users\runner\a file.md""#
+        );
+        assert_eq!(quoted(r#"say "hi""#), r#""say \"hi\"""#);
+        assert_eq!(quoted(r#"a\"b"#), r#""a\\\"b""#);
+        assert_eq!(quoted(r"C:\dir\"), r#""C:\dir\\""#);
     }
 }

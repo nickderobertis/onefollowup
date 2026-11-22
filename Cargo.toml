@@ -15,9 +15,9 @@ authors = ["Nick DeRobertis"]
 # Every store access: the engine and, through its features, every destination plugin
 # (local-md built in, GitHub Projects and Linear switched on). onetaskgraph's pre-1.0
 # crates release in lock step and are not compatible across patches, so the pin is exact.
-onetaskgraph-core = { version = "=0.15.0", features = ["github-projects", "linear"] }
+onetaskgraph-core = { version = "=0.15.1", features = ["github-projects", "linear"] }
 # The contract crate, for the status vocabulary a status role maps to.
-onetaskgraph-plugin-api = "=0.15.0"
+onetaskgraph-plugin-api = "=0.15.1"
 # The request gate onetaskgraph's engine asks is an `async_trait`.
 async-trait = "0.1.92"
 clap = { version = "4.6.6", features = ["derive"] }
@@ -56,11 +56,3 @@ strip = true
 
 [profile.dev.package."*"]
 opt-level = 1
-
-[patch.crates-io]
-onetaskgraph-core = { git = "https://github.com/nickderobertis/onetaskgraph", rev = "36bcb5b1ae6e7a5c6c21af18d66b1c37cceeaf18" }
-onetaskgraph-plugin-api = { git = "https://github.com/nickderobertis/onetaskgraph", rev = "36bcb5b1ae6e7a5c6c21af18d66b1c37cceeaf18" }
-onetaskgraph-github-projects = { git = "https://github.com/nickderobertis/onetaskgraph", rev = "36bcb5b1ae6e7a5c6c21af18d66b1c37cceeaf18" }
-onetaskgraph-linear = { git = "https://github.com/nickderobertis/onetaskgraph", rev = "36bcb5b1ae6e7a5c6c21af18d66b1c37cceeaf18" }
-onetaskgraph-local-md = { git = "https://github.com/nickderobertis/onetaskgraph", rev = "36bcb5b1ae6e7a5c6c21af18d66b1c37cceeaf18" }
-onetaskgraph-in-memory = { git = "https://github.com/nickderobertis/onetaskgraph", rev = "36bcb5b1ae6e7a5c6c21af18d66b1c37cceeaf18" }

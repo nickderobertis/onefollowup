@@ -21,7 +21,15 @@ said="$("$executable" --version 2>&1)" || fail "--version failed: $said" "run $e
 
 empty="$(mktemp -d)"
 trap 'rm -rf "$empty"' EXIT
-shown="$(cd "$empty" && env -u ONEFOLLOWUP_CONFIG "$executable" config show 2>&1)" \
+# Every ONEFOLLOWUP_ variable this shell holds is dropped, in the subshell alone: any one of
+# them would change the configuration the binary reports.
+shown="$(
+  cd "$empty" || exit 1
+  for name in $(compgen -e); do
+    case "$name" in ONEFOLLOWUP_*) unset "$name" ;; esac
+  done
+  "$executable" config show 2>&1
+)" \
   || fail "config show failed: $shown" "run $executable config show in an empty directory and read its error"
 printf '%s' "$shown" | node -e '
   let input = "";

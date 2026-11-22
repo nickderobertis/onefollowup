@@ -1,0 +1,280 @@
+{
+ "clusters": [
+  {
+   "cluster": "onejudge#250",
+   "later": "onejudge#214",
+   "repository": "onejudge",
+   "draft": {
+    "title": "onejudge panics with min greater than max mid",
+    "body": "Recording successive interruptions mixes cumulative event positions with the shortened event buffer. A later interruption can use bounds in the wrong order and panic, destroying an otherwise recoverable conversation.",
+    "paths": [
+     "crates/onejudge/src/engine.rs"
+    ]
+   },
+   "earlier": [
+    {
+     "key": "onejudge#188",
+     "repository": "onejudge",
+     "title": "onejudge: Multiple live notes must not crash a worker turn",
+     "status": "open",
+     "body": "## Root cause\n\nA worker turn must survive multiple live notes without losing its tool history or ending its dispatch. A second note can instead panic and stop the worker, even though the notes are ordinary instructions.\n\n## Suggested fix\n\n- onejudge `crates/onejudge/src/engine.rs`: redirect processing drains events but compares absolute positions with the remaining length (basis line 511)."
+    },
+    {
+     "key": "onejudge#213",
+     "repository": "onejudge",
+     "title": "onejudge: Multiple interruptions must preserve completed work without a transcript panic",
+     "status": "duplicate",
+     "body": "## Root cause\n\nA worker turn interrupted multiple times can crash while its completed activity is assembled for judgment. Completed work is then reported as a failed dispatch and dependent work is skipped instead of receiving a judgment.\n\n## Suggested fix\n\n- onejudge `crates/onejudge/src/engine.rs`: bounds a cumulative interruption position by the remaining event count after earlier ranges have been drained."
+    }
+   ]
+  },
+  {
+   "cluster": "onejudge#249",
+   "later": "onepipeline#1253",
+   "repository": "onepipeline",
+   "draft": {
+    "title": "a dispatch s supervisor tells its worker to",
+    "body": "An engine stop must remain authoritative throughout the dispatch conversation. A simulated supervisor can currently tell a compliant worker to resume after it stopped and committed, so cancelled work continues until the kill deadline instead of releasing its slot promptly.",
+    "paths": [
+     "src/agentgraph.rs"
+    ]
+   },
+   "earlier": [
+    {
+     "key": "onepipeline#1072",
+     "repository": "onepipeline",
+     "title": "onepipeline: A cancelled dispatch must not be restarted by its supervisor",
+     "status": "open",
+     "body": "## Root cause\n\nCancellation asks a worker to commit and end, but leaves its supervisor free to start another work turn during the stop grace period. A parked node can resume editing and consuming resources until forced teardown.\n\n## Suggested fix\n\n- onepipeline `src/engine.rs`: Cancellation asks a worker to commit and end, but leaves its supervisor free to start another work turn during the stop grace period.\n- onepipeline `src/executor.rs`: Cancellation asks a worker to commit and end, but leaves its supervisor free to start another work turn during the stop grace period."
+    }
+   ]
+  },
+  {
+   "cluster": "onejudge#154",
+   "later": "onejudge#154",
+   "repository": "onejudge",
+   "draft": {
+    "title": "onejudge e2e pointer test inherits the host's ONEHARNESS_HISTORY_POINTER",
+    "body": "A test journey must use its own history settings and write only to its fixture. The in-process journeys inherit the operator’s history settings instead, leaving the fixture’s pointer file empty and appending fake sessions to the operator’s run history.",
+    "paths": [
+     "crates/onejudge-e2e/tests/e2e.rs"
+    ]
+   },
+   "earlier": [
+    {
+     "key": "onejudge#114",
+     "repository": "onejudge",
+     "title": "onejudge: in-process tests inherit host history overrides",
+     "status": "fixed",
+     "body": "## Root cause\n\nin-process tests inherit host history overrides.\n\n## Suggested fix\n\n- github.com/example/onejudge `crates/onejudge/tests/e2e.rs:3333`: `:3347`, and `:3366` configure scratch history but invoke the provider in the ambient process at the recorded basis."
+    }
+   ]
+  },
+  {
+   "cluster": "onepipeline#1079",
+   "later": "onepipeline#1079",
+   "repository": "onepipeline",
+   "draft": {
+    "title": "unit tests read the host s onetaskgraph config",
+    "body": "Store unit tests load the developer’s plan-store configuration instead of only the fixture they are testing. A host configuration using a newer store shape therefore fails unrelated tests before their assertions run.",
+    "paths": [
+     "src/writeback.rs"
+    ]
+   },
+   "earlier": [
+    {
+     "key": "onepipeline#934",
+     "repository": "onepipeline",
+     "title": "onepipeline: Store unit fixtures must own their configuration environment",
+     "status": "open",
+     "body": "## Root cause\n\nUnit fixtures that test plan-store behavior must control their entire configuration environment. Some currently capture the invoking process settings, so unrelated partial host source definitions make their fixture store fail before the intended behavior is exercised.\n\n## Suggested fix\n\n- github.com/example/onepipeline `src/taskgraph.rs:2231`: the retired-variable fixture passes a process environment snapshot into its store\n- github.com/example/onepipeline `src/taskgraph.rs:2312`: the credentials fixture constructs a store from ambient settings"
+    }
+   ]
+  },
+  {
+   "cluster": "onepipeline-ui#355",
+   "later": "onepipeline-ui#355",
+   "repository": "onepipeline-ui",
+   "draft": {
+    "title": "e2e adoption journeys inherit the host s",
+    "body": "Adoption fixtures must use only their own plan-store configuration. Servers and engines launched by the suite inherit unrelated host source overrides, so valid fixture plans fail before adoption can be exercised.",
+    "paths": [
+     "tests/support/serving.rs"
+    ]
+   },
+   "earlier": [
+    {
+     "key": "onepipeline-ui#198",
+     "repository": "onepipeline-ui",
+     "title": "onepipeline-ui: Adoption journeys inherit the operator’s plan-store configuration",
+     "status": "fixed",
+     "body": "## Root cause\n\nthe implementation detailed below isolates ONEVCS_HOME, cache and harness PATH, but its default spawn inherits HOME and the plan-store configuration environment. Agent-dispatching adoption fixtures name authoring:contract-interface, so retained drivers can resolve and attempt projection through the operator’s actual configured sources.\n\n## Suggested fix\n\n- github.com/example/onepipeline-ui `tests/support/serving.rs`: Named in the original text reproduced below."
+    }
+   ]
+  },
+  {
+   "cluster": "ai-orchestrator#2545",
+   "later": "ai-orchestrator#2545",
+   "repository": "ai-orchestrator",
+   "draft": {
+    "title": "session setup journeys fail on a dangling python shim in local",
+    "body": "Session-setup test journeys should preserve the first PATH entry for each tool when building a reduced tool environment. They instead treat a dangling link as an unused name, so encountering that name again crashes fixture setup before the journey can run.",
+    "paths": []
+   },
+   "earlier": [
+    {
+     "key": "ai-orchestrator#2004",
+     "repository": "ai-orchestrator",
+     "title": "ai-orchestrator: PATH fixtures must preserve one entry even when its target is missing",
+     "status": "open",
+     "body": "## Root cause\n\nThe fixture that rebuilds a search path treats a dangling link as an unused name. When a source directory occurs twice, it creates the same shim twice and fails before the intended provisioning test runs.\n\n## Suggested fix\n\nDeduplicate names by directory-entry existence rather than target existence while retaining first-entry PATH precedence.\n\n**Contributing locations.**\n- ai-orchestrator `tests/session_setup/test_locked_plan_store_setup_e2e.py`: The fixture that rebuilds a search path treats a dangling link as an unused name.\n\n### ai-orchestrator — `github.com/example/ai-orchestrator`\n\nDeduplicate names by directory-entry existence rather than target existence while retaining first-entry PATH precedence. This changes the documented behaviour described above; existing public invocation shapes remain available."
+    }
+   ]
+  },
+  {
+   "cluster": "ai-orchestrator#1887",
+   "later": "ai-orchestrator#2480",
+   "repository": "ai-orchestrator",
+   "draft": {
+    "title": "Attribute worker execution time so delivery overruns can be diagnosed",
+    "body": "When delivery exceeds its cycle-time budget mainly during worker execution, the run reports that execution as one undifferentiated duration. Managers cannot tell from the measured report which activity consumed the time, so they cannot choose a targeted improvement from the overrun evidence.",
+    "paths": [
+     "docs/contract.md"
+    ]
+   },
+   "earlier": [
+    {
+     "key": "ai-orchestrator#1887",
+     "repository": "ai-orchestrator",
+     "title": "ai-orchestrator: Delivery overruns must distinguish the activities consuming agent time",
+     "status": "open",
+     "body": "## Root cause\n\nA delivery cycle-time overrun must identify which activity needs attention. Both landed changes spent more than the entire three-hour budget in agent work alone, but that total does not distinguish reasoning, tool execution and supervision. The recorded measurements therefore cannot decide the underlying cause or direct an optimization to it.\n\n## Suggested fix\n\nAdd a per-change breakdown partitioning the agent segment into model work, tool waits, supervisor review and unattributed time, using recorded intervals and leaving unmeasured values absent. Adopt that engine release in the host and make budget closeout report the measured subactivity responsible for an agent-dominated overrun. This closes the demonstrated attribution gap; a speedup must not be claimed until the newly measured bottleneck is optimized.\n\n**Contributing locations.**\n- github.com/example/onepipeline `src/changes.rs:350`: the agent segment covers the entire worker dispatch without distinguishing its activities.\n- github.com/example/ai-orchestrator `orchestrator/follow_up_tickets.py`: delivery closeout receives only the undivided agent segment for these overruns.\n- github.com/example/ai-orchestrator `personas/planner.yaml`: the general checklist does not require attribution within a dominant budgeted phase.\n- github.com/example/onepipeline `budgets.yaml`: existing budgets do not measure whether agent attribution covers the measured agent segment."
+    }
+   ]
+  },
+  {
+   "cluster": "ai-orchestrator#2319",
+   "later": "ai-orchestrator#2319",
+   "repository": "ai-orchestrator",
+   "draft": {
+    "title": "Delivery recovery must surface accumulating decision waits",
+    "body": "A failed or held change can spend most of its delivery time waiting for a recovery decision. The monitoring guidance has no explicit rule to escalate accumulated recovery waits against the repository’s delivery budget, leaving a long delay visible only after the change lands.",
+    "paths": [
+     "personas/orchestrator.yaml"
+    ]
+   },
+   "earlier": [
+    {
+     "key": "ai-orchestrator#1706",
+     "repository": "ai-orchestrator",
+     "title": "ai-orchestrator: Retry decision wait must be visible against the landed cycle budget",
+     "status": "fixed",
+     "body": "## Root cause\n\nA failed change lineage must surface the pending retry decision with elapsed wait so it does not silently spend most of the delivery budget between dispatches.\n\n## Suggested fix\n\nRequire manager check-ins to identify each failed lineage awaiting a retry decision, its pending decision and elapsed wait, and act on that decision before unrelated work. Keep cycle time reported only after landing; no landing is blocked by an unmeasurable future cycle. Behaviour changes without public interface changes.\n\n**Contributing locations.**\n- github.com/example/budgets.yaml `1`: github.com/example/ai-orchestrator `budgets.yaml:1`: contributes to the invariant above.\n- github.com/example/ai-orchestrator `personas/planner.yaml:1`: contributes to the invariant above."
+    }
+   ]
+  },
+  {
+   "cluster": "onevcs#693",
+   "later": "onevcs#693",
+   "repository": "onevcs",
+   "draft": {
+    "title": "Fetch-churn test fails under host load: 16 fetch runs must fit its 10s bound",
+    "body": "The fetch-churn journey requires a fixed number of successful retry opportunities inside a wall-clock lock bound. On a loaded or slower runner the writer would stop after those retries, but the bound expires first and the test reports that the writer never stops.",
+    "paths": [
+     "crates/onevcs/src/git.rs"
+    ]
+   },
+   "earlier": [
+    {
+     "key": "onevcs#678",
+     "repository": "onevcs",
+     "title": "onevcs: fetch churn proof depends on runner speed",
+     "status": "open",
+     "body": "## Root cause\n\nThe proof that a fetch outlasts a finite competing writer expires according to runner speed before the writer has finished its prescribed work. A correct fetch can therefore fail the required macOS gate.\n\n## Suggested fix\n\n- onevcs `crates/onevcs/src/git.rs:6867`: sets the scratch lock bound to ten seconds at line 6445 and requires fifteen losing fetches at lines 6844–6882."
+    }
+   ]
+  },
+  {
+   "cluster": "onevcs#627",
+   "later": "onevcs#627",
+   "repository": "onevcs",
+   "draft": {
+    "title": "repeat sweep timing bound sits at its own",
+    "body": "The repeat-sweep performance gate compares two single wall-clock samples at a threshold that ordinary successful measurements already touch. Small timing noise can reject an unchanged tree even when reuse is working.",
+    "paths": [
+     "crates/onevcs/tests/e2e/verdicts.rs"
+    ]
+   },
+   "earlier": [
+    {
+     "key": "onevcs#422",
+     "repository": "onevcs",
+     "title": "onevcs: Sweep reuse verification must measure derivation work rather than a timing ratio",
+     "status": "fixed",
+     "body": "## Root cause\n\nA check of sweep reuse must distinguish reused work from repeated derivation. Comparing the repeat to the first sweep’s wall time can fail solely because the first sweep became faster or host scheduling changed.\n\n## Suggested fix\n\n- github.com/example/onevcs `crates/onevcs/tests/e2e/verdicts.rs`: holds the repeat sweep to a fraction of the first sweep’s wall time instead of checking whether verdict derivation happened."
+    }
+   ]
+  },
+  {
+   "cluster": "onepipeline-ui#759",
+   "later": "onepipeline-ui#759",
+   "repository": "onepipeline-ui",
+   "draft": {
+    "title": "keep playwright s error context from a failed",
+    "body": "A failed browser journey must leave its page context and trace available after CI ends. The job keeps its console log but uploads no browser result directory, so an intermittent failure can become impossible to diagnose once the runner disappears.",
+    "paths": []
+   },
+   "earlier": [
+    {
+     "key": "onepipeline-ui#727",
+     "repository": "onepipeline-ui",
+     "title": "onepipeline-ui: Required browser checks retain their failure diagnostics",
+     "status": "open",
+     "body": "## Root cause\n\nThe required browser check discards the page context of a failing journey when its runner ends. An intermittent failure that cannot be reproduced locally leaves developers without the evidence needed to diagnose it.\n\n## Suggested fix\n\n- onepipeline-ui `apps/dag-ui-e2e/playwright.config.ts`: does not retain failure traces and writes output into an allocated temporary directory.\n- onepipeline-ui `.github/workflows/ci.yml`: test-linux uploads budget and cache outputs but no browser failure diagnostics."
+    }
+   ]
+  },
+  {
+   "cluster": "ai-orchestrator#2547",
+   "later": "ai-orchestrator#2660",
+   "repository": "ai-orchestrator",
+   "draft": {
+    "title": "just channel reply runs the plan edit review without the alternate",
+    "body": "Manager-side plan reviews can start without resolving the harness identities they require. A retry submitted while no driver is active is refused before its reviewer can judge the proposed task.",
+    "paths": [
+     "scripts/review-plan-item.sh"
+    ]
+   },
+   "earlier": [
+    {
+     "key": "ai-orchestrator#2547",
+     "repository": "ai-orchestrator",
+     "title": "ai-orchestrator: Live edits receive judge identity settings without a driver",
+     "status": "open",
+     "body": "## Root cause\n\nA live edit applied after its driver exits starts its judges without the identity settings normally supplied at dispatch. Review fails before a judgment can be made, so a valid retry cannot be applied from an ordinary manager shell.\n\n## Suggested fix\n\n- ai-orchestrator `scripts/onepipeline.sh`: contributes to the broken guarantee (line 128). \n- ai-orchestrator `scripts/review-plan-item.sh`: contributes to the broken guarantee (line 38)."
+    }
+   ]
+  },
+  {
+   "cluster": "onebudgetspec#68",
+   "later": "onebudgetspec#68",
+   "repository": "onebudgetspec",
+   "draft": {
+    "title": "Packaging launcher-without-carrier journey passes or fails on the host",
+    "body": "A packaging check that deliberately omits a platform package still allows the package manager to obtain it from the host cache. The same source and fixture can pass on a clean host and fail on a host that previously installed the product.",
+    "paths": [
+     "crates/onebudgetspec-packaging-e2e/tests/packaging/common.rs"
+    ]
+   },
+   "earlier": [
+    {
+     "key": "onebudgetspec#51",
+     "repository": "onebudgetspec",
+     "title": "onebudgetspec: Missing-carrier checks must exclude optional carriers",
+     "status": "open",
+     "body": "## Root cause\n\nA test intended to prove the launcher refuses a missing platform package can silently install that package from the host cache. The same source then passes on a clean host and fails on a host that has used a published release.\n\n## Suggested fix\n\n- onebudgetspec `crates/onebudgetspec-packaging-e2e/tests/packaging/npm_launcher.rs`: builds the missing-carrier fixture through the general installer, allowing optional carriers to be installed.\n- onebudgetspec `crates/onebudgetspec-packaging-e2e/tests/packaging/common.rs`: uses offline npm installation without excluding optional dependencies."
+    }
+   ]
+  }
+ ]
+}

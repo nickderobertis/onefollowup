@@ -9,7 +9,8 @@
 //! so a fixed list of common English and board-frequent words stands in, and a query that still
 //! answers more than [`HIT_CAP`] items ranks what it found last. Every follow-up ticket another
 //! batch filed that the queries found, open or closed, is a candidate, ranked by how many of the
-//! input's queries found it; the first [`BOUND`] are rendered into the task, and `check` refuses
+//! input's queries found it, then by how rare those queries' answers were; the first [`BOUND`]
+//! are rendered into the task, and `check` refuses
 //! an answer that files a ticket while leaving one of them neither related nor dismissed.
 //!
 //! Everything here is a pure function of the batch state's inputs and reads — each read keeps
@@ -308,7 +309,7 @@ pub fn hits(reads: &[Read]) -> BTreeMap<&str, usize> {
 
 /// `input`'s candidates among `reads`: every follow-up ticket another batch filed that one of
 /// its queries found, ranked by the uncapped queries that found it, then the capped ones, then
-/// by id. `plan` names each query's text; a key it does not hold is shown as the key.
+/// by how few items those uncapped queries answered, then by id. `plan` names each query's text; a key it does not hold is shown as the key.
 #[must_use]
 pub fn ranked(batch: &Batch<'_>, input: &Input, plan: &Plan, reads: &[Read]) -> Ranked {
     let hits = hits(reads);
@@ -347,9 +348,26 @@ pub fn ranked(batch: &Batch<'_>, input: &Input, plan: &Plan, reads: &[Read]) -> 
             })
         })
         .collect();
+    // Among candidates sharing as many queries, the one found by the rarer ones first: a query
+    // answering 2 items says more than one answering 19.
+    let rarity = |candidate: &Candidate| -> usize {
+        candidate
+            .shared
+            .iter()
+            .filter_map(|text| plan.queries.iter().find(|query| query.text == *text))
+            .map(|query| {
+                HIT_CAP + 1
+                    - hits
+                        .get(query.key.as_str())
+                        .copied()
+                        .unwrap_or_default()
+                        .min(HIT_CAP)
+            })
+            .sum()
+    };
     found.sort_by(|a, b| {
-        (b.shared.len(), b.capped.len())
-            .cmp(&(a.shared.len(), a.capped.len()))
+        (b.shared.len(), b.capped.len(), rarity(b))
+            .cmp(&(a.shared.len(), a.capped.len(), rarity(a)))
             .then_with(|| a.item.cmp(&b.item))
     });
     let matching = found.len();
@@ -414,6 +432,23 @@ mod tests {
                 .iter()
                 .all(|query| is_query_of(&query.key, "drafts:b/drafts/one"))
         );
+    }
+
+    /// README.md states these constants to a host, so it is held to them.
+    #[test]
+    fn the_readme_states_the_constants_as_they_are() {
+        let readme = include_str!("../../../../README.md")
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        for stated in [
+            format!("up to {TERMS} words of its title"),
+            format!("one per file name it names, up to {FILES}"),
+            format!("a query answering more than {HIT_CAP} items is capped"),
+            format!("The first {BOUND} are rendered into the task"),
+        ] {
+            assert!(readme.contains(&stated), "README.md states {stated:?}");
+        }
     }
 
     #[test]

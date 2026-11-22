@@ -527,6 +527,54 @@ fn the_dedicated_flags_beat_set_for_their_keys() {
     }
 }
 
+/// Every key path of `value`, `/`-joined.
+fn key_paths(value: &Value, at: &str, into: &mut Vec<String>) {
+    match value {
+        Value::Object(map) => {
+            for (key, inner) in map {
+                let path = format!("{at}/{key}");
+                into.push(path.clone());
+                key_paths(inner, &path, into);
+            }
+        }
+        Value::Array(items) => {
+            for inner in items {
+                key_paths(inner, at, into);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// How many duplicate candidates the task renders is a constant of onefollowup's, not a
+/// setting: nothing in the effective configuration names it, and a file that tries is refused.
+#[test]
+fn no_setting_names_how_many_duplicate_candidates_are_rendered() {
+    let directory = support::tempdir();
+    let shown = show(directory.path(), &[], &[]);
+    let mut paths = Vec::new();
+    key_paths(&shown["config"], "", &mut paths);
+    assert!(
+        paths.iter().all(|path| !path.contains("candidate")),
+        "{paths:?}"
+    );
+    let file = directory.path().join("onefollowup.yaml");
+    for (text, key) in [
+        ("duplicate_candidates: 3\n", "duplicate_candidates"),
+        (
+            "kinds:\n  - name: root-cause\n    description: One.\n    candidates: 3\n",
+            "candidates",
+        ),
+    ] {
+        std::fs::write(&file, text).expect("written");
+        let stderr = refusal(directory.path(), &[], &[]);
+        assert!(
+            stderr.contains(&format!("`{key}`")) || stderr.contains(key),
+            "{text}: {stderr}"
+        );
+    }
+}
+
 #[test]
 fn an_unknown_key_or_a_wrongly_typed_value_is_refused_naming_the_key_and_the_layer() {
     let directory = support::tempdir();

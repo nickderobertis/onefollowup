@@ -2,8 +2,9 @@
 //! holding 400 other items — 12 new tickets, 4 tickets bound to existing cards re-copied, and
 //! 4 evidence comments on other batches' items each followed by its re-estimate — prepared,
 //! checked, published and settled. Every destination operation from `prepare` to `settle` is
-//! counted at onefollowup's store boundary and recorded as the budget's telemetry; the
-//! comparison with the threshold is onebudgetspec's.
+//! counted at onefollowup's store boundary and recorded as one of the budget's two workloads,
+//! beside the crowded destination `crowded_filing.rs` files against; the comparison with the
+//! threshold is onebudgetspec's.
 
 use serde_json::json;
 
@@ -164,8 +165,9 @@ fn a_realistic_batch_records_its_destination_store_operations() {
         .map(|(phase, op, source, items)| format!("{phase}: {op} on {source} ({items} items)"))
         .collect::<Vec<_>>()
         .join("; ");
-    telemetry::record(
+    telemetry::record_part(
         BUDGET,
+        "realistic-batch",
         operations.len(),
         &format!(
             "{} destination store operations from prepare to settle, the drafts source excluded: {detail}",

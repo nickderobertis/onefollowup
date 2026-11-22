@@ -1,26 +1,33 @@
 # The destination store operations one follow-up batch makes, counted at onefollowup's store
-# boundary by the journey in tests/e2e/budget.rs while this project's `e2e` target runs. The
-# budget's command is tests/e2e/budget_runner.rs, which reports what that run recorded; its last
-# argument names the saved telemetry it reads, a libtest filter no test matches.
+# boundary while this project's `e2e` target runs by two journeys: tests/e2e/budget.rs's
+# realistic batch and tests/e2e/crowded_filing.rs's crowded-destination filing batch. The
+# budget's command is tests/e2e/budget_runner.rs, which reports the larger of the two figures
+# that run recorded; its last argument names the saved telemetry it reads, a libtest filter no
+# test matches.
 #
-# Basis, by arithmetic over the batched design: prepare's one task find and one comments read,
-# and publish's create-only copy of the new tickets, held copy of the bound ones, one comment
-# add-many and one update-many make 6 operations, settle reading nothing back since every
-# write's answer names its version; the headroom above that is one further `ticket search` and
-# a settle read-back of writes whose answers were lost.
+# Basis, by arithmetic over the batched design. The realistic batch: prepare's one task find and
+# one comments read, and publish's create-only copy of the new tickets, held copy of the bound
+# ones, one comment add-many and one update-many make 6 operations, settle reading nothing back
+# since every write's answer names its version. The crowded batch: prepare's one task find
+# carrying every draft's title, term and file searches (about 80) and one comments read, then
+# publish's create-only copy of the 2 new tickets, one comment add-many relating the 10
+# duplicates and one update-many re-estimating them make 5; one call per search would make
+# about 84. The headroom above 6 is one further `ticket search` and a settle read-back of writes
+# whose answers were lost.
 schema_version: 1
 budgets:
   - id: follow-up-batch-store-operations
     description: >-
-      Store operations one follow-up batch makes: each onetaskgraph read, query, copy, comment
-      or write call against the batch's destination, the local drafts source excluded, one
-      complete realistic batch makes from `prepare` to `settle` — on a destination holding 400
-      other items, 12 new tickets, 4 tickets bound to existing cards re-copied, and 4 evidence
-      comments on other batches' items each followed by its re-estimate, with one check, one
-      publish and one settle. The detail gives each phase's operations and the items each read
-      or wrote. It protects a destination's shared allowance — a GitHub or Linear key every
-      manager of a host shares — by holding a whole batch's destination work to a handful of
-      batched store calls; each call's own cost there is held by onetaskgraph's budgets.
+      Store operations one follow-up batch makes against its destination from `prepare` to
+      `settle` — each onetaskgraph read, query, copy, comment or write call, counted at
+      onefollowup's store boundary, the local drafts source excluded — the larger of a realistic
+      batch (400 other items; 12 new tickets, 4 bound ones re-copied, 4 evidence comments each
+      re-estimated) and a crowded-destination filing batch (2,000 tickets across 6 repositories,
+      about 470 open; 12 drafts, 10 of them duplicates, each searching about 5 terms and its
+      failing file), with each journey's phases, the items each read or wrote and the searches
+      prepare's find carried in the detail. It protects a destination's shared allowance by
+      holding a whole batch's destination work, duplicate searches included, to a handful of
+      batched store calls; each call's own cost is held by onetaskgraph's budgets.
     measure: reported
     command: ["cargo", "test", "--quiet", "-p", "onefollowup-e2e", "--locked", "--test", "e2e", "--", "budget_runner::report", "--exact", "--nocapture", "../../target/debug/telemetry/onefollowup-e2e"]
     unit: operations

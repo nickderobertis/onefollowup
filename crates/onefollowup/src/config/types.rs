@@ -33,6 +33,7 @@ pub const KEYS: &[&str] = &[
     "hooks",
     "snapshot",
     "comments",
+    "groom",
 ];
 
 /// The effective configuration of onefollowup.
@@ -84,6 +85,8 @@ pub struct Config {
     pub snapshot: SnapshotSettings,
     /// How `comments answer` launches each batch's answering.
     pub comments: CommentsSettings,
+    /// How `groom prepare` selects, shards and tasks a destination's open tickets.
+    pub groom: GroomSettings,
 }
 
 /// A status role: what a ticket's status means to the loop.
@@ -957,6 +960,27 @@ pub struct CommentsSettings {
     /// [`LAUNCH_PLACEHOLDERS`] replaced with that launch's values; `None` refuses the verb.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub launch_command: Option<Vec<String>>,
+}
+
+/// How `groom prepare` selects, shards and tasks a destination's open tickets.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GroomSettings {
+    /// How many tickets one shard's task holds, at least 1.
+    pub shard_size: usize,
+    /// How far before a record's `verified_at` a comment still counts as possibly unseen,
+    /// in seconds: comments indexed late are discovered, and those the record holds are not
+    /// counted twice.
+    pub comment_overlap_seconds: u64,
+    /// How old a record may be before its ticket is verified again, in days, at least 1.
+    pub max_age_days: u64,
+    /// Where each repository's blob-less clone is kept; a relative path is read against the
+    /// store's directory.
+    pub clones: String,
+    /// The shard task's template (`builtin:` names a shipped file).
+    pub task_template: String,
+    /// The persona the shard task gives its verifying agent (`builtin:` names a shipped file).
+    pub persona: String,
 }
 
 /// The placeholders `comments.launch_command` is given, each replaced wherever an argument

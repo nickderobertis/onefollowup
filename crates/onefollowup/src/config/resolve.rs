@@ -188,6 +188,12 @@ impl Settings {
                 configured.clone(),
             ));
         }
+        for (part, configured) in [
+            ("task_template", &self.config.groom.task_template),
+            ("persona", &self.config.groom.persona),
+        ] {
+            named.push((format!("groom.{part}"), "groom", configured.clone()));
+        }
         for (key, top, configured) in named {
             let located = Located::of(&configured, |path| self.path(top, path));
             if !template::exists(&located) {

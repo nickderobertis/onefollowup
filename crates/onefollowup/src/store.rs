@@ -18,14 +18,14 @@ use std::path::{Path, PathBuf};
 use onetaskgraph_core::config::{self, Layer, SourceVisibility};
 use onetaskgraph_core::{
     BATCH_SCHEMA_VERSION, Body, CommentBatch, CommentBatchItem, CommentsSinceRequest, CopyAction,
-    CopyConditions, CopyItems, CopyRequest, CopyScope, Engine, EngineError, Environment, FindIn,
-    FindQuery, FindRequest, GlobalId, LinkBatch, LinkItem, OtherEnd, ParentBatch, ParentEdge,
-    ProjectCreate, Qualified, RELATIONS_SCHEMA_VERSION, SourceState, StatusPolicy, TaskCreate,
-    UpdateBatch, UpdateBatchItem,
+    CopyConditions, CopyItems, CopyRequest, CopyScope, Engine, EngineError, Environment, Filters,
+    FindIn, FindQuery, FindRequest, GlobalId, LinkBatch, LinkItem, OtherEnd, Paging, ParentBatch,
+    ParentEdge, ProjectCreate, ProjectSelector, Qualified, RELATIONS_SCHEMA_VERSION, SourceState,
+    StatusPolicy, TaskCreate, TaskRequest, UpdateBatch, UpdateBatchItem,
 };
 use onetaskgraph_plugin_api::{
-    AuthorKind, Classification, LinkDirection, Location, MetadataKey, MetadataMatch, NativeId,
-    Priority, Repository, SourceName, Status, StatusCategory, Task, TaskUpdate,
+    AuthorKind, Classification, CommentBody, LinkDirection, Location, MetadataKey, MetadataMatch,
+    NativeId, Priority, Repository, SourceName, Status, StatusCategory, Task, TaskUpdate,
 };
 use serde::Serialize;
 use serde_json::Value;
@@ -148,9 +148,9 @@ pub struct Source {
 /// many items it read or wrote.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, serde::Deserialize)]
 pub struct StoreOperation {
-    /// The call: `find`, `read`, `copy`, `comment-add-many`, `update-many`, `create-task`,
-    /// `update-task`, `create-project`, `relations`, `parent-set-many`, `link-add-many` or
-    /// `comments-since`.
+    /// The call: `list`, `find`, `read`, `copy`, `comment-add-many`, `update-many`, `create-task`,
+    /// `update-task`, `create-project`, `relations`, `parent-set-many`, `link-add-many`,
+    /// `comments-since` or `comment-edit`.
     pub op: String,
     /// The source it reached; for a call over several, their names joined by `,`.
     pub source: String,
@@ -197,6 +197,13 @@ pub struct StoreItem {
     pub project: Option<String>,
     /// The file it is read from, for a source that says.
     pub path: Option<PathBuf>,
+    /// Its repositories, as normalized origins (`host/owner/name`). Not part of any record a
+    /// verb writes, so a record holding a store item reads and writes as before.
+    #[serde(skip)]
+    pub repositories: Vec<String>,
+    /// When its source says it was created, RFC 3339. Not part of any record, as above.
+    #[serde(skip)]
+    pub created_at: Option<String>,
 }
 
 impl StoreItem {
@@ -220,6 +227,14 @@ impl StoreItem {
                 Some(Location::Path(path)) => Some(PathBuf::from(path)),
                 _ => None,
             },
+            repositories: task
+                .repositories
+                .iter()
+                .map(|repository| repository.as_str().to_owned())
+                .collect(),
+            created_at: task
+                .created_at
+                .map(|at| at.to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true)),
         }
     }
 }
@@ -275,6 +290,8 @@ pub struct Search {
     pub metadata: Vec<(String, String)>,
     /// The qualified id the task was copied from.
     pub origin: Option<String>,
+    /// The status categories kept; empty keeps every one.
+    pub statuses: Vec<String>,
     /// The most items of its answer kept; `None` keeps every one. onetaskgraph's `task find`
     /// takes no limit, so the store still answers every match and [`Found::total`] counts
     /// them; what is kept past this point — reads, candidates — is bounded.
@@ -768,7 +785,17 @@ impl Store {
                         },
                         metadata: search.metadata.iter().cloned().collect(),
                         origin: search.origin.as_deref().map(global).transpose()?,
-                        status: Vec::new(),
+                        status: search
+                            .statuses
+                            .iter()
+                            .map(|word| {
+                                category(word).ok_or_else(|| {
+                                    StoreError::Invalid(format!(
+                                        "`{word}` is not a status category"
+                                    ))
+                                })
+                            })
+                            .collect::<Result<_, _>>()?,
                     })
                 })
                 .collect::<Result<Vec<_>, StoreError>>()?,
@@ -814,6 +841,43 @@ impl Store {
             last.searches = Some(searches.len());
         }
         Ok(found)
+    }
+
+    /// Every task of `source` at one of the status categories `statuses`, bodies included, every
+    /// page of it, in one listing.
+    ///
+    /// # Errors
+    ///
+    /// A value the store does not take, or its refusal of the listing.
+    pub fn list(&self, source: &str, statuses: &[String]) -> Result<Vec<StoreItem>, StoreError> {
+        let request = TaskRequest {
+            sources: vec![source_name(source)?],
+            filters: Filters {
+                statuses: statuses
+                    .iter()
+                    .map(|word| status_category(word))
+                    .collect::<Result<_, _>>()?,
+                ..Filters::default()
+            },
+            project: ProjectSelector::Any,
+            priorities: Vec::new(),
+            commented_since: None,
+            metadata: Vec::new(),
+            origin: None,
+            include_members: false,
+            paging: Paging {
+                limit: NonZeroU32::new(PAGE_SIZE).unwrap_or(NonZeroU32::MIN),
+                token: None,
+            },
+        };
+        let answered = self.runtime.block_on(self.engine.tasks_all(&request));
+        let listed = answered.map_err(|error| Self::failed("a task listing", source, error))?;
+        if let Some(failure) = listed.errors.into_iter().next() {
+            self.count("list", source, 0);
+            return Err(Self::failed("a task listing", source, failure.error));
+        }
+        self.count("list", source, listed.items.len());
+        Ok(listed.items.into_iter().map(StoreItem::of).collect())
     }
 
     /// Every task of `ids`, all of one source, each with its comments when `comments` is set,
@@ -947,6 +1011,41 @@ impl Store {
                     body: comment.body,
                 })
                 .collect(),
+        })
+    }
+
+    /// Replace the body of the comment `comment` on the task `item`, answering with the comment
+    /// as its source now holds it.
+    ///
+    /// # Errors
+    ///
+    /// A value the store does not take, or its refusal of the edit.
+    pub fn edit_comment(
+        &self,
+        item: &str,
+        comment: &str,
+        body: &str,
+    ) -> Result<StoreComment, StoreError> {
+        let task = global(item)?;
+        let source = task.source.to_string();
+        let body = CommentBody::new(body)
+            .map_err(|error| StoreError::Invalid(format!("a comment body: {error}")))?;
+        let edited = self.runtime.block_on(self.engine.edit_comment(
+            &task,
+            &NativeId(comment.to_owned()),
+            &body,
+        ));
+        self.count("comment-edit", &source, 1);
+        let edited = edited.map_err(|error| Self::failed("a comment edit", &source, error))?;
+        Ok(StoreComment {
+            id: edited.id.to_string(),
+            author: edited.author,
+            url: edited.url,
+            last_changed: edited
+                .updated_at
+                .or(edited.created_at)
+                .map(|at| at.to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true)),
+            body: edited.body,
         })
     }
 

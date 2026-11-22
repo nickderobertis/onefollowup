@@ -1,0 +1,81 @@
+# Grooming shard {{ shard }}
+
+{{ persona.system_prompt }}
+This shard is one of batch `{{ batch }}`, over the destination `{{ destination }}`. Write your
+verdicts to:
+
+    {{ verdicts }}
+
+one JSON object per line, one line per ticket below, and nothing else. When you are done, run
+`onefollowup groom check --batch {{ batch }}` and correct every problem it names that is yours,
+until it passes.
+
+## Repositories
+
+Each repository is a blob-less clone checked out at the `main` commit this batch fetched. Read
+code there, and use `git log`, `git show` and `git merge-base --is-ancestor` for history; a
+`deciding_commit` is a commit of that history.
+
+{% for repository in repositories -%}
+- `{{ repository.repository }}`: `{{ repository.clone }}` at `{{ repository.commit }}`
+{% endfor %}
+## Other open tickets
+
+Every open ticket of the destination, these among them, is in the snapshot below, with its
+title, status, repositories and content. Read it to find a ticket that shares one root cause
+with one of yours, and name it in `duplicate_of`:
+
+    {{ snapshot }}
+
+## The verdict record
+
+```json
+{"schema_version": 1, "ticket": "<the ticket's id below>", "verdict": "keep | fixed | obsolete | unresolved", "confidence": "high | medium | low", "evidence": "<what the verdict rests on>", "deciding_commit": "<40-hex commit> | null", "evidence_paths": ["<repository-relative path>"], "duplicate_of": "<a ticket id> | null", "root_cause": "<one line> | null", "seam_repository": "<host/owner/name> | null"}
+```
+
+Every key is required, and no other key is read: `null` where the schema allows it.
+
+- `evidence` is never empty: what you read that decides the verdict, naming files, commits and
+  behaviour.
+- `deciding_commit` is the `main` commit that fixed (`fixed`) or obsoleted (`obsolete`) the
+  ticket, as its full 40-hex id, and `null` for `keep` and `unresolved`.
+- `evidence_paths` lists the repository-relative paths your verdict rests on, possibly `[]`. A
+  later pass verifies the ticket again when `main` touches one of them; with none, whenever
+  `main` moves at all.
+- `duplicate_of` names another open ticket of the snapshot that has the same root cause, the
+  same invariant broken, however differently it is worded; `root_cause` states that root cause
+  in one line, and is `null` exactly when `duplicate_of` is. Name the duplicate whichever of the
+  two you think should survive: the survivor is chosen by the order below, never by you.
+- `seam_repository` is the repository owning the seam the root cause sits at, or `null`.
+
+## The rules `groom check` holds your verdicts to
+
+- Every ticket below has exactly one verdict record.
+- A `fixed` or `obsolete` verdict's `confidence` is `medium` or `high`, never `low`, and its
+  `deciding_commit` is an ancestor of that repository's fetched `main` commit above.
+- A ticket at a claimed status (the `queued` or `in-progress` role's) is never closed or folded
+  as a duplicate, and a ticket at the `accepted` role's status (Todo) is never folded; a Todo
+  ticket is closed only on a `high`-confidence `fixed` or `obsolete` verdict whose
+  `deciding_commit` is verified on `main`. Answer such a ticket as you judge it all the same:
+  a closing or duplicate verdict on it is left for a person, with your evidence.
+- Duplicate links are joined into clusters, which tickets closing as `fixed` or `obsolete` leave.
+  Each cluster keeps one survivor: a claimed ticket first, then a Todo ticket, then one in the
+  repository most of its members name as `seam_repository`, then the one with the most
+  evidence, then the oldest.
+- Every ticket not closed is kept, and an `unresolved` one is listed for a person.
+
+## Your tickets
+{% for ticket in tickets %}
+### {{ ticket.ticket }}: {{ ticket.title }}
+
+- Status: `{{ ticket.status.name }}` ({{ ticket.protection }}){% if ticket.url %}
+- Opened at: {{ ticket.url }}{% endif %}
+- Repositories: {% for repository in ticket.repositories %}`{{ repository }}`{% if not loop.last %}, {% endif %}{% else %}none named{% endfor %}
+- Selected because: {{ ticket.reasons | join("; ") }}
+
+{{ collapsed("Content", ticket.content if ticket.content else "(empty)") }}
+{% if ticket.comments %}
+{% for comment in ticket.comments -%}
+{{ collapsed("Comment by " ~ (comment.author or "someone") ~ ", " ~ (comment.last_changed or "undated"), comment.body) }}
+{% endfor %}{% endif %}
+{%- endfor %}

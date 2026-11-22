@@ -46,6 +46,8 @@ library is the `onefollowup` crate.
 | `comments check --feedback <F>` | Hold a feedback dispatch's response account to its snapshot, and its batch's tickets to changing only quoted issues' tickets; `sound` says whether it breaks no rule. |
 | `comments settle --snapshot <S> [--launched <BATCH>=<FEEDBACK>]...` | Verify every reply in one batched read, send every ticket change in one `update-many`, record what did not certainly land in `pending.json`, and move the watermark when it may. Without `--launched`, every batch the snapshot launched. |
 | `comments answer [--dry-run]` | The comment pass in one verb: gather exactly as `comments gather`, plan the launches exactly as `comments launches --snapshot` that snapshot, run `comments.launch_command` once per launch in the launch list's order, and — only when every batch's command exited 0, an empty launch list included — settle exactly as `comments settle --snapshot` that snapshot. A batch whose command exits non-zero does not stop the others; then nothing is settled, so the watermark holds, and the verb exits 1, still printing its document — every batch's exit status, `failed` naming every failed batch, `settled` `null` — and naming the failed batches on stderr; a re-run gathers afresh. Refused (exit 2) without `comments.launch_command`, before anything is gathered. `--dry-run` prints exactly what `comments gather --dry-run` prints and launches and settles nothing. |
+| `groom prepare [--full] [--dry-run] [--shard-size <N>]` | List the destination's open tickets with their bodies, read every comment made or edited on them since the window start in one `comments_since` read, fetch a blob-less clone of each repository they name, select the tickets to verify (Grooming, below), read the selected tickets' comments in one batched read, and write the batch under `.onefollowup/groom/<batch>/`: a snapshot of every open ticket and one task per shard of `--shard-size` (`groom.shard_size`) tickets. Three store operations. `--full` selects every open ticket; `--dry-run` answers the same counts, makes no third read and writes no batch (the clones are still fetched, being what the counts are computed from). Nothing selected answers `"shards": []` and writes no batch. |
+| `groom check --batch <ID>` | Hold every shard's `verdicts.jsonl` to the verdict rules, plan the closes, duplicate folds and survivors (Grooming, below), and hold the batch's `plan.json`, as well as the plan computed, to the protection rules. With no problem standing it writes the plan to `plan.json`, what `groom-verb`'s publish sends; while any stands it exits 2, still printing its document, and writes nothing. It makes no store operation. |
 | `statuses` | Read the destination's statuses against the configured status roles. |
 | `kinds` | Print the effective kinds, relations, dispositions and routes, as the verifying agent reads them. |
 | `config show [--sources]` | Print the effective configuration as JSON; `--sources` names the layer each key came from. |
@@ -201,6 +203,113 @@ and `settled` is `null`, since nothing was settled.
   "batch": "nightly-2026-11-01",
   "draft": "drafts:nightly-2026-11-01/drafts/20261101T101500Z-layout-save-loses-resize",
   "path": ".follow-ups/tasks/nightly-2026-11-01/drafts/20261101T101500Z-layout-save-loses-resize.md"
+}
+```
+
+#### `groom check`
+
+```json
+{
+  "batch": "groom-20261121T090000000Z",
+  "problems": [
+    {
+      "ticket": "followups:item-7",
+      "rule": "low-confidence-close",
+      "detail": "groom-20261121T090000000Z-1 line 2: a `fixed` verdict closes the ticket, which `low` confidence never does: raise the evidence to `medium` or `high`, or answer `keep` or `unresolved`"
+    }
+  ],
+  "plan": {
+    "fixed": [],
+    "obsolete": [],
+    "duplicates": [
+      {
+        "ticket": "followups:item-9",
+        "status": "backlog",
+        "verdict": "keep",
+        "confidence": "high",
+        "evidence": "src/layout.rs reads the size once since the fix",
+        "deciding_commit": null,
+        "evidence_paths": [
+          "src/layout.rs"
+        ],
+        "repository": "github.com/example/widgets",
+        "commit": "89abcdef0123456789abcdef0123456789abcdef",
+        "duplicate_of": "followups:item-3",
+        "root_cause": "the layout's save reads the window size twice",
+        "left_for_person": null
+      }
+    ],
+    "survivors": [
+      {
+        "ticket": "followups:item-3",
+        "members": [
+          "followups:item-3",
+          "followups:item-9"
+        ],
+        "chosen_by": "claimed"
+      }
+    ],
+    "kept": [
+      {
+        "ticket": "followups:item-3",
+        "status": "in-progress",
+        "verdict": "fixed",
+        "confidence": "high",
+        "evidence": "src/layout.rs reads the size once since the fix",
+        "deciding_commit": "0123456789abcdef0123456789abcdef01234567",
+        "evidence_paths": [
+          "src/layout.rs"
+        ],
+        "repository": "github.com/example/widgets",
+        "commit": "89abcdef0123456789abcdef0123456789abcdef",
+        "duplicate_of": null,
+        "root_cause": null,
+        "left_for_person": "it is claimed (Queued or In Progress), which grooming never closes"
+      }
+    ],
+    "unresolved": []
+  }
+}
+```
+
+#### `groom prepare`
+
+```json
+{
+  "schema_version": 1,
+  "batch": "groom-20261121T090000000Z",
+  "destination": "followups",
+  "selected": 2,
+  "unchanged": 47,
+  "protected": 1,
+  "shards": [
+    {
+      "shard": "groom-20261121T090000000Z-1",
+      "task": "/work/.onefollowup/groom/groom-20261121T090000000Z/groom-20261121T090000000Z-1/task.md",
+      "verdicts": "/work/.onefollowup/groom/groom-20261121T090000000Z/groom-20261121T090000000Z-1/verdicts.jsonl",
+      "tickets": 2
+    }
+  ],
+  "store_operations": [
+    {
+      "op": "list",
+      "source": "followups",
+      "destination": true,
+      "items": 49
+    },
+    {
+      "op": "comments-since",
+      "source": "followups",
+      "destination": true,
+      "items": 3
+    },
+    {
+      "op": "read",
+      "source": "followups",
+      "destination": true,
+      "items": 2
+    }
+  ]
 }
 ```
 
@@ -540,6 +649,7 @@ key, the layer its value came from.
 | `routes` | `[]` | Ordered routes (below). |
 | `hooks` | none | Commands run at named moments, and the `owner` a context file names (below). |
 | `snapshot` | `launchable_for: 24h` | How long a dry run's comment snapshot stays launchable. |
+| `groom` | `shard_size: 50`, `comment_overlap_seconds: 3600`, `max_age_days: 30`, `clones: .onefollowup/groom/clones`, `task_template: builtin:groom-task.md.j2`, `persona: builtin:groom-persona.yaml` | The grooming pass (Grooming, below): how many tickets one shard's task holds (at least 1); how far before a record's `verified_at` a comment is still read as possibly unseen, well past GitHub's roughly 30-second search-index lag; how many days a record stays current (at least 1); where each repository's blob-less clone is kept, a relative path read against the store's directory; and the shard task's template and its persona, each a path or `builtin:`. |
 | `comments` | none | `launch_command`: the argv `comments answer` runs once per launched batch, in onefollowup's working directory and environment, with `{"schema_version": 1, "batch", "feedback", "snapshot"}` on its stdin and, wherever an argument holds one, `{batch}` replaced with the batch, `{feedback}` with the path of the feedback file `comments launches` rendered for it, and `{snapshot}` with the snapshot directory. Its stdout and stderr are not printed; its exit code decides whether the pass settles. Without it `comments answer` is refused. |
 
 No key says *when* the loop runs; that is the host's schedule.
@@ -1074,6 +1184,100 @@ gathers unscoped, launches that snapshot, runs `comments.launch_command` as each
 answering dispatch, and settles only when every one exited 0. A failed batch settles nothing
 and moves no watermark, so the next `comments answer` gathers its comments again.
 
+## Grooming
+
+`groom prepare` and `groom check` keep a destination's open tickets true, current and unique:
+prepare, then one verifying agent per shard, then check until it passes, then `groom-verb`'s
+publish sends the plan. **The agent only judges**, by filling a verdict record per ticket:
+whether the ticket is fixed or obsolete on `main`, and whether it shares one root cause with
+another open ticket. Selection, checking that judgement's evidence, clustering, survivors and
+protection are code.
+
+**The batch**, `.onefollowup/groom/<batch>/` (`<batch>` is `groom-<UTC stamp>`), holds
+`batch.json` (what prepare listed, fetched and selected, each ticket's protection, digest and
+overlap comments, and `verified_at`), `snapshot.json` (every open ticket's id, title, status,
+URL, repositories and content, for duplicate detection), one `<batch>-<k>/task.md` per shard —
+`groom.task_template` rendered with its tickets and their comments, each repository's clone path
+and fetched `main` commit, the snapshot's path, the verdict schema and the rules below — and the
+`verdicts.jsonl` beside it the agent writes. A passing check writes `plan.json`. A repository
+`host/owner/name` is cloned from `https://host/owner/name.git`; git's own
+`url.<base>.insteadOf` points that elsewhere.
+
+**Incremental selection.** A ticket is selected when it holds no `groom` record, or one of a
+schema this does not read; its digest differs from the one recorded; its repository's `main`
+moved since the recorded commit and the diff touches one of its `evidence_paths` (a path, or a
+directory holding a changed path) — or moved at all when it has none, or no longer holds that
+commit; its record is older than `groom.max_age_days`; `--full` is given; or a comment on it
+that carries no grooming marker (a line `<!-- <namespace>:follow-up-comment … kind="groom" …
+-->`, the line `groom-verb`'s comment template ends in) is new activity against its own record:
+created or edited later than its `verified_at`, or inside the overlap (later than `verified_at`
+less `groom.comment_overlap_seconds`) with its id absent from the record's `overlap_comments` or
+held there with a different last-edited time. An older comment is compared by time, so is never
+new activity. A `protected` count is the selected tickets at a claimed status.
+
+**The comment watermark** is derived on every pass and never stored: the `comments_since` read
+starts at the earliest `verified_at` among the open tickets holding a record, less the overlap,
+floored at `now - groom.max_age_days - overlap`, since an older record selects its ticket anyway.
+So a ticket whose record did not move holds the read's start back until it does, and no comment
+activity on an open ticket is passed over unless a published record of that ticket was taken
+after it. `verified_at` is when prepare's comment read began, never the publish time, so a
+comment made or edited while the batch is verified, checked or published selects the ticket next
+pass.
+
+**The verdict record**, one JSON object per line of a shard's `verdicts.jsonl`, `schema_version`
+1, every key required and no other read: `ticket` (an id prepare listed in the shard); `verdict`
+(`keep`, `fixed`, `obsolete` or `unresolved`); `confidence` (`high`, `medium` or `low`);
+`evidence` (non-empty text); `deciding_commit` (a 40-hex commit for `fixed` and `obsolete`, else
+`null`); `evidence_paths` (repository-relative paths, possibly `[]`); `duplicate_of` (a ticket id
+of the snapshot, or `null`); `root_cause` (one line, set exactly when `duplicate_of` is);
+`seam_repository` (`host/owner/name`, or `null`).
+
+**Check's rules**, each problem naming its `rule` and `ticket`:
+
+| Rule | Refused when |
+|---|---|
+| `verdict-record` | A line is not one JSON object. |
+| `schema-version` | Its `schema_version` is not 1. |
+| `unknown-key` | It carries a key the record does not have. |
+| `missing-field` | It leaves out a key (`null` is how a nullable one is left empty). |
+| `invalid-value` | A value is outside its enum or shape: an unknown `verdict` or `confidence`, a `deciding_commit` that is not 40 hex, a path that leaves the repository, a `seam_repository` that is not `host/owner/name`. |
+| `evidence-required` | Its `evidence` is empty. |
+| `deciding-commit` | A `fixed` or `obsolete` verdict names no `deciding_commit`, or another verdict names one. |
+| `root-cause-required` | It names `duplicate_of` and no `root_cause`. |
+| `duplicate-of-self`, `duplicate-of-unknown` | `duplicate_of` names the ticket itself, or no open ticket of the snapshot. |
+| `unknown-ticket` | It names a ticket its shard does not list. |
+| `missing-verdict`, `duplicate-verdict` | A shard's ticket has no verdict record, or more than one. |
+| `low-confidence-close` | A `fixed` or `obsolete` verdict is `low` confidence. |
+| `commit-not-on-main` | A `fixed` or `obsolete` verdict's `deciding_commit` is not an ancestor, in its clone, of the `main` commit prepare fetched for any of the ticket's repositories. |
+| `claimed-closed`, `claimed-folded` | A plan closes, or folds as a duplicate, a ticket at the `queued` or `in-progress` role's status. |
+| `todo-folded` | A plan folds a ticket at the `accepted` role's status (Todo). |
+| `todo-close-below-bar` | A plan closes a Todo ticket short of definitely outdated: a `high`-confidence `fixed` or `obsolete` verdict whose `deciding_commit` is verified an ancestor of the fetched `main`. |
+| `plan-record` | `plan.json` is not this batch's plan, or plans a ticket the batch did not list. |
+
+**The plan.** A ticket at a non-claimable status (the proposal or deferred role's, or one no
+role maps) may be closed or folded. A Queued or In Progress ticket is never closed or folded,
+and a Todo ticket never folded and closed only when definitely outdated; any of them may survive
+a cluster, and with a closing or duplicate verdict it is kept, `left_for_person` saying why, with
+its verdict and evidence. Duplicate links are unioned into clusters, which members closing as
+`fixed` or `obsolete` leave. Each cluster's survivor is, in order: claimed (Queued or In
+Progress), then Todo, then a member in the repository most members name as `seam_repository`,
+then the most evidence (the most evidence paths, then the longest evidence), then the oldest;
+any survivor the agent implies is ignored, and a member this batch did not verify is never
+folded. Everything not closed or folded is `kept`, and an `unresolved` one is also listed under
+`unresolved`. **A plan is input**: the `plan.json` a batch holds when check runs is what publish
+sends, so check holds it to the protection rules beside the plan it computes, and refuses one
+that breaks them without writing over it; once it is removed or corrected, check passes and
+writes its computed plan.
+
+**The `groom` record** is `groom-verb`'s to write, through `onefollowup::formats::groom`:
+`<namespace>.groom` (`orchestrator.groom` by default) set to `{"schema_version": 1, "batch",
+"verified_at", "verdict", "repository", "commit", "evidence_paths", "content_digest",
+"overlap_comments": [{"id", "edited_at"}]}`. `content_digest` is `sha256:<hex>` over the title
+and the content as the store reads it, without its metadata block, so recording never makes a
+ticket look changed; comments are not in it. `overlap_comments` holds each comment, not
+grooming's own, that prepare read for the ticket created or last edited inside the overlap
+before `verified_at`, by id and last-edited time (created time when never edited).
+
 ## Record formats
 
 Every record is declared once as a Rust type in `onefollowup::formats` with its parse and
@@ -1097,6 +1301,9 @@ the batch id stands where they say `run`.
 | Pending writes | 1 | `feedback/pending.json`. |
 | Existing tickets | 1 | `existing-tickets.json`. |
 | Outbox | 1 | `outbox/<batch>.json`: the staged writes `publish` sends. |
+| Groom record | 1 | A groomed ticket's `<namespace>.groom` metadata (Grooming, above), keyed `schema_version`. |
+| Verdict record | 1 | `groom/<batch>/<shard>/verdicts.jsonl`, one per line, keyed `schema_version`. |
+| Grooming batch, snapshot and plan | 1 | `groom/<batch>/batch.json`, `snapshot.json` and `plan.json`, onefollowup's own working files, keyed `schema_version`. |
 | Batch state | 1 | `state/<batch>.json`: onefollowup's own working file — the input set, prepare's reads and each publish. An optional member onefollowup adds within 1: `relations` (prepare's `task relations` read of the tickets it found), omitted when empty; and on each input, `author` (a draft's source, as `draft_sources` holds it) and `transcript`, each omitted when absent. |
 
 ## Development

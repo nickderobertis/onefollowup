@@ -443,6 +443,13 @@ fn case(key: &str) -> Option<Case> {
                 json!(["s", "{snapshot}"]),
             ],
         ),
+        "groom" => simple(
+            "groom: {shard_size: 10}",
+            ("ONEFOLLOWUP_GROOM__SHARD_SIZE", "20"),
+            "groom.shard_size=30",
+            "/groom/shard_size",
+            [json!(10), json!(20), json!(30)],
+        ),
         _ => return None,
     })
 }

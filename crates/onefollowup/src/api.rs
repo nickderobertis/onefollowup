@@ -984,6 +984,107 @@ pub fn comments_answer(
     comments::answer::run(settings, args)
 }
 
+/// `onefollowup groom prepare`: select a destination's open tickets to verify, and write
+/// one task per shard.
+#[derive(Debug, Clone, PartialEq, Eq, Args)]
+pub struct GroomPrepareArgs {
+    /// Verify every open ticket, whatever its record says.
+    #[arg(long)]
+    pub full: bool,
+    /// Answer the same counts and write no batch.
+    #[arg(long)]
+    pub dry_run: bool,
+    /// How many tickets one shard holds, over `groom.shard_size`.
+    #[arg(long, value_name = "N")]
+    pub shard_size: Option<usize>,
+}
+
+/// One shard `groom prepare` wrote.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct GroomShard {
+    /// `<batch>-<k>`.
+    pub shard: String,
+    /// The absolute path of its `task.md`.
+    pub task: PathBuf,
+    /// The absolute path of the `verdicts.jsonl` its agent writes.
+    pub verdicts: PathBuf,
+    /// How many tickets it holds.
+    pub tickets: usize,
+}
+
+/// What `groom prepare` selected.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct GroomPrepared {
+    /// [`crate::formats::groom::SCHEMA_VERSION`].
+    pub schema_version: u64,
+    /// `groom-<UTC stamp>`.
+    pub batch: String,
+    /// The destination source.
+    pub destination: String,
+    /// How many open tickets it selected.
+    pub selected: usize,
+    /// How many open tickets it left unselected.
+    pub unchanged: usize,
+    /// How many selected tickets are claimed (Queued or In Progress), never closed or folded.
+    pub protected: usize,
+    /// Each shard; `[]` when nothing is selected.
+    pub shards: Vec<GroomShard>,
+    /// Each store operation it made.
+    #[serde(default, skip_serializing_if = "no_operations")]
+    pub store_operations: Vec<StoreOperation>,
+}
+
+/// Select a destination's open tickets to verify, fetch the repositories they name, and write
+/// the batch: a snapshot of every open ticket and one task per shard.
+///
+/// # Errors
+///
+/// A shard size of 0, the store's refusal, a repository that cannot be fetched, or a batch
+/// that cannot be written.
+pub fn groom_prepare(settings: &Settings, args: GroomPrepareArgs) -> Result<GroomPrepared, Error> {
+    crate::groom::prepare::run(settings, args)
+}
+
+/// `onefollowup groom check`: hold a grooming batch's verdicts to the rules.
+#[derive(Debug, Clone, PartialEq, Eq, Args)]
+pub struct GroomCheckArgs {
+    /// The batch `groom prepare` answered.
+    #[arg(long, value_name = "ID")]
+    pub batch: String,
+}
+
+/// One rule a grooming batch breaks.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct GroomProblem {
+    /// The ticket that breaks it, where one does.
+    pub ticket: Option<String>,
+    /// The rule.
+    pub rule: String,
+    /// What is wrong, and where.
+    pub detail: String,
+}
+
+/// What `groom check` found and planned.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct GroomChecked {
+    /// The batch.
+    pub batch: String,
+    /// Each rule it breaks; check exits 2 while any stands.
+    pub problems: Vec<GroomProblem>,
+    /// What publish sends, written in the batch when no problem stands.
+    pub plan: crate::formats::groom::GroomPlan,
+}
+
+/// Hold every shard's verdicts to the rules, and plan the closes, duplicates and survivors.
+///
+/// # Errors
+///
+/// A batch not prepared, a file that cannot be read or written, or [`Error::Unpassed`] — at
+/// exit 2, its answer printed — while any problem stands.
+pub fn groom_check(settings: &Settings, args: GroomCheckArgs) -> Result<GroomChecked, Error> {
+    crate::groom::check::run(settings, args)
+}
+
 /// The arguments of a verb that takes none.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Args)]
 pub struct NoArgs {}

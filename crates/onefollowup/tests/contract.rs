@@ -15,12 +15,14 @@ use indexmap::IndexMap;
 use onefollowup::api::{
     AnsweredLaunch, AnsweredPass, BoardComment, BoardStatus, Checked, CommentsAnswered,
     CommentsChecked, CommentsSettled, Drafted, DuplicateCandidate, DuplicateQuery, DuplicateSearch,
-    Gathered, HookRun, ItemStatus, Launch, Launches, Prepared, Problem, PublishOutcome, Published,
-    QueryKind, RoleStatus, SearchHit, SearchResults, Settled, SettledLaunch, Snapshotted, Staged,
-    StagedOp, StatusesShown, TicketValidated,
+    Gathered, GroomChecked, GroomPrepared, GroomProblem, GroomShard, HookRun, ItemStatus, Launch,
+    Launches, Prepared, Problem, PublishOutcome, Published, QueryKind, RoleStatus, SearchHit,
+    SearchResults, Settled, SettledLaunch, Snapshotted, Staged, StagedOp, StatusesShown,
+    TicketValidated,
 };
 use onefollowup::cli::Cli;
 use onefollowup::config::StatusRole;
+use onefollowup::formats::groom::{Confidence, GroomPlan, GroomVerdict, PlanEntry, Survivor};
 use onefollowup::formats::outbox::StagedWrite;
 use onefollowup::formats::{HeldPriority, Level};
 use onefollowup::store::StoreOperation;
@@ -34,6 +36,31 @@ fn status() -> Option<ItemStatus> {
         category: "backlog".to_owned(),
         name: "Proposal".to_owned(),
     })
+}
+
+const GROOM: &str = "groom-20261121T090000000Z";
+
+fn groomed(ticket: &str, survivor: Option<&str>, left: Option<&str>) -> PlanEntry {
+    let duplicate = survivor.is_some();
+    PlanEntry {
+        ticket: ticket.to_owned(),
+        status: if duplicate { "backlog" } else { "in-progress" }.to_owned(),
+        verdict: if duplicate {
+            GroomVerdict::Keep
+        } else {
+            GroomVerdict::Fixed
+        },
+        confidence: Confidence::High,
+        evidence: "src/layout.rs reads the size once since the fix".to_owned(),
+        deciding_commit: (!duplicate)
+            .then(|| "0123456789abcdef0123456789abcdef01234567".to_owned()),
+        evidence_paths: vec!["src/layout.rs".to_owned()],
+        repository: Some("github.com/example/widgets".to_owned()),
+        commit: Some("89abcdef0123456789abcdef0123456789abcdef".to_owned()),
+        duplicate_of: survivor.map(str::to_owned),
+        root_cause: duplicate.then(|| "the layout's save reads the window size twice".to_owned()),
+        left_for_person: left.map(str::to_owned),
+    }
 }
 
 fn staged(write: StagedWrite, index: usize) -> Value {
@@ -374,6 +401,67 @@ fn examples() -> BTreeMap<&'static str, Value> {
                 needs_attention: false,
                 watermark: Some("2026-11-01T12:00:00Z".to_owned()),
                 store_operations: Vec::new(),
+            })),
+        ),
+        (
+            "groom prepare",
+            json(to_value(GroomPrepared {
+                schema_version: 1,
+                batch: GROOM.to_owned(),
+                destination: "followups".to_owned(),
+                selected: 2,
+                unchanged: 47,
+                protected: 1,
+                shards: vec![GroomShard {
+                    shard: format!("{GROOM}-1"),
+                    task: PathBuf::from(format!(
+                        "/work/.onefollowup/groom/{GROOM}/{GROOM}-1/task.md"
+                    )),
+                    verdicts: PathBuf::from(format!(
+                        "/work/.onefollowup/groom/{GROOM}/{GROOM}-1/verdicts.jsonl"
+                    )),
+                    tickets: 2,
+                }],
+                store_operations: ["list", "comments-since", "read"]
+                    .into_iter()
+                    .zip([49, 3, 2])
+                    .map(|(op, items)| StoreOperation {
+                        op: op.to_owned(),
+                        source: "followups".to_owned(),
+                        destination: true,
+                        items,
+                        searches: None,
+                    })
+                    .collect(),
+            })),
+        ),
+        (
+            "groom check",
+            json(to_value(GroomChecked {
+                batch: GROOM.to_owned(),
+                problems: vec![GroomProblem {
+                    ticket: Some("followups:item-7".to_owned()),
+                    rule: "low-confidence-close".to_owned(),
+                    detail: format!(
+                        "{GROOM}-1 line 2: a `fixed` verdict closes the ticket, which `low` confidence never does: raise the evidence to `medium` or `high`, or answer `keep` or `unresolved`"
+                    ),
+                }],
+                plan: GroomPlan {
+                    fixed: Vec::new(),
+                    obsolete: Vec::new(),
+                    duplicates: vec![groomed("followups:item-9", Some("followups:item-3"), None)],
+                    survivors: vec![Survivor {
+                        ticket: "followups:item-3".to_owned(),
+                        members: vec!["followups:item-3".to_owned(), "followups:item-9".to_owned()],
+                        chosen_by: "claimed".to_owned(),
+                    }],
+                    kept: vec![groomed(
+                        "followups:item-3",
+                        None,
+                        Some("it is claimed (Queued or In Progress), which grooming never closes"),
+                    )],
+                    unresolved: Vec::new(),
+                },
             })),
         ),
         (

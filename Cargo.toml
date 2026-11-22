@@ -38,7 +38,7 @@ sha2 = "0.10.9"
 # The verifying agent's task and a kind's ticket template are Jinja templates.
 minijinja = { version = "2.24.0", features = ["loader"] }
 # onetaskgraph's engine is async; each verb drives it on one current-thread runtime.
-tokio = { version = "1.54.1", default-features = false, features = ["rt", "time"] }
+tokio = { version = "1.54.1", default-features = false, features = ["rt", "sync", "time"] }
 thiserror = "2.0.20"
 
 assert_cmd = "2.2.2"

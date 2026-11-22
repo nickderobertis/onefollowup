@@ -653,6 +653,7 @@ fn graphql_and_core_reset_apart_and_each_is_admitted_on_its_own_window() {
     assert_eq!(request("core"), 0, "core goes on its own window");
     harness.respond(&[reading("core", 3999, T0 + 240)]);
     assert_eq!(request("graphql"), 90, "graphql waits for its own reset");
+    harness.respond(&[reading("graphql", 4999, T0 + 3690)]);
     assert_eq!(request("core"), 0);
     let waits = harness.waits();
     assert_eq!(waits.len(), 1);
@@ -737,10 +738,89 @@ fn within_one_process_own_spend_crosses_the_floor_by_at_most_one_requests_estima
     );
     assert_eq!(harness.waits()[0].reason, Reason::Floor);
     assert!(harness.elapsed(T0) >= 3600.0);
+}
 
-    // Several requests against one reading, before any other is taken: each is admitted only
-    // against what the ones before it left of that reading, so with headroom for three the
-    // fourth is held, though no reading has said anything new.
+#[test]
+fn two_requests_sent_at_once_are_never_in_flight_together_and_the_second_waits_for_the_first_s_reading()
+ {
+    // A GitHub source sends some requests concurrently (a visibility check joins two): the
+    // second is not admitted until the first's response is told, and is then admitted against
+    // what that response said. The first costs 3 against a hint of 1 and leaves graphql under
+    // its floor, so the second waits for the reset's reading.
+    let mut settings = shipped();
+    settings.reserve_factor = 0.0;
+    let harness = Harness::new(settings, instant(T0), |at| {
+        let graphql = if at.timestamp() >= T0 + 600 {
+            reading("graphql", 5000, T0 + 4200)
+        } else {
+            reading("graphql", 1001, T0 + 600)
+        };
+        vec![graphql, reading("core", 5000, T0 + 3600)]
+    });
+    let log = Mutex::new(Vec::<String>::new());
+    let in_flight = Mutex::new(0_u32);
+    let most = Mutex::new(0_u32);
+    let (log_at, in_flight_at, most_at, governor, clock) =
+        (&log, &in_flight, &most, &harness.governor, &harness.clock);
+    let send = |name: &'static str, answer: Reading| {
+        let (log, in_flight, most) = (log_at, in_flight_at, most_at);
+        async move {
+            governor
+                .before_request(&Request {
+                    resource: "graphql".to_owned(),
+                    cost_hint: Some(1),
+                })
+                .await;
+            let now = {
+                let mut count = in_flight.lock().unwrap();
+                *count += 1;
+                let mut top = most.lock().unwrap();
+                *top = (*top).max(*count);
+                clock.now().timestamp() - T0
+            };
+            log.lock().unwrap().push(format!("{name} sent at {now}"));
+            // The network: the other request is polled meanwhile.
+            tokio::task::yield_now().await;
+            tokio::task::yield_now().await;
+            *in_flight.lock().unwrap() -= 1;
+            log.lock().unwrap().push(format!("{name} answered"));
+            governor.after_response(&[answer]);
+        }
+    };
+    harness.runtime.block_on(async {
+        harness
+            .governor
+            .admit_call(&[DESTINATION.to_owned()], Kind::Read)
+            .await;
+        tokio::join!(
+            send("first", reading("graphql", 998, T0 + 600)),
+            send("second", reading("graphql", 4999, T0 + 4200)),
+        );
+    });
+    harness.end();
+    assert_eq!(*most.lock().unwrap(), 1, "never two in flight");
+    assert_eq!(
+        *log.lock().unwrap(),
+        [
+            "first sent at 0",
+            "first answered",
+            "second sent at 600",
+            "second answered"
+        ],
+        "the second went only once a reading after the first's response admitted it"
+    );
+    let waits = harness.waits();
+    assert_eq!(waits.len(), 1, "{waits:?}");
+    assert_eq!(waits[0].reason, Reason::Floor);
+}
+
+#[test]
+fn a_request_whose_response_reports_nothing_is_presumed_over_after_its_lease_and_still_counted() {
+    // A response that failed in transport tells the gate nothing. The next request waits out
+    // the in-flight lease on the runtime's timer (paused here, so it costs no real time) and
+    // is admitted against the one reading less every estimate admitted since, the presumed
+    // ones included: with headroom for three at a hint of 1, the fourth is held, though no
+    // reading has said anything new. The backend charged each, as its later readings show.
     let charged = Arc::new(Mutex::new(0_u64));
     let held = Arc::clone(&charged);
     let same = Harness::new(
@@ -750,18 +830,20 @@ fn within_one_process_own_spend_crosses_the_floor_by_at_most_one_requests_estima
         },
         instant(T0),
         move |at| {
-            let (left, reset) = if at.timestamp() >= T0 + 600 {
-                (5000, T0 + 4200)
+            let graphql = if at.timestamp() >= T0 + 600 {
+                reading("graphql", 5000, T0 + 4200)
             } else {
-                (1003 - *held.lock().unwrap(), T0 + 600)
+                reading("graphql", 1003 - *held.lock().unwrap(), T0 + 600)
             };
-            vec![
-                reading("graphql", left, reset),
-                reading("core", 5000, T0 + 3600),
-            ]
+            vec![graphql, reading("core", 5000, T0 + 3600)]
         },
     );
-    same.runtime.block_on(async {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .start_paused(true)
+        .build()
+        .unwrap();
+    runtime.block_on(async {
         same.governor
             .admit_call(&[DESTINATION.to_owned()], Kind::Read)
             .await;
@@ -769,16 +851,22 @@ fn within_one_process_own_spend_crosses_the_floor_by_at_most_one_requests_estima
             resource: "graphql".to_owned(),
             cost_hint: Some(1),
         };
-        for _ in 0..3 {
+        let started = tokio::time::Instant::now();
+        for sent in 1..=3_u32 {
             same.governor.before_request(&request).await;
             *charged.lock().unwrap() += 1;
+            assert_eq!(
+                tokio::time::Instant::now() - started,
+                onefollowup::governor::IN_FLIGHT_LEASE * (sent - 1),
+                "request {sent} waited out the lease of each one before it"
+            );
         }
+        assert_eq!(same.clock.now(), instant(T0), "three go against 1003");
         assert_eq!(
-            same.clock.now(),
-            instant(T0),
-            "three go against the one reading"
+            same.readings.reads().len(),
+            1,
+            "no reading said anything new"
         );
-        assert_eq!(same.readings.reads().len(), 1);
         same.governor.before_request(&request).await;
         assert_eq!(
             same.clock.now(),

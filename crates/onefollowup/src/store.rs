@@ -692,12 +692,15 @@ impl Store {
                 engine: Arc::clone(&engine_of_readings),
             })
         });
-        let governor = Arc::new(Governor::new(
-            crate::config::defaults("").governor,
-            parts.clock,
-            readings,
-            parts.notices,
-        ));
+        let governor = Arc::new(
+            Governor::new(
+                crate::config::defaults("").governor,
+                parts.clock,
+                readings,
+                parts.notices,
+            )
+            .with_in_flight_lease(parts.in_flight_lease),
+        );
         let engine = Arc::new(
             Engine::build(&loaded.config, &loaded.secrets)
                 .with_request_gate(Arc::new(Gate(Arc::clone(&governor)))),

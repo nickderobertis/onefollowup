@@ -672,8 +672,10 @@ nothing — local-md, a stdio peer without `quota` — is never held.
   resume, then re-reads every 30 seconds — that read itself passing the gate — and goes as soon
   as a reading admits it, or the window resets.
 - **What it guarantees.** Each request is admitted only against the latest reading, less
-  onefollowup's own spend since; one process has one request in flight, so its own spend can
-  take a window under the floor by at most one request's estimate error. When others' spend
+  onefollowup's own spend since. One process has at most one metered request in flight, even
+  where a destination sends several at once: the next waits for its response's reading (or,
+  for a response that reported none, 30 seconds, its estimate still counted). So its own spend can take
+  a window under the floor by at most one request's estimate error. When others' spend
   takes remaining under the floor plus the reserve, nothing more is sent until a reading
   admits it. **It does not hold the floor against others**: another machine or consumer of
   the token can cross the floor by its own spend, which no reading shows until after.

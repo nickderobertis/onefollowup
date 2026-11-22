@@ -153,6 +153,8 @@ fn a_publish_killed_while_the_gate_waits_mid_batch_resends_only_what_no_receipt_
         clock: Arc::new(KilledAtFirstWait),
         readings: Some(Arc::new(EightWritesLeft)),
         notices: Arc::new(|_: &str| {}),
+        // local-md reports no response, so each write is presumed over at the next.
+        in_flight_lease: Duration::ZERO,
     };
     let killed = governor::with_parts(parts, || {
         std::panic::catch_unwind(AssertUnwindSafe(|| {

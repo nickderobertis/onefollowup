@@ -846,14 +846,14 @@ impl Store {
     /// tasks of `source` read for their status, then `updates` tasks updated in one
     /// `update-many` and `comments` comments added in one `comment add-many`. `groom publish`
     /// calls it once, immediately before its status read, and sends that read and both writes
-    /// back to back, so the batch's whole estimated cost is admitted here and no governor wait
-    /// falls between the status read and the closes it admitted.
+    /// back to back.
     ///
-    /// It sends nothing and is no store operation. This admission point does not wait yet: every
-    /// batch is admitted here at once, while every call and every request inside the batch is
-    /// still governed at the store's one chokepoint and its request gate. Waiting
-    /// here until the governor's estimate admits the status read and the batch's writes
-    /// together is `quota-governor-writes`' (manager ruling `a7`).
+    /// It waits until the governor's estimate admits the status read and the `updates` writes
+    /// (the closes) together, so no wait falls between that read and the closes it decided on.
+    /// It reserves nothing and admits nothing on its own: every request of the batch is still
+    /// admitted at the store's chokepoint and its request gate, against the floor, the reserve
+    /// and the content-write caps. The comments come after the closes are confirmed, so they
+    /// are paced there alone. It sends nothing and is no store operation.
     ///
     /// # Errors
     ///
@@ -865,7 +865,12 @@ impl Store {
         updates: usize,
         comments: usize,
     ) -> Result<(), StoreError> {
-        let _ = (source, reads, updates, comments);
+        let _ = comments;
+        if self.local.as_deref() == Some(source) {
+            return Ok(());
+        }
+        self.runtime
+            .block_on(self.governor.admit_batch(source, reads > 0, updates));
         Ok(())
     }
 

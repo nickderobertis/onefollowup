@@ -1408,8 +1408,10 @@ verdict is **definitely outdated** — `fixed` or `obsolete` at `high` confidenc
 `receipts.json` and `plan.json` are all a re-run reads.
 
 1. The batch is admitted at the store's chokepoint (`Store::admit_batch`, where the quota
-   governor admits the batch's estimated cost), then **one batched status read** of the tickets
-   to close or fold, so no governor wait falls between that read and the closes.
+   governor waits until its estimate admits the status read and the closes together — reserving
+   nothing, each request still admitted on its own as it is sent), then **one batched status
+   read** of the tickets to close or fold, so no governor wait falls between that read and the
+   closes.
 2. **One `update-many`.** A ticket that read finds at a non-claimable open status (the
    `proposal` or `deferred` role's, or one no role maps: Draft, Backlog, Unknown) is closed:
    `fixed` at the `done` role's status, `obsolete` at the `cancelled` role's, a duplicate by the

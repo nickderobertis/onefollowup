@@ -666,6 +666,57 @@ impl Governor {
         }
     }
 
+    /// Wait until `source` admits a batch together: one read call (when `read`) and `writes`
+    /// write requests, at the costs observed of each, against every window the governor holds
+    /// of `source`'s backend kind. It reserves nothing: each request is still admitted on its
+    /// own when it is sent. A wait is recorded as any other.
+    pub async fn admit_batch(&self, source: &str, read: bool, writes: usize) {
+        let settings = self.settings().clone();
+        if !settings.enabled {
+            return;
+        }
+        let sources = [source.to_owned()];
+        let backend = self.backend(source);
+        let mut refreshed = self.refresh_if_stale(source, &settings).await;
+        loop {
+            let mut governed: BTreeSet<String> =
+                self.shared(std::slice::from_ref(&backend), |shared| {
+                    shared
+                        .get(&backend)
+                        .map(|held| held.resources.keys().cloned().collect())
+                        .unwrap_or_default()
+                });
+            governed.extend(self.state().requested.iter().cloned());
+            governed.extend(settings.min_peak_per_minute.keys().cloned());
+            let mut blocked = None;
+            for resource in &governed {
+                let reading = if read {
+                    self.call_estimate(source, resource, Kind::Read)
+                } else {
+                    0.0
+                };
+                #[allow(
+                    clippy::cast_precision_loss,
+                    reason = "a batch's write count is far under 2^53"
+                )]
+                let cost = reading
+                    + writes as f64 * self.request_estimate(&sources, resource, Kind::Write);
+                if let Some(refusal) = self.decide(source, resource, cost, &settings) {
+                    blocked = Some((refusal, cost));
+                    break;
+                }
+            }
+            match blocked {
+                None => return,
+                Some(_) if !refreshed => {
+                    self.refresh(source).await;
+                    refreshed = true;
+                }
+                Some((refusal, cost)) => self.hold(refusal, cost, &settings).await,
+            }
+        }
+    }
+
     /// The call in progress has answered: learn what it spent.
     pub fn end_call(&self) {
         let call = {

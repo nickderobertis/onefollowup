@@ -38,11 +38,12 @@
 //! **One state per host.** What is learned of a backend kind — its windows, everyone's admitted
 //! spend and the cost still in flight, others' burn history, the observed costs and the
 //! content-write window — is one state every onefollowup process on the host shares, in
-//! `governor.state_dir` ([`host`]), so admission counts every process's spend and a fresh
-//! process starts from the burn estimate others learned. Sources are keyed by their backend
-//! kind ([`Governor::set_backends`]), so every destination of one kind shares one state; with no
-//! state directory the state is the process's alone. Each process still holds its own slot, so
-//! onefollowup's own spend crosses a floor by at most one request's estimate error per process.
+//! `governor.state_dir` (the private `host` module), so admission counts every process's
+//! spend and a fresh process starts from the burn estimate others learned. Sources are keyed by
+//! their backend kind ([`Governor::set_backends`]), so every destination of one kind shares one
+//! state; with no state directory the state is the process's alone. Each process still holds its
+//! own slot, so onefollowup's own spend crosses a floor by at most one request's estimate error
+//! per process.
 //!
 //! **Content-creating writes.** A request the gate is told creates content, in a destination
 //! call, is admitted only while the backend kind's writes across the host in the last minute

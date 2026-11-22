@@ -106,9 +106,16 @@ budgets:
   # One full grooming pass, counted by tests/e2e/groom_budget.rs. Basis, by arithmetic over the
   # batched design: prepare's open-item listing, one comments-since read and one batched read of
   # the selected tickets' comments (3); publish's batched status read of the tickets to close or
-  # fold, one update-many carrying every close, duplicate close and groom record, one comment
-  # add-many built from its receipts, and one batched read-back of every ticket changed (4). No
-  # headroom: the status read took the operation once held for re-reading lost write answers.
+  # fold, one update-many carrying every close, duplicate close and groom record, the comment
+  # add-many calls built from its receipts, and one batched read-back of every ticket changed (6).
+  # The pass posts 88 comments (one on each of the 76 tickets it closes, one consolidation comment
+  # on each of the 12 survivors), and since the content-write caps (#68) one call may declare at
+  # most the lesser cap's items, 40 at the default `max_content_writes_per_minute`: the gate is
+  # told only that a request creates content, not how many comments a source batched into it, so
+  # one call carrying all 88 could only be admitted into empty windows and would send them in one
+  # burst past the cap. 88 comments therefore take 3 add-many calls (40, 40, 8), 2 more than
+  # before the caps. No headroom: the status read took the operation once held for re-reading
+  # lost write answers.
   # The 2026-11-20 manual pass made 219 store calls for the same work. About 60 seconds to
   # report, as above.
   - id: groom-pass-store-operations
@@ -119,12 +126,18 @@ budgets:
       600 open and 1,400 closed tickets across 6 repositories, 2 comments each, in 12 shards of
       50: 520 kept, 50 fixed, 6 obsolete, 4 unresolved and 20 duplicates in 12 clusters. The
       detail gives each phase's operations and the tickets each read or wrote. It protects the
-      shared GitHub points and the wait a pass spends on the real board.
+      shared GitHub points and the wait a pass spends on the real board. Its 88 grooming
+      comments (76 closes, 12 survivors) take 3 comment add-many calls of at most 40 where 1
+      call took them before the content-write caps: the 2nd and 3rd are inherent to those caps,
+      which let one call declare at most the lesser cap's items (40 per minute by default),
+      because the request gate cannot see how many comments a source batches into one request,
+      so a larger call would burst past the cap that keeps GitHub's secondary content-creation
+      limit unhit.
     measure: reported
     command: ["cargo", "test", "--quiet", "-p", "onefollowup-e2e", "--locked", "--test", "e2e", "--", "budget_runner::report", "--exact", "--nocapture", "../../target/debug/telemetry/onefollowup-e2e"]
     unit: operations
     direction: max
-    threshold: 7
+    threshold: 9
   # A grooming pass with nothing changed, counted by tests/e2e/groom_budget.rs straight after the
   # full pass. Basis, by arithmetic: the second prepare's open-item listing reads every ticket's
   # groom key and its one comments-since read finds no comment later than its ticket's record but

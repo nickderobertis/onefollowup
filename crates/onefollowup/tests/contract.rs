@@ -15,15 +15,15 @@ use indexmap::IndexMap;
 use onefollowup::api::{
     AnsweredLaunch, AnsweredPass, BoardComment, BoardStatus, Checked, CommentsAnswered,
     CommentsChecked, CommentsSettled, Drafted, DuplicateCandidate, DuplicateQuery, DuplicateSearch,
-    Gathered, GroomChecked, GroomPrepared, GroomProblem, GroomShard, HookRun, ItemStatus, Launch,
-    Launches, Prepared, Problem, PublishOutcome, Published, QueryKind, RoleStatus, SearchHit,
-    SearchResults, Settled, SettledLaunch, Snapshotted, Staged, StagedOp, StatusesShown,
-    TicketValidated,
+    Gathered, GroomChecked, GroomPrepared, GroomProblem, GroomPublished, GroomShard, HookRun,
+    ItemStatus, Launch, Launches, Prepared, Problem, PublishOutcome, Published, QueryKind,
+    RoleStatus, SearchHit, SearchResults, Settled, SettledLaunch, Snapshotted, Staged, StagedOp,
+    StatusesShown, TicketValidated,
 };
 use onefollowup::cli::Cli;
 use onefollowup::config::StatusRole;
 use onefollowup::formats::groom::{
-    Confidence, GroomPlan, GroomRule, GroomVerdict, PlanEntry, Survivor, SurvivorRule,
+    Confidence, GroomPlan, GroomRule, GroomVerdict, Mismatch, PlanEntry, Survivor, SurvivorRule,
 };
 use onefollowup::formats::outbox::StagedWrite;
 use onefollowup::formats::{HeldPriority, Level};
@@ -464,6 +464,31 @@ fn examples() -> BTreeMap<&'static str, Value> {
                     )],
                     unresolved: Vec::new(),
                 },
+            })),
+        ),
+        (
+            "groom publish",
+            json(to_value(GroomPublished {
+                batch: GROOM.to_owned(),
+                confirmed: 3,
+                mismatched: vec![Mismatch {
+                    ticket: "followups:item-9".to_owned(),
+                    expected: "status category `cancelled`".to_owned(),
+                    found: "status category `backlog` (Backlog)".to_owned(),
+                }],
+                report: PathBuf::from(format!("/work/.onefollowup/groom/{GROOM}/report.md")),
+                report_json: PathBuf::from(format!("/work/.onefollowup/groom/{GROOM}/report.json")),
+                store_operations: ["read", "update-many", "comment-add-many", "read"]
+                    .into_iter()
+                    .zip([2, 4, 3, 4])
+                    .map(|(op, items)| StoreOperation {
+                        op: op.to_owned(),
+                        source: "followups".to_owned(),
+                        destination: true,
+                        items,
+                        searches: None,
+                    })
+                    .collect(),
             })),
         ),
         (

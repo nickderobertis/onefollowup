@@ -43,7 +43,7 @@ fn stamp(at: &DateTime<Utc>) -> String {
     at.to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true)
 }
 
-/// The pattern a grooming comment's marker line matches: the line `groom-verb`'s comment
+/// The pattern a grooming comment's marker line matches: the line `groom publish`'s comment
 /// template ends in.
 fn grooming_marker(namespace: &str) -> Regex {
     Regex::new(&format!(

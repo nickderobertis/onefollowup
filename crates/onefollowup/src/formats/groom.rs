@@ -1,9 +1,10 @@
 //! The grooming pass's records: the `groom` record a groomed ticket carries in its metadata,
 //! with the digest it is compared by; the verdict record a verifying agent writes, one per line
-//! of a shard's `verdicts.jsonl`; and the batch and plan `groom prepare` and `groom check` write.
+//! of a shard's `verdicts.jsonl`; the batch and plan `groom prepare` and `groom check` write; and
+//! the receipts and report `groom publish` writes.
 //!
 //! Each is `schema_version` 1 and refuses unknown keys. The `groom` record is the contract every
-//! later pass reads off the tickets, on any machine: `groom-verb`'s publish writes it with
+//! later pass reads off the tickets, on any machine: `groom publish` writes it with
 //! [`GroomRecord`] and [`content_digest`], and nothing restates them.
 
 use std::collections::BTreeMap;
@@ -85,6 +86,12 @@ pub enum Confidence {
 impl Confidence {
     /// Every confidence, as the record spells it.
     pub const ALL: [&'static str; 3] = ["high", "medium", "low"];
+
+    /// The confidence as the record spells it.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        Self::ALL[self as usize]
+    }
 }
 
 /// A rule `groom check` holds a batch to, as a problem names it.
@@ -753,7 +760,7 @@ pub struct Survivor {
     pub chosen_by: SurvivorRule,
 }
 
-/// What a passing `groom check` plans: `plan.json`, what `groom-verb`'s publish sends.
+/// What a passing `groom check` plans: `plan.json`, what `groom publish` sends.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GroomPlan {
@@ -828,4 +835,204 @@ pub struct GroomSnapshot {
     pub batch: String,
     /// Every open ticket, by qualified id.
     pub tickets: Vec<SnapshotTicket>,
+}
+
+/// What `groom publish` does with one ticket of a plan.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PublishAction {
+    /// Close it as `fixed` or `obsolete`, writing its record, when its status read admits it.
+    Close,
+    /// Close it as a duplicate of its survivor, writing its record, when its status read admits
+    /// it.
+    Fold,
+    /// Write its record, and nothing else.
+    Record,
+    /// Write nothing: check left it for a person, or its record names no repository.
+    Keep,
+}
+
+/// Where one ticket of a publish stands, as its receipt holds it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PublishOutcome {
+    /// Nothing about it is confirmed yet: no publish sent its write, or none heard the answer.
+    Pending,
+    /// Its close landed with its record.
+    Closed,
+    /// Its record landed.
+    Recorded,
+    /// Nothing was or will be written to it.
+    Kept,
+    /// It is left for a person: what its verdict asks is a person's to do.
+    LeftForPerson,
+    /// The destination refused its write; a later publish sends it again.
+    Failed,
+}
+
+/// A grooming comment publish posted, as its answer said it landed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PostedComment {
+    /// The comment's id.
+    pub id: String,
+    /// The body posted, its marker line last.
+    pub body: String,
+}
+
+/// One ticket of a publish: what the plan asks of it, everything its record and comment are
+/// written from, and where it stands.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TicketReceipt {
+    /// Its qualified id.
+    pub ticket: String,
+    /// Its title when prepare listed it.
+    pub title: String,
+    /// Where a person opens it.
+    pub url: Option<String>,
+    /// Its status when prepare listed it.
+    pub listed: HeldStatus,
+    /// What publish does with it.
+    pub action: PublishAction,
+    /// Its plan entry.
+    pub entry: PlanEntry,
+    /// Whether its verdict is definitely outdated: `fixed` or `obsolete` at `high` confidence,
+    /// its deciding commit verified an ancestor of the fetched `main`. Only such a verdict
+    /// closes a Todo ticket.
+    pub definitely_outdated: bool,
+    /// The record its write carries; `None` for a ticket it writes nothing to.
+    pub record: Option<GroomRecord>,
+    /// Where it stands.
+    pub outcome: PublishOutcome,
+    /// Its status as publish's status read found it, when it was read.
+    pub found: Option<HeldStatus>,
+    /// Why it is left for a person, or why its write failed.
+    pub reason: Option<String>,
+    /// Its evidence comment, once posted.
+    pub comment: Option<PostedComment>,
+}
+
+/// One cluster's survivor in a publish.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SurvivorReceipt {
+    /// Its qualified id.
+    pub ticket: String,
+    /// Its title when prepare listed it.
+    pub title: String,
+    /// Where a person opens it.
+    pub url: Option<String>,
+    /// Its status when prepare listed it.
+    pub listed: HeldStatus,
+    /// Every member of its cluster, itself among them.
+    pub members: Vec<String>,
+    /// The rule of the survivor order that chose it.
+    pub chosen_by: SurvivorRule,
+    /// The closed duplicates its consolidation comment names.
+    pub named: Vec<String>,
+    /// Its consolidation comment, once posted.
+    pub comment: Option<PostedComment>,
+}
+
+/// What `groom publish` has sent of a batch and heard back: `receipts.json`, written before
+/// the first store operation and after each write, so a publish run again sends only what no
+/// receipt confirms, from this and `plan.json` alone.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GroomReceipts {
+    /// [`SCHEMA_VERSION`].
+    pub schema_version: u64,
+    /// The batch.
+    pub batch: String,
+    /// The destination source.
+    pub destination: String,
+    /// The namespace its markers and record key are under.
+    pub namespace: String,
+    /// Every ticket the plan names, in the order publish reads and writes them.
+    pub tickets: Vec<TicketReceipt>,
+    /// Every cluster's survivor.
+    pub survivors: Vec<SurvivorReceipt>,
+}
+
+/// One way a ticket read back differs from what publish's receipts say landed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Mismatch {
+    /// Its qualified id.
+    pub ticket: String,
+    /// What the receipts say landed.
+    pub expected: String,
+    /// What the read-back found.
+    pub found: String,
+}
+
+/// One ticket a publish left for a person to decide, as its report lists it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LeftForPerson {
+    /// Its qualified id.
+    pub ticket: String,
+    /// Its title.
+    pub title: String,
+    /// Where a person opens it.
+    pub url: Option<String>,
+    /// Its status: as publish's status read found it, or as prepare listed it.
+    pub status: HeldStatus,
+    /// Its verdict.
+    pub verdict: GroomVerdict,
+    /// How sure the agent was.
+    pub confidence: Confidence,
+    /// The commit that decided a closing verdict.
+    pub deciding_commit: Option<String>,
+    /// What the verdict rests on.
+    pub evidence: String,
+    /// For a duplicate, its cluster's survivor.
+    pub survivor: Option<String>,
+    /// Why it is left.
+    pub reason: String,
+}
+
+/// One ticket's outcome, as a publish's report lists it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReportedTicket {
+    /// Its qualified id.
+    pub ticket: String,
+    /// Its title.
+    pub title: String,
+    /// Its verdict.
+    pub verdict: GroomVerdict,
+    /// What publish did with it.
+    pub action: PublishAction,
+    /// Where it stands.
+    pub outcome: PublishOutcome,
+    /// For a duplicate, its cluster's survivor.
+    pub duplicate_of: Option<String>,
+    /// Its grooming comment's id, once posted.
+    pub comment: Option<String>,
+    /// Why it is left or failed.
+    pub reason: Option<String>,
+}
+
+/// What a `groom publish` did: `report.json`, beside the `report.md` a person reads.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GroomReport {
+    /// [`SCHEMA_VERSION`].
+    pub schema_version: u64,
+    /// The batch.
+    pub batch: String,
+    /// The destination source.
+    pub destination: String,
+    /// How many tickets the read-back confirmed in full.
+    pub confirmed: usize,
+    /// Each way a ticket read back differs from its receipts.
+    pub mismatched: Vec<Mismatch>,
+    /// Every ticket the plan names, with its outcome.
+    pub outcomes: Vec<ReportedTicket>,
+    /// Every cluster's survivor, with the closed duplicates its comment names.
+    pub survivors: Vec<SurvivorReceipt>,
+    /// Every ticket with a closing or duplicate verdict left open, for a person to decide.
+    pub left_for_person: Vec<LeftForPerson>,
 }

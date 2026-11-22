@@ -191,6 +191,7 @@ impl Settings {
         for (part, configured) in [
             ("task_template", &self.config.groom.task_template),
             ("persona", &self.config.groom.persona),
+            ("comment_template", &self.config.groom.comment_template),
         ] {
             named.push((format!("groom.{part}"), "groom", configured.clone()));
         }

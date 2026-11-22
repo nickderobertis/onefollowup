@@ -962,7 +962,8 @@ pub struct CommentsSettings {
     pub launch_command: Option<Vec<String>>,
 }
 
-/// How `groom prepare` selects, shards and tasks a destination's open tickets.
+/// How `groom prepare` selects, shards and tasks a destination's open tickets, and how
+/// `groom publish` comments on the tickets it closes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GroomSettings {
@@ -981,6 +982,10 @@ pub struct GroomSettings {
     pub task_template: String,
     /// The persona the shard task gives its verifying agent (`builtin:` names a shipped file).
     pub persona: String,
+    /// The visible part of every comment `groom publish` posts — a closed ticket's evidence
+    /// and a survivor's consolidation — before the marker line onefollowup appends
+    /// (`builtin:` names a shipped file).
+    pub comment_template: String,
 }
 
 /// The placeholders `comments.launch_command` is given, each replaced wherever an argument

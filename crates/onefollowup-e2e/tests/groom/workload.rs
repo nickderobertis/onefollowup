@@ -1,5 +1,5 @@
 //! The generated grooming workload: a local-md destination of tickets over one-commit-history
-//! git repositories. `groom prepare`'s journey runs over it, and `groom-verb`'s full-pass and
+//! git repositories. `groom prepare`'s journey runs over it, and `groom publish`'s full-pass and
 //! repeat-pass budgets use it as their workload, so it is generated here once.
 
 use super::world::World;
@@ -41,7 +41,7 @@ pub struct Ticket {
 impl Ticket {
     /// Whether the destination holds it open.
     pub fn open(&self) -> bool {
-        self.status != "done"
+        !matches!(self.status, "done" | "cancelled")
     }
 }
 

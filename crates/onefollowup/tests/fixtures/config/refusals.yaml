@@ -222,6 +222,10 @@ cases:
     key: 'groom.persona'
     message: 'does not exist'
   - document: |
+      groom: {comment_template: builtin:no-such-comment.md.j2}
+    key: 'groom.comment_template'
+    message: 'names no shipped template'
+  - document: |
       batch_id_pattern: '('
     key: 'batch_id_pattern'
     message: 'not a regular expression'

@@ -3,7 +3,7 @@
 use crate::groom::world::{Ran, Runner, World};
 
 /// The built `onefollowup`, run in the world's root with the world's environment alone.
-struct Binary;
+pub struct Binary;
 
 impl Runner for Binary {
     fn run(&self, world: &World, args: &[&str]) -> Ran {

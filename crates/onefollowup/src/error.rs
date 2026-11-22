@@ -62,6 +62,16 @@ pub enum Error {
         /// The check's answer: its problems, and the plan as far as it stands.
         answer: Box<crate::api::GroomChecked>,
     },
+    /// `groom publish` sent what it could, and a write the destination refused or a ticket read
+    /// back otherwise than its receipts say stands; the CLI prints `answer` on stdout as the
+    /// verb's document and exits failed.
+    #[error("{message}")]
+    Unpublished {
+        /// What stands: the refused writes and the mismatches.
+        message: String,
+        /// The publish's answer: what the read-back confirmed and found.
+        answer: Box<crate::api::GroomPublished>,
+    },
 }
 
 impl Error {
@@ -81,6 +91,7 @@ impl Error {
         match self {
             Self::Unsettled { answer, .. } => Some(crate::cli::print(answer)),
             Self::Unpassed { answer, .. } => Some(crate::cli::print(answer)),
+            Self::Unpublished { answer, .. } => Some(crate::cli::print(answer)),
             _ => None,
         }
     }
@@ -98,7 +109,8 @@ impl Error {
             | Self::Work(_)
             | Self::Template(_)
             | Self::Failed(_)
-            | Self::Unsettled { .. } => EXIT_FAILED,
+            | Self::Unsettled { .. }
+            | Self::Unpublished { .. } => EXIT_FAILED,
         }
     }
 }

@@ -39,4 +39,7 @@ mod world;
 
 #[path = "../groom/mod.rs"]
 mod groom;
+mod groom_budget;
+mod groom_comments;
+mod groom_interrupted;
 mod grooming;

@@ -6,7 +6,7 @@
 
 use serde_json::json;
 
-use super::world::{Runner, World, ago};
+use super::world::{Runner, World, ago, grooming_marker, keep};
 
 const WIDGETS: &str = "github.com/example/widgets";
 const GADGETS: &str = "github.com/example/gadgets";
@@ -37,9 +37,9 @@ impl Groomed {
         Self::verified(&ago(600), |_| None)
     }
 
-    /// As [`Self::new`], each ticket's record verified at `verified_at` unless `at` names
-    /// another time for it.
-    fn verified(verified_at: &str, at: impl Fn(&str) -> Option<String>) -> Self {
+    /// The world before any ticket holds a record: the repositories, [`TICKETS`], `old`, and
+    /// the comments; with the commits and when `ov`'s comment was made.
+    fn unrecorded() -> (World, String, String, String) {
         let world = World::new();
         let widgets = world.repository(
             WIDGETS,
@@ -75,6 +75,13 @@ impl Groomed {
             &inside,
             "A question inside the overlap.",
         );
+        (world, widgets, gadgets, inside)
+    }
+
+    /// As [`Self::new`], each ticket's record verified at `verified_at` unless `at` names
+    /// another time for it.
+    fn verified(verified_at: &str, at: impl Fn(&str) -> Option<String>) -> Self {
+        let (world, widgets, gadgets, inside) = Self::unrecorded();
         for (id, repository, paths) in TICKETS {
             let commit = if repository == WIDGETS {
                 &widgets
@@ -95,6 +102,29 @@ impl Groomed {
             widgets,
             gadgets,
             verified_at: verified_at.to_owned(),
+        }
+    }
+
+    /// As [`Self::new`], every record written by one published pass whose agents keep every
+    /// ticket, its verdict resting on the ticket's paths.
+    fn published(runner: &dyn Runner) -> Self {
+        let (world, widgets, gadgets, _) = Self::unrecorded();
+        let (batch, published) = world.groomed_pass(runner, |id| {
+            let paths = TICKETS
+                .iter()
+                .find(|(ticket, _, _)| *ticket == id)
+                .map_or(&[][..], |(_, _, paths)| *paths);
+            keep(id, paths)
+        });
+        assert_eq!(published["mismatched"], json!([]), "{published:#}");
+        let record = world.groom_record("wa").expect("a published record");
+        assert_eq!(record["batch"], batch.as_str());
+        let verified_at = record["verified_at"].as_str().expect("a time").to_owned();
+        Self {
+            world,
+            widgets,
+            gadgets,
+            verified_at,
         }
     }
 
@@ -133,10 +163,12 @@ pub fn nothing_changed_selects_nothing(runner: &dyn Runner) {
     assert_eq!(operations, ["list", "comments-since"], "no ticket to read");
 }
 
-pub fn each_change_alone_selects_exactly_its_ticket(runner: &dyn Runner) {
-    let marker = "<!-- orchestrator:follow-up-comment run=\"groom-20261101T000000000Z\" root_cause=\"groom\" kind=\"groom\" -->";
-    type Change = Box<dyn Fn(&Groomed)>;
-    let changes: Vec<(&str, Change, &[&str])> = vec![
+/// A change to a groomed world.
+type Change = Box<dyn Fn(&Groomed)>;
+
+/// Each change the selection criterion lists, with the tickets it alone makes a pass select.
+fn changes() -> Vec<(&'static str, Change, &'static [&'static str])> {
+    vec![
         (
             "a ticket newly added",
             Box::new(|g: &Groomed| {
@@ -279,21 +311,29 @@ pub fn each_change_alone_selects_exactly_its_ticket(runner: &dyn Runner) {
         ),
         (
             "a grooming comment its only new comment",
-            Box::new(move |g: &Groomed| {
+            Box::new(|g: &Groomed| {
                 let now = ago(0);
                 g.world.comment(
                     "wb",
                     "c-groom",
                     &now,
                     &now,
-                    &format!("Verified at main.\n\n{marker}"),
+                    &format!(
+                        "Verified at main.\n\n{}",
+                        grooming_marker("groom-20261101T000000000Z", "survivor")
+                    ),
                 );
             }),
             &[],
         ),
-    ];
-    for (case, change, expected) in changes {
-        let groomed = Groomed::new();
+    ]
+}
+
+/// Over a world groomed by `groomed`, each change made alone makes the next pass select exactly
+/// the ticket it touched.
+fn each_change_alone(runner: &dyn Runner, groomed: impl Fn() -> Groomed) {
+    for (case, change, expected) in changes() {
+        let groomed = groomed();
         assert_eq!(
             groomed.selects(runner, &[]),
             Vec::<String>::new(),
@@ -309,6 +349,14 @@ pub fn each_change_alone_selects_exactly_its_ticket(runner: &dyn Runner) {
             "{case} selects exactly the ticket it touched"
         );
     }
+}
+
+pub fn each_change_alone_selects_exactly_its_ticket(runner: &dyn Runner) {
+    each_change_alone(runner, Groomed::new);
+}
+
+pub fn after_a_published_pass_each_change_alone_selects_exactly_its_ticket(runner: &dyn Runner) {
+    each_change_alone(runner, || Groomed::published(runner));
 }
 
 pub fn full_selects_every_open_ticket(runner: &dyn Runner) {

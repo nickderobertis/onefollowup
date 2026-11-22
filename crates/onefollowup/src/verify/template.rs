@@ -59,6 +59,10 @@ const SHIPPED: &[(&str, &str)] = &[
         "groom-persona.yaml",
         include_str!("../../defaults/groom-persona.yaml"),
     ),
+    (
+        "groom-comment.md.j2",
+        include_str!("../../defaults/groom-comment.md.j2"),
+    ),
 ];
 
 /// One expandable block in the authored form: `<details>` alone, `<summary>…</summary>`, a blank

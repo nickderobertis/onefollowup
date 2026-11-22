@@ -103,3 +103,45 @@ budgets:
     unit: operations
     direction: max
     threshold: 1
+  # One full grooming pass, counted by tests/e2e/groom_budget.rs. Basis, by arithmetic over the
+  # batched design: prepare's open-item listing, one comments-since read and one batched read of
+  # the selected tickets' comments (3); publish's batched status read of the tickets to close or
+  # fold, one update-many carrying every close, duplicate close and groom record, one comment
+  # add-many built from its receipts, and one batched read-back of every ticket changed (4). No
+  # headroom: the status read took the operation once held for re-reading lost write answers.
+  # The 2026-11-20 manual pass made 219 store calls for the same work. About 60 seconds to
+  # report, as above.
+  - id: groom-pass-store-operations
+    description: >-
+      Store operations one full grooming pass makes against its destination, from `groom
+      prepare` to the end of `groom publish` — each onetaskgraph read, list, comment or write
+      call, counted at onefollowup's store boundary, the governor's quota reads excluded — over
+      600 open and 1,400 closed tickets across 6 repositories, 2 comments each, in 12 shards of
+      50: 520 kept, 50 fixed, 6 obsolete, 4 unresolved and 20 duplicates in 12 clusters. The
+      detail gives each phase's operations and the tickets each read or wrote. It protects the
+      shared GitHub points and the wait a pass spends on the real board.
+    measure: reported
+    command: ["cargo", "test", "--quiet", "-p", "onefollowup-e2e", "--locked", "--test", "e2e", "--", "budget_runner::report", "--exact", "--nocapture", "../../target/debug/telemetry/onefollowup-e2e"]
+    unit: operations
+    direction: max
+    threshold: 7
+  # A grooming pass with nothing changed, counted by tests/e2e/groom_budget.rs straight after the
+  # full pass. Basis, by arithmetic: the second prepare's open-item listing reads every ticket's
+  # groom key and its one comments-since read finds no comment later than its ticket's record but
+  # grooming's own, so it selects none and writes no batch (2); the first batch's publish run
+  # again finds every write receipted, sends nothing and repeats only its batched read-back (1).
+  # About 60 seconds to report, as above.
+  # llmlint: ignore[budgets_track_product_owner_outcomes] The task sets separate targets for a full grooming pass and a pass with nothing changed: the repeat pass is not a step of the full one but the regular pass's whole cost, which incremental selection and the receipts exist to keep a fraction of a full pass's.
+  - id: groom-repeat-pass-store-operations
+    description: >-
+      Store operations a grooming pass makes against its destination when it runs straight
+      after a published full pass with no ticket, comment or repository changed, and the first
+      pass's publish is run again — counted at onefollowup's store boundary, the governor's
+      quota reads excluded — over the full pass's destination. The detail gives each step's
+      operations. It protects the shared points a regular pass, or a retry, spends on the real
+      board.
+    measure: reported
+    command: ["cargo", "test", "--quiet", "-p", "onefollowup-e2e", "--locked", "--test", "e2e", "--", "budget_runner::report", "--exact", "--nocapture", "../../target/debug/telemetry/onefollowup-e2e"]
+    unit: operations
+    direction: max
+    threshold: 3

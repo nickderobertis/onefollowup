@@ -238,8 +238,8 @@ fn elsewhere(root: &Path, change: impl FnOnce(&Store) + Send) {
 
 #[test]
 fn a_held_write_sends_nothing_until_a_reading_shows_recovery_then_lands_once() {
-    // ensure_project, create_task, update_task, copy, set_parents, add_links: each its own
-    // engine call.
+    // ensure_project, create_task, update_task, edit_comment, copy, set_parents, add_links:
+    // each its own engine call, each from a fresh store, as a fresh process sends it.
     let world = World::new();
     let ids = seeded(&world, 3);
 
@@ -296,6 +296,46 @@ fn a_held_write_sends_nothing_until_a_reading_shows_recovery_then_lands_once() {
         },
     );
     assert_eq!(updated.title, "Renamed while held");
+
+    // A comment edit, from a store that has read nothing yet: held all the same.
+    let comment = {
+        let store = world.store();
+        store
+            .add_comments(
+                DESTINATION,
+                &[onefollowup::store::CommentPost {
+                    item: ids[0].clone(),
+                    body: "Posted before the hold.".to_owned(),
+                }],
+            )
+            .unwrap();
+        store.read(&[ids[0].clone()], true).unwrap()[0]
+            .comments
+            .clone()
+            .unwrap()[0]
+            .id
+            .clone()
+    };
+    let edited = held_call(
+        &world,
+        true,
+        || {},
+        |store| {
+            store
+                .edit_comment(&ids[0], &comment, "Edited while held.")
+                .unwrap()
+        },
+    );
+    assert_eq!(edited.body, "Edited while held.");
+    assert_eq!(
+        world
+            .destination()
+            .values()
+            .filter(|text| text.contains("Edited while held."))
+            .count(),
+        1,
+        "edited once"
+    );
 
     // A draft, copied into the destination: the drafts source is local, the copy governed.
     let draft = {
@@ -375,8 +415,8 @@ fn a_held_write_sends_nothing_until_a_reading_shows_recovery_then_lands_once() {
 
 #[test]
 fn a_held_read_sends_nothing_until_a_reading_shows_recovery_then_reads_once() {
-    // find, read, comments_since, relations: each its own engine call, each answering what a
-    // person changed at the recovering reading.
+    // find, list, read, comments_since, relations: each its own engine call, each answering
+    // what a person changed at the recovering reading.
     let world = World::new();
     let ids = seeded(&world, 2);
 
@@ -406,6 +446,24 @@ fn a_held_read_sends_nothing_until_a_reading_shows_recovery_then_reads_once() {
         },
     );
     assert_eq!(found[0].items.len(), 1, "{found:?}");
+
+    let root = world.root.clone();
+    let listed = held_call(
+        &world,
+        false,
+        move || {
+            elsewhere(&root, |store| {
+                store
+                    .create_task(&new_task(DESTINATION, "board", "Listed at recovery"))
+                    .unwrap();
+            });
+        },
+        |store| store.list(DESTINATION, &["backlog".to_owned()]).unwrap(),
+    );
+    assert!(
+        listed.iter().any(|item| item.title == "Listed at recovery"),
+        "{listed:?}"
+    );
 
     let file = world.task_file(&ids[0]);
     let read = held_call(

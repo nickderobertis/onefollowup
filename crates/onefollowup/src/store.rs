@@ -1041,7 +1041,7 @@ impl Store {
                 token: None,
             },
         };
-        let answered = self.runtime.block_on(self.engine.tasks_all(&request));
+        let answered = self.send(&[source], Kind::Read, self.engine.tasks_all(&request));
         let listed = answered.map_err(|error| Self::failed("a task listing", source, error))?;
         if let Some(failure) = listed.errors.into_iter().next() {
             self.count("list", source, 0);
@@ -1204,11 +1204,12 @@ impl Store {
         let source = task.source.to_string();
         let body = CommentBody::new(body)
             .map_err(|error| StoreError::Invalid(format!("a comment body: {error}")))?;
-        let edited = self.runtime.block_on(self.engine.edit_comment(
-            &task,
-            &NativeId(comment.to_owned()),
-            &body,
-        ));
+        let edited = self.send(
+            &[source.as_str()],
+            Kind::Write,
+            self.engine
+                .edit_comment(&task, &NativeId(comment.to_owned()), &body),
+        );
         self.count("comment-edit", &source, 1);
         let edited = edited.map_err(|error| Self::failed("a comment edit", &source, error))?;
         Ok(StoreComment {

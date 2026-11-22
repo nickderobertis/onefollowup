@@ -1314,7 +1314,7 @@ and moves no watermark, so the next `comments answer` gathers its comments again
 `groom prepare` and `groom check` keep a destination's open tickets true, current and unique:
 prepare, then one verifying agent per shard, then check until it passes, then `groom publish`
 sends the plan. **The agent only judges**, by filling a verdict record per ticket:
-whether the ticket is fixed or obsolete on `main`, and whether it shares one root cause with
+whether the ticket is fixed or obsolete on its repository's default branch, and whether it shares one root cause with
 another open ticket. Selection, checking that judgement's evidence, clustering, survivors and
 protection are code.
 
@@ -1323,14 +1323,15 @@ protection are code.
 overlap comments, and `verified_at`), `snapshot.json` (every open ticket's id, title, status,
 URL, repositories and content, for duplicate detection), one `<batch>-<k>/task.md` per shard —
 `groom.task_template` rendered with its tickets and their comments, each repository's clone path
-and fetched `main` commit, the snapshot's path, the verdict schema and the rules below — and the
+and fetched default-branch commit, the snapshot's path, the verdict schema and the rules below — and the
 `verdicts.jsonl` beside it the agent writes. A passing check writes `plan.json`; publish writes
 `receipts.json`, `report.md` and `report.json`, and retires every other file of the batch. A repository
-`host/owner/name` is cloned from `https://host/owner/name.git`; git's own
-`url.<base>.insteadOf` points that elsewhere.
+`host/owner/name` is cloned from `https://host/owner/name.git` and verified at its default
+branch — the one its origin's `HEAD` names, read again on every fetch, so a repository whose
+default branch changes is followed; git's own `url.<base>.insteadOf` points that elsewhere.
 
 **Incremental selection.** A ticket is selected when it holds no `groom` record, or one of a
-schema this does not read; its digest differs from the one recorded; its repository's `main`
+schema this does not read; its digest differs from the one recorded; its repository's default branch
 moved since the recorded commit and the diff touches one of its `evidence_paths` (a path, or a
 directory holding a changed path) — or moved at all when it has none, or no longer holds that
 commit; its record is older than `groom.max_age_days`; `--full` is given; or a comment on it
@@ -1374,10 +1375,10 @@ of the snapshot, or `null`); `root_cause` (one line, set exactly when `duplicate
 | `unknown-ticket` | It names a ticket its shard does not list. |
 | `missing-verdict`, `duplicate-verdict` | A shard's ticket has no verdict record, or more than one. |
 | `low-confidence-close` | A `fixed` or `obsolete` verdict is `low` confidence. |
-| `commit-not-on-main` | A `fixed` or `obsolete` verdict's `deciding_commit` is not an ancestor, in its clone, of the `main` commit prepare fetched for any of the ticket's repositories. |
+| `commit-not-on-main` | A `fixed` or `obsolete` verdict's `deciding_commit` is not an ancestor, in its clone, of the default-branch commit prepare fetched for any of the ticket's repositories. |
 | `claimed-closed`, `claimed-folded` | A plan closes, or folds as a duplicate, a ticket at the `queued` or `in-progress` role's status. |
 | `todo-folded` | A plan folds a ticket at the `accepted` role's status (Todo). |
-| `todo-close-below-bar` | A plan closes a Todo ticket short of definitely outdated: a `high`-confidence `fixed` or `obsolete` verdict whose `deciding_commit` is verified an ancestor of the fetched `main`. |
+| `todo-close-below-bar` | A plan closes a Todo ticket short of definitely outdated: a `high`-confidence `fixed` or `obsolete` verdict whose `deciding_commit` is verified an ancestor of the fetched default branch. |
 | `plan-record` | `plan.json` is not this batch's plan, or plans a ticket the batch did not list. |
 
 **The plan.** A ticket at a non-claimable status (the proposal or deferred role's, or one no
@@ -1409,7 +1410,7 @@ a batch no passing check planned. Before its first store operation it writes `re
 every ticket of the plan with what publish does with it, the `groom` record its write carries
 (its `verified_at`, `content_digest` and `overlap_comments` taken from the batch), and whether its
 verdict is **definitely outdated** — `fixed` or `obsolete` at `high` confidence, its
-`deciding_commit` verified an ancestor of the fetched `main` in its clone. From then on
+`deciding_commit` verified an ancestor of the fetched default branch in its clone. From then on
 `receipts.json` and `plan.json` are all a re-run reads.
 
 1. The batch is admitted at the store's chokepoint (`Store::admit_batch`, where the quota

@@ -1,6 +1,8 @@
 //! The repositories a grooming pass verifies against, through the `git` on `PATH`: one
-//! blob-less clone of each, fetched to its `main`, whose history and trees answer every
-//! question the pass asks of it without fetching a file's contents.
+//! blob-less clone of each, fetched to its default branch — the one its origin's `HEAD`
+//! names, read afresh on every fetch so a repository whose default branch changes is
+//! followed — whose history and trees answer every question the pass asks of it without
+//! fetching a file's contents.
 //!
 //! A repository `host/owner/name` is fetched from `https://host/owner/name.git`; git's own
 //! `url.<base>.insteadOf` configuration is how a host points that elsewhere.
@@ -8,10 +10,6 @@
 use crate::error::Error;
 use crate::verify::command::{self, Ran};
 use std::path::{Path, PathBuf};
-
-/// The branch every repository is verified at.
-pub const MAIN: &str = "main";
-const REMOTE_MAIN: &str = "refs/remotes/origin/main";
 
 /// The URL a repository is fetched from.
 #[must_use]
@@ -50,7 +48,7 @@ fn ran(output: &Ran, what: &str) -> Result<String, Error> {
         Ok(output.stdout.trim().to_owned())
     } else {
         Err(Error::Failed(format!(
-            "{what} failed: {}; next: check the repository is reachable and has a `{MAIN}` branch",
+            "{what} failed: {}; next: check the repository is reachable and its default branch has a commit",
             output.stderr.trim()
         )))
     }
@@ -64,15 +62,39 @@ pub fn clone_path(clones: &Path, repository: &str) -> PathBuf {
         .fold(clones.to_path_buf(), |path, part| path.join(part))
 }
 
+/// The branch `HEAD` names in `ls-remote --symref` output, `refs/heads/` stripped.
+fn symbolic_head(listed: &str) -> Option<&str> {
+    listed.lines().find_map(|line| {
+        line.strip_prefix("ref: refs/heads/")?
+            .strip_suffix("\tHEAD")
+            .filter(|branch| !branch.is_empty())
+    })
+}
+
+fn no_default_branch(repository: &str) -> Error {
+    Error::Failed(format!(
+        "{repository}: its origin's `HEAD` names no branch; next: check the repository has a default branch with a commit"
+    ))
+}
+
 /// Clone `repository` blob-less into `clone`, or fetch the clone already there, check out its
-/// `main`, and answer the commit fetched.
+/// default branch, and answer the commit fetched.
 ///
 /// # Errors
 ///
-/// `git` that cannot run, or a clone or fetch that fails.
+/// `git` that cannot run, a clone or fetch that fails, or an origin whose `HEAD` names no
+/// branch.
 pub fn fetch(git: Git<'_>, repository: &str, clone: &Path) -> Result<String, Error> {
     let source = url(repository);
-    if clone.join(".git").exists() {
+    let remote = if clone.join(".git").exists() {
+        // Read the origin's default branch afresh: a repository whose default branch changed
+        // since the clone was made is verified at its new one.
+        let listed = ran(
+            &git.run(Some(clone), &["ls-remote", "--symref", "origin", "HEAD"])?,
+            &format!("reading {source}'s default branch"),
+        )?;
+        let branch = symbolic_head(&listed).ok_or_else(|| no_default_branch(repository))?;
+        let remote = format!("refs/remotes/origin/{branch}");
         let fetched = git.run(
             Some(clone),
             &[
@@ -80,10 +102,11 @@ pub fn fetch(git: Git<'_>, repository: &str, clone: &Path) -> Result<String, Err
                 "--quiet",
                 "--filter=blob:none",
                 "origin",
-                &format!("+refs/heads/{MAIN}:{REMOTE_MAIN}"),
+                &format!("+refs/heads/{branch}:{remote}"),
             ],
         )?;
         ran(&fetched, &format!("fetching {source}"))?;
+        remote
     } else {
         if let Some(parent) = clone.parent() {
             std::fs::create_dir_all(parent).map_err(|error| {
@@ -93,6 +116,8 @@ pub fn fetch(git: Git<'_>, repository: &str, clone: &Path) -> Result<String, Err
                 ))
             })?;
         }
+        // No `--branch`: the clone follows the origin's `HEAD`, and records it as
+        // `origin/HEAD`.
         let cloned = git.run(
             None,
             &[
@@ -100,37 +125,48 @@ pub fn fetch(git: Git<'_>, repository: &str, clone: &Path) -> Result<String, Err
                 "--quiet",
                 "--filter=blob:none",
                 "--no-checkout",
-                "--branch",
-                MAIN,
                 &source,
                 &clone.to_string_lossy(),
             ],
         )?;
         ran(&cloned, &format!("cloning {source}"))?;
-    }
+        let head = git.run(
+            Some(clone),
+            &["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"],
+        )?;
+        if head.exit != 0 {
+            return Err(no_default_branch(repository));
+        }
+        head.stdout.trim().to_owned()
+    };
+    let branch = remote.trim_start_matches("refs/remotes/origin/");
     let commit = ran(
-        &git.run(Some(clone), &["rev-parse", "--verify", REMOTE_MAIN])?,
-        &format!("reading {repository}'s `{MAIN}`"),
+        &git.run(
+            Some(clone),
+            &["rev-parse", "--verify", &format!("{remote}^{{commit}}")],
+        )?,
+        &format!("reading {repository}'s default branch `{branch}`"),
     )?;
     ran(
         &git.run(
             Some(clone),
             &["checkout", "--quiet", "--force", "--detach", &commit],
         )?,
-        &format!("checking out {repository}'s `{MAIN}`"),
+        &format!("checking out {repository}'s default branch `{branch}`"),
     )?;
     Ok(commit)
 }
 
 /// Clone `repository` bare and blob-less into the new directory `clone`, for a dry run that
-/// keeps no clone, and answer its `main` commit. Its trees answer every question selection
-/// asks, and nothing is checked out.
+/// keeps no clone, and answer its default branch's commit. Its trees answer every question
+/// selection asks, and nothing is checked out.
 ///
 /// # Errors
 ///
-/// `git` that cannot run, or a clone that fails.
+/// `git` that cannot run, a clone that fails, or an origin whose `HEAD` names no branch.
 pub fn fetch_temporary(git: Git<'_>, repository: &str, clone: &Path) -> Result<String, Error> {
     let source = url(repository);
+    // No `--branch`: a bare clone's `HEAD` names the origin's default branch.
     let cloned = git.run(
         None,
         &[
@@ -138,19 +174,23 @@ pub fn fetch_temporary(git: Git<'_>, repository: &str, clone: &Path) -> Result<S
             "--quiet",
             "--bare",
             "--filter=blob:none",
-            "--branch",
-            MAIN,
             &source,
             &clone.to_string_lossy(),
         ],
     )?;
     ran(&cloned, &format!("cloning {source}"))?;
+    let head = git.run(Some(clone), &["symbolic-ref", "--quiet", "HEAD"])?;
+    let local = head.stdout.trim();
+    if head.exit != 0 || !local.starts_with("refs/heads/") {
+        return Err(no_default_branch(repository));
+    }
+    let branch = local.trim_start_matches("refs/heads/");
     ran(
         &git.run(
             Some(clone),
-            &["rev-parse", "--verify", &format!("refs/heads/{MAIN}")],
+            &["rev-parse", "--verify", &format!("{local}^{{commit}}")],
         )?,
-        &format!("reading {repository}'s `{MAIN}`"),
+        &format!("reading {repository}'s default branch `{branch}`"),
     )
 }
 
@@ -199,18 +239,18 @@ impl Drop for Scratch {
     }
 }
 
-/// Whether `commit` is an ancestor of `main` (or is it) in `clone`. A commit the clone does
+/// Whether `commit` is an ancestor of `head` (or is it) in `clone`. A commit the clone does
 /// not hold is not.
 ///
 /// # Errors
 ///
 /// `git` that cannot run.
-pub fn is_ancestor(git: Git<'_>, clone: &Path, commit: &str, main: &str) -> Result<bool, Error> {
-    let output = git.run(Some(clone), &["merge-base", "--is-ancestor", commit, main])?;
+pub fn is_ancestor(git: Git<'_>, clone: &Path, commit: &str, head: &str) -> Result<bool, Error> {
+    let output = git.run(Some(clone), &["merge-base", "--is-ancestor", commit, head])?;
     Ok(output.exit == 0)
 }
 
-/// The paths `main` changed since `since`, from trees alone; `None` when the clone does not
+/// The paths `head` changed since `since`, from trees alone; `None` when the clone does not
 /// hold `since`, as after a rewritten history.
 ///
 /// # Errors
@@ -220,11 +260,11 @@ pub fn changed_paths(
     git: Git<'_>,
     clone: &Path,
     since: &str,
-    main: &str,
+    head: &str,
 ) -> Result<Option<Vec<String>>, Error> {
     let output = git.run(
         Some(clone),
-        &["diff", "--name-only", "--no-renames", since, main],
+        &["diff", "--name-only", "--no-renames", since, head],
     )?;
     if output.exit != 0 {
         return Ok(None);

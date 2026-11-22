@@ -41,9 +41,9 @@ pub fn content_digest(title: &str, content: &str) -> String {
 pub enum GroomVerdict {
     /// The ticket still stands.
     Keep,
-    /// Its root cause is fixed on `main`.
+    /// Its root cause is fixed on its repository's default branch.
     Fixed,
-    /// It no longer applies to `main`.
+    /// It no longer applies to its repository's default branch.
     Obsolete,
     /// The agent could not decide.
     Unresolved,
@@ -126,7 +126,7 @@ pub enum GroomRule {
     DuplicateVerdict,
     /// A closing verdict is `low` confidence.
     LowConfidenceClose,
-    /// A closing verdict's deciding commit is not on the fetched `main`.
+    /// A closing verdict's deciding commit is not on the fetched default branch.
     CommitNotOnMain,
     /// A plan closes a Queued or In Progress ticket.
     ClaimedClosed,
@@ -218,7 +218,7 @@ pub struct GroomRecord {
     pub verdict: GroomVerdict,
     /// The repository it was verified in, `host/owner/name`.
     pub repository: String,
-    /// The `main` commit it was verified against, 40 hex.
+    /// The default-branch commit it was verified against, 40 hex.
     pub commit: String,
     /// The repository-relative paths its verdict rests on.
     pub evidence_paths: Vec<String>,
@@ -316,7 +316,7 @@ pub struct VerdictRecord {
     pub confidence: Confidence,
     /// What the verdict rests on.
     pub evidence: String,
-    /// The `main` commit that fixed or obsoleted it, 40 hex; `None` for `keep` and
+    /// The default-branch commit that fixed or obsoleted it, 40 hex; `None` for `keep` and
     /// `unresolved`.
     pub deciding_commit: Option<String>,
     /// The repository-relative paths the verdict rests on.
@@ -546,7 +546,7 @@ impl VerdictRecord {
             (true, None) => broken.push((
                 GroomRule::DecidingCommit,
                 format!(
-                    "a `{}` verdict names the `main` commit that decided it in `deciding_commit`",
+                    "a `{}` verdict names the default-branch commit that decided it in `deciding_commit`",
                     self.verdict.as_str()
                 ),
             )),
@@ -616,7 +616,7 @@ pub struct FetchedRepository {
     pub repository: String,
     /// Its clone's absolute path.
     pub clone: String,
-    /// The `main` commit prepare fetched.
+    /// The default-branch commit prepare fetched.
     pub commit: String,
 }
 
@@ -722,7 +722,7 @@ pub struct PlanEntry {
     pub evidence_paths: Vec<String>,
     /// The repository it was verified in, where it names one.
     pub repository: Option<String>,
-    /// That repository's fetched `main` commit.
+    /// That repository's fetched default-branch commit.
     pub commit: Option<String>,
     /// For a duplicate, its cluster's survivor.
     pub duplicate_of: Option<String>,
@@ -898,7 +898,7 @@ pub struct TicketReceipt {
     /// Its plan entry.
     pub entry: PlanEntry,
     /// Whether its verdict is definitely outdated: `fixed` or `obsolete` at `high` confidence,
-    /// its deciding commit verified an ancestor of the fetched `main`. Only such a verdict
+    /// its deciding commit verified an ancestor of the fetched default branch. Only such a verdict
     /// closes a Todo ticket.
     pub definitely_outdated: bool,
     /// The record its write carries; `None` for a ticket it writes nothing to.

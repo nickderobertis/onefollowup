@@ -21,8 +21,8 @@ Their evidence:
 {%- else -%}
 Grooming batch `{{ comment.batch }}` closed this ticket as
 {%- if comment.verdict == "duplicate" %} a duplicate of {% if comment.survivor.url %}[{{ comment.survivor.title }}]({{ comment.survivor.url }}){% else %}{{ comment.survivor.title }}{% endif %} (`{{ comment.survivor.ticket }}`){% if comment.root_cause %}, sharing its root cause: {{ comment.root_cause }}{% endif %}.
-{%- elif comment.verdict == "fixed" %} fixed on `main` of `{{ comment.repository }}` by {{ comment.deciding_commit }}.
-{%- else %} obsolete: it no longer applies to `main` of `{{ comment.repository }}` since {{ comment.deciding_commit }}.
+{%- elif comment.verdict == "fixed" %} fixed on the default branch of `{{ comment.repository }}` by {{ comment.deciding_commit }}.
+{%- else %} obsolete: it no longer applies to the default branch of `{{ comment.repository }}` since {{ comment.deciding_commit }}.
 {%- endif %}
 
 {{ comment.evidence | trim }}

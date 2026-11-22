@@ -108,18 +108,18 @@ fn reasons(
                 let clone = PathBuf::from(&repository.clone);
                 match git::changed_paths(git, &clone, &record.commit, &repository.commit)? {
                     None => reasons.push(format!(
-                        "`{}`'s `main` no longer holds its record's commit {}",
+                        "`{}`'s default branch no longer holds its record's commit {}",
                         record.repository, record.commit
                     )),
                     Some(_) if record.evidence_paths.is_empty() => reasons.push(format!(
-                        "`{}`'s `main` moved since {}, and its record names no evidence path",
+                        "`{}`'s default branch moved since {}, and its record names no evidence path",
                         record.repository, record.commit
                     )),
                     Some(changed) => {
                         for path in &record.evidence_paths {
                             if git::touches(&changed, path) {
                                 reasons.push(format!(
-                                    "`{}`'s `main` changed `{path}` since {}",
+                                    "`{}`'s default branch changed `{path}` since {}",
                                     record.repository, record.commit
                                 ));
                             }

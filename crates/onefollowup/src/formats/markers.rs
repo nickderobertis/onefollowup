@@ -52,9 +52,9 @@ pub struct CommentMarker {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum GroomMark {
-    /// The ticket was closed as fixed on `main`.
+    /// The ticket was closed as fixed on its repository's default branch.
     Fixed,
-    /// The ticket was closed as no longer applying to `main`.
+    /// The ticket was closed as no longer applying to its repository's default branch.
     Obsolete,
     /// The ticket was closed as a duplicate of its cluster's survivor.
     Duplicate,

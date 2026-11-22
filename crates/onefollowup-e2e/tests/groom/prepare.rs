@@ -449,3 +449,117 @@ pub fn a_dry_run_writes_nothing_with_or_without_a_clone(runner: &dyn Runner) {
         "prepare itself fetches the clone to the moved main"
     );
 }
+
+/// The commit `prepare` printed batch `printed` fetched for `repository`.
+fn fetched_commit(world: &World, printed: &Value, repository: &str) -> String {
+    let batch = printed["batch"].as_str().expect("a batch");
+    generated_commit(
+        &generated_repositories(&world.batch_record(batch)),
+        repository,
+    )
+}
+
+pub fn a_repository_is_verified_at_its_own_default_branch(runner: &dyn Runner) {
+    // A repository whose default branch is `master`, with no `main` at all.
+    const GADGETS: &str = "github.com/example/gadgets";
+    let world = World::new();
+    let first = world.repository_on(
+        GADGETS,
+        "master",
+        &[("src/a.rs", "a\n"), ("src/b.rs", "b\n")],
+    );
+    let moved = world.commit(GADGETS, &[("src/a.rs", "a, changed\n")], "change a");
+    for (id, path) in [("ga", "src/a.rs"), ("gb", "src/b.rs")] {
+        world.ticket(
+            id,
+            &format!("gadgets: {id}"),
+            "backlog",
+            &[GADGETS],
+            "Its body.",
+        );
+        let record = world.groomed(id, &super::world::ago(600), GADGETS, &first, &[path], &[]);
+        world.record(id, &record.to_value());
+    }
+
+    // `master` moved past both records, touching `ga`'s evidence alone.
+    let dry = world.json(runner, 0, &["groom", "prepare", "--dry-run"]);
+    assert_eq!(
+        (dry["selected"].clone(), dry["unchanged"].clone()),
+        (serde_json::json!(1), serde_json::json!(1)),
+        "a dry run verifies `master`'s commit: {dry}"
+    );
+    let printed = world.json(runner, 0, &["groom", "prepare"]);
+    assert_eq!(
+        counts(&dry),
+        counts(&printed),
+        "prepare counts as its dry run"
+    );
+    assert_eq!(
+        fetched_commit(&world, &printed, GADGETS),
+        moved,
+        "prepare fetched `master`'s commit"
+    );
+    let clone = world.root.join(".onefollowup/groom/clones").join(GADGETS);
+    assert_eq!(
+        world.git(&clone, &["rev-parse", "HEAD"]),
+        moved,
+        "the kept clone is checked out at `master`"
+    );
+}
+
+pub fn a_kept_clone_follows_its_origins_changed_default_branch(runner: &dyn Runner) {
+    const WIDGETS: &str = "github.com/example/widgets";
+    let world = World::new();
+    let first = world.repository(WIDGETS, &[("src/a.rs", "a\n"), ("src/b.rs", "b\n")]);
+    for (id, path) in [("wa", "src/a.rs"), ("wb", "src/b.rs")] {
+        world.ticket(
+            id,
+            &format!("widgets: {id}"),
+            "backlog",
+            &[WIDGETS],
+            "Its body.",
+        );
+        let record = world.groomed(id, &super::world::ago(600), WIDGETS, &first, &[path], &[]);
+        world.record(id, &record.to_value());
+    }
+    let printed = world.json(runner, 0, &["groom", "prepare"]);
+    assert_eq!(printed["selected"], 0, "nothing moved: {printed}");
+    let clone = world.root.join(".onefollowup/groom/clones").join(WIDGETS);
+    assert_eq!(
+        world.git(&clone, &["rev-parse", "HEAD"]),
+        first,
+        "the clone is kept"
+    );
+
+    // The origin's default branch becomes `trunk`, which changes `src/a.rs`; `main` lives on
+    // and changes `src/b.rs`.
+    let origin = world.repository_path(WIDGETS);
+    world.git(&origin, &["checkout", "--quiet", "-b", "trunk"]);
+    let trunk = world.commit(WIDGETS, &[("src/a.rs", "a, on trunk\n")], "change a");
+    world.git(&origin, &["checkout", "--quiet", "main"]);
+    world.commit(WIDGETS, &[("src/b.rs", "b, on main\n")], "change b");
+    world.git(&origin, &["checkout", "--quiet", "trunk"]);
+
+    let dry = world.json(runner, 0, &["groom", "prepare", "--dry-run"]);
+    let printed = world.json(runner, 0, &["groom", "prepare"]);
+    assert_eq!(
+        counts(&dry),
+        counts(&printed),
+        "prepare counts as its dry run"
+    );
+    assert_eq!(
+        world.selected(printed["batch"].as_str().expect("a batch")),
+        vec!["followups:wa".to_owned()],
+        "the move on `trunk`, not `main`, selects `wa`: {printed}"
+    );
+    assert_eq!(
+        fetched_commit(&world, &printed, WIDGETS),
+        trunk,
+        "prepare fetched the new default branch"
+    );
+    assert_eq!(
+        world.git(&clone, &["rev-parse", "HEAD"]),
+        trunk,
+        "the kept clone is checked out at the new default branch"
+    );
+}

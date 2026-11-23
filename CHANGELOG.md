@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.3](https://github.com/nickderobertis/onefollowup/compare/v0.13.2...v0.13.3) - 2026-11-23
+
+### Fixed
+
+- give every cleared child environment SystemRoot so the host-governor journeys pass on Windows ([#77](https://github.com/nickderobertis/onefollowup/pull/77))
+
 ## [0.13.2](https://github.com/nickderobertis/onefollowup/compare/v0.13.1...v0.13.2) - 2026-11-22
 
 ### Fixed

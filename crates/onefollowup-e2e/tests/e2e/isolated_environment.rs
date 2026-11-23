@@ -55,9 +55,10 @@ fn a_cleared_child_receives_only_its_variables_and_the_hosts() {
     // value is the platform's own format, and it is no variable the helper owes the child.
     for name in isolated::PLATFORM_SET {
         if let Some(value) = received.remove(*name) {
+            // The value is a platform encoding, not a secret, so a rejection names it.
             assert!(
                 platform_format(name, &value),
-                "{name} is not in the format the platform sets it in"
+                "{name} is not in the format the platform sets it in: {value:?}"
             );
         }
     }
@@ -101,19 +102,44 @@ fn a_cleared_child_receives_only_its_variables_and_the_hosts() {
 }
 
 /// Whether `value` is in the format the platform itself sets the [`isolated::PLATFORM_SET`]
-/// variable `name` in. CoreFoundation's `__CF_USER_TEXT_ENCODING` is `0x<hex uid>:<n>:<n>`.
+/// variable `name` in. CoreFoundation writes `__CF_USER_TEXT_ENCODING` as three `0x`-prefixed
+/// hex fields — uid, text encoding, region — such as `0x1F5:0x0:0x0`.
 fn platform_format(name: &str, value: &str) -> bool {
     match name {
         "__CF_USER_TEXT_ENCODING" => {
-            let mut fields = value.split(':');
-            let uid = fields.next().and_then(|uid| uid.strip_prefix("0x"));
-            let numbers: Vec<&str> = fields.collect();
-            uid.is_some_and(|uid| !uid.is_empty() && uid.chars().all(|c| c.is_ascii_hexdigit()))
-                && numbers.len() == 2
-                && numbers
-                    .iter()
-                    .all(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()))
+            let fields: Vec<&str> = value.split(':').collect();
+            fields.len() == 3
+                && fields.iter().all(|field| {
+                    field.strip_prefix("0x").is_some_and(|hex| {
+                        !hex.is_empty() && hex.chars().all(|c| c.is_ascii_hexdigit())
+                    })
+                })
         }
         _ => false,
     }
+}
+
+#[test]
+fn the_platform_format_is_corefoundations_three_hex_fields() {
+    const NAME: &str = "__CF_USER_TEXT_ENCODING";
+    for accepted in ["0x1F5:0x0:0x0", "0x1F6:0x8000100:0x0"] {
+        assert!(platform_format(NAME, accepted), "{accepted} is rejected");
+    }
+    for rejected in [
+        "0x1F5:0x0",
+        "0x1F5::0x0",
+        "0x1F5:0x0:0x0:0x0",
+        "0x1F5:0:0x0",
+        "1F5:0x0:0x0",
+        "0x1F5:0x0:0x",
+        "0x1G5:0x0:0x0",
+        "0x1F5:0x0:0xZ",
+        "",
+    ] {
+        assert!(!platform_format(NAME, rejected), "{rejected} is accepted");
+    }
+    assert!(
+        !platform_format("PATH", "0x1F5:0x0:0x0"),
+        "only a platform-set name has a platform format"
+    );
 }

@@ -36,6 +36,26 @@ pub const NOTHING: [(&str, &str); 0] = [];
 /// Where git is kept off Windows.
 pub const UNIX_TOOLS: &[&str] = &["/usr/local/bin", "/opt/homebrew/bin", "/usr/bin", "/bin"];
 
+/// The built `onefollowup` that every test starting it as a process runs, in both suites: the
+/// one in the target profile directory holding this test executable (`<profile>/deps/`'s
+/// parent), where `cargo build -p onefollowup` puts it. It reads no `CARGO_BIN_EXE_` variable:
+/// Cargo sets that only for the tests of the package defining the binary, which
+/// `onefollowup-e2e` is not. Panics naming the missing path and how to build it.
+pub fn binary() -> PathBuf {
+    let test = std::env::current_exe().expect("this test executable's path");
+    let mut profile = test.parent().expect("its directory").to_path_buf();
+    if profile.ends_with("deps") {
+        profile.pop();
+    }
+    let binary = profile.join(format!("onefollowup{}", std::env::consts::EXE_SUFFIX));
+    assert!(
+        binary.is_file(),
+        "the built onefollowup is not at {}: run `cargo build -p onefollowup` in the same profile first",
+        binary.display()
+    );
+    binary
+}
+
 /// `program` in `directory`, with an environment of `variables` and [`HOST`] alone: nothing
 /// else of this process's environment reaches it.
 pub fn command<K, V>(

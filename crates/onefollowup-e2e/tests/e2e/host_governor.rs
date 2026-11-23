@@ -111,11 +111,8 @@ fn published(world: &World) -> Value {
 /// Start `world`'s publish, wait for the first standard-error line holding `held`, kill the
 /// process (started here, by its own PID) and answer that line.
 fn held_then_killed(world: &World, held: &str) -> String {
-    let mut command = crate::isolated::command(
-        assert_cmd::cargo::cargo_bin("onefollowup"),
-        &world.root,
-        world.environment(),
-    );
+    let mut command =
+        crate::isolated::command(crate::isolated::binary(), &world.root, world.environment());
     command
         .args(["publish", "--batch", BATCH])
         .stdin(Stdio::null())

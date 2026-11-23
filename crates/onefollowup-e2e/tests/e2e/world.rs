@@ -182,7 +182,7 @@ impl World {
     /// The built binary, in `directory`, with the world's own environment.
     pub fn command_in(&self, directory: &Path) -> Command {
         Command::from_std(crate::isolated::command(
-            assert_cmd::cargo::cargo_bin("onefollowup"),
+            crate::isolated::binary(),
             directory,
             self.environment(),
         ))

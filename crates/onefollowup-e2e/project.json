@@ -14,9 +14,10 @@
       "cache": true
     },
     "e2e": {
-      "command": "cargo nextest run -p onefollowup-e2e --locked --status-level fail --final-status-level fail",
+      "command": "cargo build -p onefollowup --locked --quiet && cargo nextest run -p onefollowup-e2e --locked --status-level fail --final-status-level fail",
       "dependsOn": ["onefollowup:build"],
       "cache": true,
+      "//build": "It builds the binary its journeys run itself: `onefollowup:build` declares no outputs, so a cache hit of it restores no binary.",
       "//": "Its output is the telemetry the budget journeys record, which `budgets` reads, so a cache hit restores it.",
       "outputs": ["{workspaceRoot}/target/debug/telemetry/onefollowup-e2e/*.json"]
     },

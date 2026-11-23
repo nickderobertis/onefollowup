@@ -16,7 +16,7 @@ mod isolated;
 /// else of this process's environment beyond what the host needs.
 pub fn onefollowup(directory: &Path) -> Command {
     Command::from_std(isolated::command(
-        assert_cmd::cargo::cargo_bin("onefollowup"),
+        isolated::binary(),
         directory,
         isolated::NOTHING,
     ))

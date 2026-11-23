@@ -1,5 +1,6 @@
 //! What a child started through `isolated::command` receives: the variables it was given and
-//! the host's own (`SystemRoot` on Windows) — nothing else of this process's environment — and
+//! the host's own (`SystemRoot` on Windows) — nothing else of this process's environment, the
+//! variables the platform sets in every process (`isolated::PLATFORM_SET`) aside — and
 //! a `PATH` from `isolated::search_path` on which git runs. The child is this test binary run
 //! again as [`probe`], which prints the environment it received.
 
@@ -48,8 +49,18 @@ fn a_cleared_child_receives_only_its_variables_and_the_hosts() {
         .and_then(|(_, rest)| rest.split_once(END))
         .map(|(printed, _)| printed)
         .unwrap_or_else(|| panic!("the probe printed no environment: {stdout}"));
-    let received: BTreeMap<String, String> =
+    let mut received: BTreeMap<String, String> =
         serde_json::from_str(printed).expect("the probe printed JSON");
+    // What the platform set in the child itself, not what reached it from this process: its
+    // value is the platform's own format, and it is no variable the helper owes the child.
+    for name in isolated::PLATFORM_SET {
+        if let Some(value) = received.remove(*name) {
+            assert!(
+                platform_format(name, &value),
+                "{name} is not in the format the platform sets it in"
+            );
+        }
+    }
 
     let expected: BTreeSet<String> = [PROBE, "PATH"]
         .into_iter()
@@ -87,4 +98,22 @@ fn a_cleared_child_receives_only_its_variables_and_the_hosts() {
         String::from_utf8_lossy(&git.stdout).starts_with("git version"),
         "{git:?}"
     );
+}
+
+/// Whether `value` is in the format the platform itself sets the [`isolated::PLATFORM_SET`]
+/// variable `name` in. CoreFoundation's `__CF_USER_TEXT_ENCODING` is `0x<hex uid>:<n>:<n>`.
+fn platform_format(name: &str, value: &str) -> bool {
+    match name {
+        "__CF_USER_TEXT_ENCODING" => {
+            let mut fields = value.split(':');
+            let uid = fields.next().and_then(|uid| uid.strip_prefix("0x"));
+            let numbers: Vec<&str> = fields.collect();
+            uid.is_some_and(|uid| !uid.is_empty() && uid.chars().all(|c| c.is_ascii_hexdigit()))
+                && numbers.len() == 2
+                && numbers
+                    .iter()
+                    .all(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()))
+        }
+        _ => false,
+    }
 }

@@ -18,6 +18,18 @@ use std::process::Command;
 /// (os error 10106). Nothing elsewhere.
 pub const HOST: &[&str] = if cfg!(windows) { &["SystemRoot"] } else { &[] };
 
+/// The variables the platform sets in every process it starts, whatever environment that
+/// process was given, so a child holds them though no parent passed them. On macOS that is
+/// `__CF_USER_TEXT_ENCODING`: CoreFoundation, which every process linking it initialises at
+/// launch, sets it to the user's text encoding (`0x<uid>:<encoding>:<region>`) when it is
+/// absent. Nothing elsewhere. No child receives these from [`command`]; a test of what a child
+/// received exempts them, and only them.
+pub const PLATFORM_SET: &[&str] = if cfg!(target_os = "macos") {
+    &["__CF_USER_TEXT_ENCODING"]
+} else {
+    &[]
+};
+
 /// No variable beyond [`HOST`].
 pub const NOTHING: [(&str, &str); 0] = [];
 

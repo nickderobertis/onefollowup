@@ -4,6 +4,8 @@
 
 #[path = "../../onefollowup-e2e/tests/groom/mod.rs"]
 mod groom;
+#[path = "../../onefollowup-e2e/tests/isolated/mod.rs"]
+mod isolated;
 
 use clap::Parser as _;
 use groom::world::{Ran, Runner, World};

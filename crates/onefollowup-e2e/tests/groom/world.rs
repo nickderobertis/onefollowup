@@ -5,33 +5,10 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use onefollowup::formats::groom::{GroomRecord, OverlapComment, content_digest, record_key};
 use onefollowup::store::{ReadItem, Store, TaskChange};
 use serde_json::{Value, json};
-
-/// A `PATH` of `first`, then where the host keeps the tools a journey's commands run: `unix`
-/// off Windows, and on Windows — which keeps them in no fixed directory — each directory of
-/// this process's own `PATH` holding `sh` or `git`. Joined as the host joins one.
-pub fn search_path(first: Option<&Path>, unix: &[&str]) -> String {
-    let host: Vec<PathBuf> = if cfg!(windows) {
-        let inherited = std::env::var_os("PATH").unwrap_or_default();
-        std::env::split_paths(&inherited)
-            .filter(|directory| {
-                ["sh.exe", "git.exe"]
-                    .iter()
-                    .any(|tool| directory.join(tool).is_file())
-            })
-            .collect()
-    } else {
-        unix.iter().map(PathBuf::from).collect()
-    };
-    std::env::join_paths(first.map(Path::to_path_buf).into_iter().chain(host))
-        .expect("a PATH joins")
-        .into_string()
-        .expect("a UTF-8 PATH")
-}
 
 /// `path` as a shell script names it: with forward slashes, which a Windows shell reads as
 /// separators where it reads a backslash as an escape.
@@ -41,8 +18,6 @@ pub fn shell_path(path: &Path) -> String {
 
 /// The destination every grooming journey grooms.
 pub const DESTINATION: &str = "followups";
-/// Where git is kept off Windows.
-pub const UNIX_TOOLS: &[&str] = &["/usr/local/bin", "/opt/homebrew/bin", "/usr/bin", "/bin"];
 /// The namespace every journey's records are under.
 pub const NAMESPACE: &str = "orchestrator";
 
@@ -125,7 +100,10 @@ impl World {
                 "XDG_CONFIG_HOME".to_owned(),
                 self.root.join("home/config").display().to_string(),
             ),
-            ("PATH".to_owned(), search_path(None, UNIX_TOOLS)),
+            (
+                "PATH".to_owned(),
+                crate::isolated::search_path(None, crate::isolated::UNIX_TOOLS),
+            ),
             ("GIT_CONFIG_NOSYSTEM".to_owned(), "1".to_owned()),
             (
                 "TMPDIR".to_owned(),
@@ -136,11 +114,8 @@ impl World {
 
     /// Run `git <args>` in `directory`, require it to succeed, and answer its stdout.
     pub fn git(&self, directory: &Path, args: &[&str]) -> String {
-        let output = Command::new("git")
+        let output = crate::isolated::command("git", directory, self.environment())
             .args(args)
-            .current_dir(directory)
-            .env_clear()
-            .envs(self.environment())
             .output()
             .expect("git runs");
         assert!(

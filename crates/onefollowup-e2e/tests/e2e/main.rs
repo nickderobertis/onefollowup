@@ -23,6 +23,9 @@ mod filing_duplicates;
 mod governed_publish;
 mod hook_context;
 mod host_governor;
+#[path = "../isolated/mod.rs"]
+mod isolated;
+mod isolated_environment;
 mod journey;
 mod loopback_github;
 mod outstanding;

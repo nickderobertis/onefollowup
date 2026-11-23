@@ -9,7 +9,7 @@
 //! claimed, and posts each comment once.
 
 use std::fs::File;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
@@ -34,15 +34,16 @@ fn hold(world: &World, id: &str) -> File {
 
 /// Start `groom publish --batch <batch>` as a process of its own.
 fn spawn_publish(world: &World, batch: &str) -> std::process::Child {
-    Command::new(assert_cmd::cargo::cargo_bin("onefollowup"))
-        .current_dir(&world.root)
-        .env_clear()
-        .envs(world.environment())
-        .args(["groom", "publish", "--batch", batch])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("publish starts")
+    crate::isolated::command(
+        assert_cmd::cargo::cargo_bin("onefollowup"),
+        &world.root,
+        world.environment(),
+    )
+    .args(["groom", "publish", "--batch", batch])
+    .stdout(Stdio::null())
+    .stderr(Stdio::null())
+    .spawn()
+    .expect("publish starts")
 }
 
 /// Wait until the ticket `id`'s file reads at `status`.

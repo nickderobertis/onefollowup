@@ -2,19 +2,24 @@
 //! verb's function called directly agree with the built binary run over the same settings.
 
 use std::path::Path;
-use std::process::{Command, Output};
+use std::process::Output;
 
 use onefollowup::api::{self, ConfigShowArgs};
 use onefollowup::config::{self, Inputs};
 use onefollowup::{Error, cli};
 
+#[path = "../../onefollowup-e2e/tests/isolated/mod.rs"]
+mod isolated;
+
 fn run(directory: &Path, arguments: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_onefollowup"))
-        .args(arguments)
-        .current_dir(directory)
-        .env_clear()
-        .output()
-        .expect("the binary runs")
+    isolated::command(
+        env!("CARGO_BIN_EXE_onefollowup"),
+        directory,
+        isolated::NOTHING,
+    )
+    .args(arguments)
+    .output()
+    .expect("the binary runs")
 }
 
 fn settings(directory: &Path, set: &[&str]) -> onefollowup::Settings {

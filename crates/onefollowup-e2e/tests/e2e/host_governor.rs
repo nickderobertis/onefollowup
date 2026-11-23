@@ -111,15 +111,12 @@ fn published(world: &World) -> Value {
 /// Start `world`'s publish, wait for the first standard-error line holding `held`, kill the
 /// process (started here, by its own PID) and answer that line.
 fn held_then_killed(world: &World, held: &str) -> String {
-    let mut command = std::process::Command::new(assert_cmd::cargo::cargo_bin("onefollowup"));
+    let mut command = crate::isolated::command(
+        assert_cmd::cargo::cargo_bin("onefollowup"),
+        &world.root,
+        world.environment(),
+    );
     command
-        .current_dir(&world.root)
-        .env_clear()
-        .env("HOME", world.root.join("home"))
-        .env("XDG_CONFIG_HOME", world.root.join("home/config"))
-        .env("XDG_CACHE_HOME", world.root.join("home/cache"))
-        .env("PATH", "/usr/bin:/bin")
-        .envs(world.variables.iter().map(|(name, value)| (name, value)))
         .args(["publish", "--batch", BATCH])
         .stdin(Stdio::null())
         .stdout(Stdio::null())

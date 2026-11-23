@@ -155,24 +155,37 @@ impl World {
         }
     }
 
-    /// The built binary, in `directory`, with an environment of the world's own.
+    /// The world's own environment: its home, a `PATH` of its `bin/` and the host's tools, and
+    /// its variables.
+    pub fn environment(&self) -> Vec<(String, String)> {
+        let home = self.root.join("home");
+        [
+            ("HOME".to_owned(), home.display().to_string()),
+            (
+                "XDG_CONFIG_HOME".to_owned(),
+                home.join("config").display().to_string(),
+            ),
+            (
+                "XDG_CACHE_HOME".to_owned(),
+                home.join("cache").display().to_string(),
+            ),
+            (
+                "PATH".to_owned(),
+                crate::isolated::search_path(Some(&self.root.join("bin")), &["/usr/bin", "/bin"]),
+            ),
+        ]
+        .into_iter()
+        .chain(self.variables.iter().cloned())
+        .collect()
+    }
+
+    /// The built binary, in `directory`, with the world's own environment.
     pub fn command_in(&self, directory: &Path) -> Command {
-        let mut command = Command::cargo_bin("onefollowup").expect("the binary is built");
-        command
-            .current_dir(directory)
-            .env_clear()
-            .env("HOME", self.root.join("home"))
-            .env("XDG_CONFIG_HOME", self.root.join("home/config"))
-            .env("XDG_CACHE_HOME", self.root.join("home/cache"))
-            .env(
-                "PATH",
-                crate::groom::world::search_path(
-                    Some(&self.root.join("bin")),
-                    &["/usr/bin", "/bin"],
-                ),
-            )
-            .envs(self.variables.iter().map(|(name, value)| (name, value)));
-        command
+        Command::from_std(crate::isolated::command(
+            assert_cmd::cargo::cargo_bin("onefollowup"),
+            directory,
+            self.environment(),
+        ))
     }
 
     /// Run `args` in the world's root with `stdin`.

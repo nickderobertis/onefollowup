@@ -2,8 +2,6 @@
 //! verify loop, then groomed — one folded into the other — and `comments gather` passing over
 //! every grooming comment as maintenance while still answering a person's comment beside them.
 
-use std::process::Command;
-
 use serde_json::{Value, json};
 
 use crate::answering::{DESTINATION, comment, file, now};
@@ -37,18 +35,21 @@ fn local_repository(world: &World) {
         &["add", "--all"],
         &["commit", "--quiet", "--message", "the first commit"],
     ] {
-        let output = Command::new("git")
-            .args(args)
-            .current_dir(&path)
-            .env_clear()
-            .env("HOME", world.root.join("home"))
-            .env(
-                "PATH",
-                crate::groom::world::search_path(None, crate::groom::world::UNIX_TOOLS),
-            )
-            .env("GIT_CONFIG_NOSYSTEM", "1")
-            .output()
-            .expect("git runs");
+        let output = crate::isolated::command(
+            "git",
+            &path,
+            [
+                ("HOME", world.root.join("home").display().to_string()),
+                (
+                    "PATH",
+                    crate::isolated::search_path(None, crate::isolated::UNIX_TOOLS),
+                ),
+                ("GIT_CONFIG_NOSYSTEM", "1".to_owned()),
+            ],
+        )
+        .args(args)
+        .output()
+        .expect("git runs");
         assert!(output.status.success(), "git {args:?}: {output:?}");
     }
 }

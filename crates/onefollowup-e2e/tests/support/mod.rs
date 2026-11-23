@@ -9,12 +9,17 @@ use std::path::Path;
 
 use assert_cmd::Command;
 
+#[path = "../isolated/mod.rs"]
+mod isolated;
+
 /// The built `onefollowup`, in `directory`, with no `ONEFOLLOWUP_` variable or anything
-/// else of this process's environment.
+/// else of this process's environment beyond what the host needs.
 pub fn onefollowup(directory: &Path) -> Command {
-    let mut command = Command::cargo_bin("onefollowup").expect("the binary is built");
-    command.current_dir(directory).env_clear();
-    command
+    Command::from_std(isolated::command(
+        assert_cmd::cargo::cargo_bin("onefollowup"),
+        directory,
+        isolated::NOTHING,
+    ))
 }
 
 /// A temporary directory named by its real path, as the binary names its working

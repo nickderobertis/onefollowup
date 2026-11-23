@@ -7,14 +7,14 @@ pub struct Binary;
 
 impl Runner for Binary {
     fn run(&self, world: &World, args: &[&str]) -> Ran {
-        let output = assert_cmd::Command::cargo_bin("onefollowup")
-            .expect("the binary is built")
-            .current_dir(&world.root)
-            .env_clear()
-            .envs(world.environment())
-            .args(args)
-            .output()
-            .expect("the binary runs");
+        let output = crate::isolated::command(
+            assert_cmd::cargo::cargo_bin("onefollowup"),
+            &world.root,
+            world.environment(),
+        )
+        .args(args)
+        .output()
+        .expect("the binary runs");
         Ran {
             code: output.status.code().unwrap_or(-1),
             stdout: String::from_utf8_lossy(&output.stdout).into_owned(),

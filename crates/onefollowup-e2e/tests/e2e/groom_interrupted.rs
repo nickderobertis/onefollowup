@@ -34,16 +34,12 @@ fn hold(world: &World, id: &str) -> File {
 
 /// Start `groom publish --batch <batch>` as a process of its own.
 fn spawn_publish(world: &World, batch: &str) -> std::process::Child {
-    crate::isolated::command(
-        assert_cmd::cargo::cargo_bin("onefollowup"),
-        &world.root,
-        world.environment(),
-    )
-    .args(["groom", "publish", "--batch", batch])
-    .stdout(Stdio::null())
-    .stderr(Stdio::null())
-    .spawn()
-    .expect("publish starts")
+    crate::isolated::command(crate::isolated::binary(), &world.root, world.environment())
+        .args(["groom", "publish", "--batch", batch])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("publish starts")
 }
 
 /// Wait until the ticket `id`'s file reads at `status`.

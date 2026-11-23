@@ -12,14 +12,10 @@ use onefollowup::{Error, cli};
 mod isolated;
 
 fn run(directory: &Path, arguments: &[&str]) -> Output {
-    isolated::command(
-        env!("CARGO_BIN_EXE_onefollowup"),
-        directory,
-        isolated::NOTHING,
-    )
-    .args(arguments)
-    .output()
-    .expect("the binary runs")
+    isolated::command(isolated::binary(), directory, isolated::NOTHING)
+        .args(arguments)
+        .output()
+        .expect("the binary runs")
 }
 
 fn settings(directory: &Path, set: &[&str]) -> onefollowup::Settings {

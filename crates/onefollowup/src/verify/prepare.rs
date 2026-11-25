@@ -268,7 +268,11 @@ pub fn input_set(
 pub fn run(settings: &Settings, args: PrepareArgs) -> Result<Prepared, Error> {
     let batch = Batch::new(settings, &args.batch)?;
     let store = batch.store()?;
+    // SPIKE MOCK: progress lines with faked request and point counts.
+    spike::phase_started("snapshot read", &format!("batch {}", batch.batch));
+    spike::ticks("snapshot read", 23, 1);
     let (mut state, _) = input_set(&batch, &store, &args.aliases)?;
+    spike::phase_finished("snapshot read", 23, 1);
 
     // The answers: an earlier pass's are carried forward as they stand.
     let (answered, written) = answers(&batch)?;
@@ -432,7 +436,22 @@ pub fn run(settings: &Settings, args: PrepareArgs) -> Result<Prepared, Error> {
         if searches.is_empty() {
             continue;
         }
-        for found in store.find(&destination, &searches)? {
+        // SPIKE MOCK: the duplicate find's progress, its counts faked.
+        let phase = format!("duplicate find on {destination}");
+        let drafts: Vec<&str> = plans.iter().map(|(input, _)| input.id.as_str()).collect();
+        spike::phase_started(
+            &phase,
+            &format!(
+                "{} drafts ({}), {} searches",
+                drafts.len(),
+                drafts.join(", "),
+                searches.len()
+            ),
+        );
+        spike::ticks(&phase, 64, 7);
+        let found_all = store.find(&destination, &searches)?;
+        spike::phase_finished(&phase, 64, 7);
+        for found in found_all {
             *answered.entry(found.key.clone()).or_default() += found.total;
             for item in found.items {
                 match reads.iter_mut().find(|read| read.item.id == item.id) {
@@ -466,7 +485,14 @@ pub fn run(settings: &Settings, args: PrepareArgs) -> Result<Prepared, Error> {
         }
     }
     if !ids.is_empty() {
+        // SPIKE MOCK: the kept-hit detail read's progress, its counts faked.
+        spike::phase_started(
+            "kept-hit detail read",
+            &format!("{} items ({})", ids.len(), ids.join(", ")),
+        );
+        spike::ticks("kept-hit detail read", 31, 3);
         let details = store.read(&ids, true)?;
+        spike::phase_finished("kept-hit detail read", 31, 3);
         for (at, detail) in details.into_iter().enumerate() {
             let Some(item) = detail.item else {
                 continue;
@@ -527,6 +553,18 @@ pub fn run(settings: &Settings, args: PrepareArgs) -> Result<Prepared, Error> {
                 });
             }
         }
+    }
+    // SPIKE MOCK: the relation reads' progress, faked whether or not the batch has relations.
+    {
+        let mut shown: Vec<String> = existing_tickets.clone();
+        if shown.is_empty() {
+            shown = reads.iter().take(2).map(|read| read.item.id.clone()).collect();
+        }
+        spike::phase_started(
+            "relation reads",
+            &format!("{} tickets ({})", shown.len(), shown.join(", ")),
+        );
+        spike::phase_finished("relation reads", 4, 2);
     }
     state.reads = reads;
     state.read_at_receipt = crate::verify::journal::read(&batch)?.receipts.len();
@@ -705,4 +743,32 @@ fn render_task(
             "ticket_template": example,
         }),
     )?)
+}
+
+/// SPIKE MOCK: the progress lines `prepare` prints on stderr, every count faked.
+mod spike {
+    const EVERY: u32 = 20;
+
+    pub fn phase_started(phase: &str, what: &str) {
+        eprintln!("onefollowup prepare: {phase}: started: {what}");
+    }
+
+    /// One line every 20 of `requests` requests, each costing `points` points.
+    pub fn ticks(phase: &str, requests: u32, points: u32) {
+        let mut at = EVERY;
+        while at <= requests {
+            eprintln!(
+                "onefollowup prepare: {phase}: {at} requests, {} points so far",
+                at * points
+            );
+            at += EVERY;
+        }
+    }
+
+    pub fn phase_finished(phase: &str, requests: u32, points: u32) {
+        eprintln!(
+            "onefollowup prepare: {phase}: finished: {requests} requests, {} points",
+            requests * points
+        );
+    }
 }

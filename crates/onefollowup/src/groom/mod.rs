@@ -48,12 +48,13 @@ pub const TASK: &str = "task.md";
 pub const VERDICTS: &str = "verdicts.jsonl";
 
 /// The store categories of an open ticket.
-pub const OPEN_CATEGORIES: [&str; 6] = [
+pub const OPEN_CATEGORIES: [&str; 7] = [
     "draft",
     "backlog",
     "todo",
     "queued",
     "in-progress",
+    "in-review",
     "unknown",
 ];
 
@@ -147,7 +148,10 @@ impl<'a> Groom<'a> {
                 .find(|(each, _)| *each == role)
                 .is_some_and(|(_, mapping)| mapping.category == category)
         };
-        if role_of(StatusRole::Queued) || role_of(StatusRole::InProgress) {
+        if role_of(StatusRole::Queued)
+            || role_of(StatusRole::InProgress)
+            || role_of(StatusRole::InReview)
+        {
             Protection::Claimed
         } else if role_of(StatusRole::Accepted) {
             Protection::Todo

@@ -379,3 +379,83 @@ fn prepare_unanswered_scopes_a_redispatch_to_what_the_first_pass_left() {
     let checked = world.ok("check", &["check", "--batch", BATCH], "");
     assert_eq!(checked["sound"], true, "{checked}");
 }
+
+#[test]
+fn a_ticket_a_reviewer_holds_keeps_in_review_through_a_re_copy_and_a_withdrawal() {
+    let mut world = World::new(&["followups"], "host_label: build-host-1\n");
+    let slugs = ["cache-misses", "queue-stalls"];
+    let mut drafts = Vec::new();
+    for slug in slugs {
+        drafts.push(world.draft(
+            BATCH,
+            &format!("the {slug} under load"),
+            &["src/a.rs"],
+            "Seen.\n",
+        ));
+    }
+    world.ok("setup", &["prepare", "--batch", BATCH], "");
+    let mut answers = Vec::new();
+    for (slug, draft) in slugs.iter().zip(&drafts) {
+        world.ticket(
+            BATCH,
+            &Ticket::new(slug, &format!("the {slug} under load"), &[draft]),
+        );
+        world.ok("setup", &["ticket", "copy", "--batch", BATCH, slug], "");
+        answers.push(answer(draft, "root-cause", "filed", &[slug], "Verified."));
+    }
+    world.answer(BATCH, &answers);
+    world.ok("setup", &["check", "--batch", BATCH], "");
+    world.ok("setup", &["publish", "--batch", BATCH], "");
+    world.ok("setup", &["settle", "--batch", BATCH], "");
+    let cards: Vec<String> = slugs.iter().map(|slug| card(&world, slug)).collect();
+
+    // The work on both stopped for review.
+    for one in &cards {
+        world.edit_item("followups", one, "status: backlog", "status: in-review");
+    }
+
+    // The next pass re-copies one with new evidence and withdraws the other.
+    world.ok("prepare", &["prepare", "--batch", BATCH], "");
+    let mut again = Ticket::new(slugs[0], "the cache-misses under load", &[&drafts[0]]);
+    again.evidence.push_str(" Seen again.");
+    world.ticket(BATCH, &again);
+    let mut withdrawn = Ticket::new(slugs[1], "the queue-stalls under load", &[&drafts[1]]);
+    withdrawn.status = Some("cancelled".to_owned());
+    world.ticket(BATCH, &withdrawn);
+    let status = world.ok(
+        "agent",
+        &["ticket", "board-status", "--batch", BATCH, slugs[0]],
+        "",
+    );
+    assert_eq!(status["status_role"], "in-review", "{status}");
+    for slug in slugs {
+        world.ok("agent", &["ticket", "copy", "--batch", BATCH, slug], "");
+    }
+    let checked = world.ok("check", &["check", "--batch", BATCH], "");
+    assert_eq!(checked["sound"], true, "{checked}");
+    world.ok("publish", &["publish", "--batch", BATCH], "");
+
+    let receipts = world.receipts(BATCH);
+    assert_eq!(
+        receipt(&receipts, "copy", &cards[0])["outcome"]["action"],
+        "updated"
+    );
+    let copied = world.read_item("followups", &cards[0]);
+    assert_eq!(
+        front(&copied)["status"],
+        "in-review",
+        "the re-copy keeps the reviewer's place, not the kind's initial status: {copied}"
+    );
+    assert!(copied.contains("Seen again."), "the re-copy landed");
+    let protected = receipt(&receipts, "copy", &cards[1]);
+    assert_eq!(protected["outcome"]["error"]["kind"], "protected");
+    assert_eq!(
+        protected["outcome"]["held"]["status"]["category"],
+        "in-review"
+    );
+    assert_eq!(
+        front(&world.read_item("followups", &cards[1]))["status"],
+        "in-review",
+        "a withdrawal never reaches a ticket under review"
+    );
+}

@@ -122,6 +122,7 @@ fn the_defaults_are_todays_strategy() {
             ("deferred", "draft", true, false),
             ("queued", "queued", true, false),
             ("in-progress", "in-progress", true, false),
+            ("in-review", "in-review", true, false),
             ("done", "done", true, false),
             ("cancelled", "cancelled", false, false),
         ]

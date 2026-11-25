@@ -145,6 +145,7 @@ fn with_nothing_configured_it_prints_every_default() {
         "deferred",
         "queued",
         "in-progress",
+        "in-review",
         "done",
         "cancelled",
     ]
@@ -159,9 +160,26 @@ fn with_nothing_configured_it_prints_every_default() {
             &json!("draft"),
             &json!("queued"),
             &json!("in-progress"),
+            &json!("in-review"),
             &json!("done"),
             &json!("cancelled")
         ]
+    );
+    let in_review = &config["statuses"]["in-review"];
+    assert_eq!(
+        (
+            &in_review["protected"],
+            &in_review["selected"],
+            &in_review["answered"]
+        ),
+        (&json!(true), &json!(false), &json!(false)),
+        "a ticket under review is protected, and never selected or answered"
+    );
+    assert!(
+        in_review["description"]
+            .as_str()
+            .is_some_and(|text| text.contains("waiting on a reviewer")),
+        "{in_review}"
     );
     let levels: Vec<&Value> = config["rubric"]["levels"]
         .as_array()
@@ -258,6 +276,37 @@ fn a_file_overrides_its_keys_and_is_found_by_flag_then_variable_then_working_dir
         stderr.contains(&format!("from the file {missing}: could not be read")),
         "{stderr}"
     );
+}
+
+#[test]
+fn a_file_stating_every_status_role_but_in_review_loads_with_its_default() {
+    let directory = support::tempdir();
+    let path = directory.path().join("onefollowup.yaml");
+    let mut text = String::from("statuses:\n");
+    for (role, category) in [
+        ("proposal", "backlog"),
+        ("accepted", "todo"),
+        ("deferred", "draft"),
+        ("queued", "queued"),
+        ("in-progress", "in-progress"),
+        ("done", "done"),
+        ("cancelled", "cancelled"),
+    ] {
+        text.push_str(&format!(
+            "  {role}: {{category: {category}, description: Stated., protected: true, selected: false, answered: false}}\n"
+        ));
+    }
+    std::fs::write(&path, text).expect("written");
+    let shown = show(directory.path(), &[], &[]);
+    let statuses = &shown["config"]["statuses"];
+    assert_eq!(
+        statuses["done"]["description"], "Stated.",
+        "the file is read"
+    );
+    assert_eq!(statuses["in-review"]["category"], "in-review");
+    assert_eq!(statuses["in-review"]["protected"], true);
+    assert_eq!(statuses["in-review"]["selected"], false);
+    assert_eq!(statuses["in-review"]["answered"], false);
 }
 
 /// One key's precedence case: what a file, a variable and a `--set` each state for it, where

@@ -128,9 +128,9 @@ pub enum GroomRule {
     LowConfidenceClose,
     /// A closing verdict's deciding commit is not on the fetched default branch.
     CommitNotOnMain,
-    /// A plan closes a Queued or In Progress ticket.
+    /// A plan closes a Queued, In Progress or In Review ticket.
     ClaimedClosed,
-    /// A plan folds a Queued or In Progress ticket as a duplicate.
+    /// A plan folds a Queued, In Progress or In Review ticket as a duplicate.
     ClaimedFolded,
     /// A plan folds a Todo ticket as a duplicate.
     TodoFolded,
@@ -736,7 +736,7 @@ pub struct PlanEntry {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum SurvivorRule {
-    /// It is claimed (Queued or In Progress) and the runner-up is not.
+    /// It is claimed (Queued, In Progress or In Review) and the runner-up is not.
     Claimed,
     /// It is Todo and the runner-up is not.
     Todo,

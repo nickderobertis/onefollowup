@@ -265,7 +265,7 @@ and `settled` is `null`, since nothing was settled.
         "commit": "89abcdef0123456789abcdef0123456789abcdef",
         "duplicate_of": null,
         "root_cause": null,
-        "left_for_person": "it is claimed (Queued or In Progress), which grooming never closes"
+        "left_for_person": "it is claimed (Queued, In Progress or In Review), which grooming never closes"
       }
     ],
     "unresolved": []
@@ -690,7 +690,7 @@ key, the layer its value came from.
 | `namespace` | `orchestrator` | Prefix of the comment markers (`orchestrator:follow-up-comment`) and the record's metadata key (`orchestrator.follow-up`). |
 | `host_label` | the machine's hostname | The host a ticket records as having verified it. |
 | `batch_id_pattern` | word characters, `.`, `@`, `+`, `-`, not dots alone | A batch id, matched in full. |
-| `statuses` | proposal → `backlog`, accepted → `todo`, deferred → `draft`, queued → `queued`, in-progress → `in-progress`, done → `done`, cancelled → `cancelled` | Each status role mapped to a store status category, with `description`, `protected` (no batch withdraws an item at this role), `selected` (an agent picking up accepted work selects it) and `answered` (people's comments on an item at this role are answered by its batch; proposal and deferred by default). |
+| `statuses` | proposal → `backlog`, accepted → `todo`, deferred → `draft`, queued → `queued`, in-progress → `in-progress`, in-review → `in-review`, done → `done`, cancelled → `cancelled` | Each status role mapped to a store status category, with `description`, `protected` (no batch withdraws an item at this role), `selected` (an agent picking up accepted work selects it) and `answered` (people's comments on an item at this role are answered by its batch; proposal and deferred by default). |
 | `rubric` | four severity levels, critical → low | Severity `levels` (each with the priority it estimates at and its meaning for users, development and resources), `areas`, `guidance`, `impact_lines`, `no_workaround`, `impact_parts`, `workaround_costs`. |
 | `estimate` | `raise_at: 3`, `raise_cap: high`, `line_label: Priority estimate`, `line_template: builtin:estimate-line.j2` | An estimate is raised one level, capped at `raise_cap`, when a root cause fires consistently or has `raise_at` or more occurrences. `line_template` renders the estimate line and `line_label` is the label it is found by (The priority's inputs, below). |
 | `task_template` | `builtin:task-template.md.j2` | The verifying agent's task template; a path, or `builtin:` for a shipped file. |
@@ -1376,18 +1376,18 @@ of the snapshot, or `null`); `root_cause` (one line, set exactly when `duplicate
 | `missing-verdict`, `duplicate-verdict` | A shard's ticket has no verdict record, or more than one. |
 | `low-confidence-close` | A `fixed` or `obsolete` verdict is `low` confidence. |
 | `commit-not-on-main` | A `fixed` or `obsolete` verdict's `deciding_commit` is not an ancestor, in its clone, of the default-branch commit prepare fetched for any of the ticket's repositories. |
-| `claimed-closed`, `claimed-folded` | A plan closes, or folds as a duplicate, a ticket at the `queued` or `in-progress` role's status. |
+| `claimed-closed`, `claimed-folded` | A plan closes, or folds as a duplicate, a ticket at the `queued`, `in-progress` or `in-review` role's status. |
 | `todo-folded` | A plan folds a ticket at the `accepted` role's status (Todo). |
 | `todo-close-below-bar` | A plan closes a Todo ticket short of definitely outdated: a `high`-confidence `fixed` or `obsolete` verdict whose `deciding_commit` is verified an ancestor of the fetched default branch. |
 | `plan-record` | `plan.json` is not this batch's plan, or plans a ticket the batch did not list. |
 
 **The plan.** A ticket at a non-claimable status (the proposal or deferred role's, or one no
-role maps) may be closed or folded. A Queued or In Progress ticket is never closed or folded,
-and a Todo ticket never folded and closed only when definitely outdated; any of them may survive
-a cluster, and with a closing or duplicate verdict it is kept, `left_for_person` saying why, with
+role maps) may be closed or folded. A Queued, In Progress or In Review ticket is never closed or
+folded, and a Todo ticket never folded and closed only when definitely outdated; any of them may
+survive a cluster, and with a closing or duplicate verdict it is kept, `left_for_person` saying why, with
 its verdict and evidence. Duplicate links are unioned into clusters, which members closing as
-`fixed` or `obsolete` leave. Each cluster's survivor is, in order: claimed (Queued or In
-Progress), then Todo, then a member in the repository most members name as `seam_repository`,
+`fixed` or `obsolete` leave. Each cluster's survivor is, in order: claimed (Queued, In
+Progress or In Review), then Todo, then a member in the repository most members name as `seam_repository`,
 then the most evidence (the most evidence paths, then the longest evidence), then the oldest;
 any survivor the agent implies is ignored. A member this batch did not select is ranked by
 what `snapshot.json` holds of it, its repositories and creation time, and is never folded. Everything not closed or folded is `kept`, and an `unresolved` one is also listed under
@@ -1429,11 +1429,11 @@ verdict is **definitely outdated** — `fixed` or `obsolete` at `high` confidenc
 3. **One `comment add-many`** built from that write's receipts: an evidence comment on each
    ticket shown closed, then each survivor's **consolidation comment**, once every duplicate of
    its cluster is settled, carrying each closed duplicate's distinct evidence and link, naming
-   only the duplicates shown closed, and saying when the survivor is Todo, Queued or In
-   Progress. A survivor with none closed gets none.
+   only the duplicates shown closed, and saying when the survivor is Todo, Queued, In
+   Progress or In Review. A survivor with none closed gets none.
 
 **Left for a person.** Any other ticket that read finds — Todo short of definitely outdated,
-Queued, In Progress, no longer open, or changed after the read so its held close is refused —
+Queued, In Progress, In Review, no longer open, or changed after the read so its held close is refused —
 gets no comment, status, duplicate link or `groom` key, is receipted as left, and keeps its older
 record, so the next pass selects it again. Kept tickets get no comment, and no body text or other
 metadata key changes. `report.md` and `report.json` list every ticket with a closing or duplicate
@@ -1441,8 +1441,8 @@ verdict that check or publish left open — a Todo duplicate, one below `high` c
 skipped duplicate included — with its status, verdict, confidence, deciding commit, evidence and
 any survivor. Grooming closes only tickets nobody can claim, or Todo tickets definitely
 outdated, and needs no undo. Accepted residuals, which nothing reopens: on a destination that
-cannot hold a write to its version, a Backlog ticket moved to Queued or In Progress by hand
-between the status read and its close is closed, and a claim made on a definitely-outdated Todo
+cannot hold a write to its version, a Backlog ticket moved to Queued, In Progress or In Review by
+hand between the status read and its close is closed, and a claim made on a definitely-outdated Todo
 ticket in that moment is overwritten.
 
 **A re-run reads the receipts** and sends only what none confirms. A close no receipt confirms —
@@ -1469,8 +1469,8 @@ one status per ticket, so the read-back cannot see an issue left open under a te
 `batch`, `verdict` (`fixed`, `obsolete`, `duplicate` or `survivor`), `ticket`, `title` and `url`;
 on a closed ticket `confidence`, `evidence`, `deciding_commit`, `repository`, `commit`,
 `evidence_paths`, `root_cause` and, for a duplicate, `survivor` (`ticket`, `title`, `url`); on a
-survivor `status` (its status name), `claimed_as` (`todo`, `queued`, `in-progress` or none),
-`duplicates` (each closed one's `ticket`, `title`, `url`, `root_cause` and `evidence_paths`) and
+survivor `status` (its status name), `claimed_as` (`todo`, `queued`, `in-progress`, `in-review` or
+none), `duplicates` (each closed one's `ticket`, `title`, `url`, `root_cause` and `evidence_paths`) and
 `evidence` (their distinct evidence). onefollowup appends a blank line and the marker
 `<!-- <namespace>:follow-up-comment run="<batch>" kind="groom" verdict="<verdict>" -->`, which
 names no root cause, so `comments gather` leaves a grooming comment out as maintenance, never as

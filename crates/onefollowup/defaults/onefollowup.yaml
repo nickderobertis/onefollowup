@@ -61,6 +61,14 @@ statuses:
     protected: true
     selected: false
     answered: false
+  in-review:
+    category: in-review
+    description: >-
+      Taken up and waiting on a reviewer before it is finished. A person moves an item
+      here, or the tooling that stopped the work for review does.
+    protected: true
+    selected: false
+    answered: false
   done:
     category: done
     description: >-

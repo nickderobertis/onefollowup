@@ -15,9 +15,9 @@ authors = ["Nick DeRobertis"]
 # Every store access: the engine and, through its features, every destination plugin
 # (local-md built in, GitHub Projects and Linear switched on). onetaskgraph's pre-1.0
 # crates release in lock step and are not compatible across patches, so the pin is exact.
-onetaskgraph-core = { version = "=0.15.1", features = ["github-projects", "linear"] }
+onetaskgraph-core = { version = "=0.16.0", features = ["github-projects", "linear"] }
 # The contract crate, for the status vocabulary a status role maps to.
-onetaskgraph-plugin-api = "=0.15.1"
+onetaskgraph-plugin-api = "=0.16.0"
 # The request gate onetaskgraph's engine asks is an `async_trait`.
 async-trait = "0.1.92"
 clap = { version = "4.6.6", features = ["derive"] }

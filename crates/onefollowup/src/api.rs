@@ -1099,7 +1099,8 @@ pub struct GroomPrepared {
     pub selected: usize,
     /// How many open tickets it left unselected.
     pub unchanged: usize,
-    /// How many selected tickets are claimed (Queued or In Progress), never closed or folded.
+    /// How many selected tickets are claimed (Queued, In Progress or In Review), never closed
+    /// or folded.
     pub protected: usize,
     /// Each shard; `[]` when nothing is selected.
     pub shards: Vec<GroomShard>,

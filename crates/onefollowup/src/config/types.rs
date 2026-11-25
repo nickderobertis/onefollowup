@@ -106,6 +106,8 @@ pub enum StatusRole {
     Queued,
     /// Taken up.
     InProgress,
+    /// Taken up and waiting on a reviewer before it is finished.
+    InReview,
     /// Finished.
     Done,
     /// Withdrawn.
@@ -122,6 +124,7 @@ impl StatusRole {
             Self::Deferred => "deferred",
             Self::Queued => "queued",
             Self::InProgress => "in-progress",
+            Self::InReview => "in-review",
             Self::Done => "done",
             Self::Cancelled => "cancelled",
         }
@@ -143,6 +146,9 @@ pub struct Statuses {
     /// See [`StatusRole::InProgress`].
     #[serde(rename = "in-progress")]
     pub in_progress: StatusMapping,
+    /// See [`StatusRole::InReview`].
+    #[serde(rename = "in-review")]
+    pub in_review: StatusMapping,
     /// See [`StatusRole::Done`].
     pub done: StatusMapping,
     /// See [`StatusRole::Cancelled`].
@@ -152,13 +158,14 @@ pub struct Statuses {
 impl Statuses {
     /// Each role and its mapping, in role order.
     #[must_use]
-    pub fn iter(&self) -> [(StatusRole, &StatusMapping); 7] {
+    pub fn iter(&self) -> [(StatusRole, &StatusMapping); 8] {
         [
             (StatusRole::Proposal, &self.proposal),
             (StatusRole::Accepted, &self.accepted),
             (StatusRole::Deferred, &self.deferred),
             (StatusRole::Queued, &self.queued),
             (StatusRole::InProgress, &self.in_progress),
+            (StatusRole::InReview, &self.in_review),
             (StatusRole::Done, &self.done),
             (StatusRole::Cancelled, &self.cancelled),
         ]

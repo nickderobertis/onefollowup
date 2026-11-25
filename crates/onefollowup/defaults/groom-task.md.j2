@@ -53,7 +53,7 @@ Every key is required, and no other key is read: `null` where the schema allows 
 - Every ticket below has exactly one verdict record.
 - A `fixed` or `obsolete` verdict's `confidence` is `medium` or `high`, never `low`, and its
   `deciding_commit` is an ancestor of that repository's fetched default-branch commit above.
-- A ticket at a claimed status (the `queued` or `in-progress` role's) is never closed or folded
+- A ticket at a claimed status (the `queued`, `in-progress` or `in-review` role's) is never closed or folded
   as a duplicate, and a ticket at the `accepted` role's status (Todo) is never folded; a Todo
   ticket is closed only on a `high`-confidence `fixed` or `obsolete` verdict whose
   `deciding_commit` is verified on the default branch. Answer such a ticket as you judge it all the same:

@@ -486,3 +486,81 @@ pub fn a_refused_close_is_sent_again_by_the_rerun(runner: &dyn Runner) {
     assert_eq!(survivor.len(), 1);
     assert!(survivor[0].contains("followups:d"), "{}", survivor[0]);
 }
+
+pub fn a_ticket_under_review_is_claimed_and_never_closed_or_folded(runner: &dyn Runner) {
+    let world = World::new();
+    world.repository(WIDGETS, &[("src/a.rs", "a\n"), ("src/b.rs", "b\n")]);
+    let fix = world.commit(WIDGETS, &[("src/a.rs", "a fixed\n")], "fix the save");
+    for (id, status) in [
+        ("r-held", "in-review"),
+        ("r-surv", "in-review"),
+        ("r-dup", "backlog"),
+        ("r-moved", "backlog"),
+    ] {
+        world.ticket(
+            id,
+            &format!("widgets: ticket {id}"),
+            status,
+            &[WIDGETS],
+            &format!("The body of {id}."),
+        );
+    }
+    let batch = world
+        .checked(runner, |id| match id {
+            "r-held" | "r-moved" => verdict(id, "fixed", "high", Some(&fix), &["src/a.rs"], None),
+            "r-dup" => verdict(id, "keep", "high", None, &["src/b.rs"], Some("r-surv")),
+            _ => keep(id, &["src/b.rs"]),
+        })
+        .expect("prepare selects tickets under review");
+    // After check, the work on another ticket stops for review.
+    world.move_to("r-moved", "in-review");
+    let held = world.ticket_text("r-held");
+    let moved = world.ticket_text("r-moved");
+
+    let published = world.json(runner, 0, &["groom", "publish", "--batch", &batch]);
+    assert_eq!(published["mismatched"], json!([]), "{published:#}");
+    assert_eq!(
+        world.ticket_text("r-held"),
+        held,
+        "a claimed ticket is never closed"
+    );
+    assert_eq!(
+        world.ticket_text("r-moved"),
+        moved,
+        "the status read finds it claimed"
+    );
+    assert_eq!(world.status("r-held"), "in-review");
+    assert_eq!(world.status("r-moved"), "in-review");
+    assert_eq!(
+        world.status("r-dup"),
+        "cancelled",
+        "folded into the claimed survivor"
+    );
+    assert!(world.comments("r-held").is_empty());
+    let survivor = world.comments("r-surv");
+    assert_eq!(survivor.len(), 1, "{survivor:?}");
+    assert!(
+        survivor[0].contains("followups:r-dup") && survivor[0].contains("This ticket is in-review"),
+        "{}",
+        survivor[0]
+    );
+
+    let report: Value = serde_json::from_str(
+        &std::fs::read_to_string(published["report_json"].as_str().expect("a path"))
+            .expect("report.json"),
+    )
+    .expect("JSON");
+    assert_eq!(
+        ids(&report["left_for_person"]),
+        ["r-held", "r-moved"],
+        "{report:#}"
+    );
+    for left in report["left_for_person"].as_array().expect("a list") {
+        assert!(
+            left["reason"]
+                .as_str()
+                .is_some_and(|why| why.contains("claimed")),
+            "{left}"
+        );
+    }
+}

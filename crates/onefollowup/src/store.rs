@@ -50,13 +50,14 @@ pub const STATUS_CATEGORIES: &[&str] = &[
     "todo",
     "queued",
     "in-progress",
+    "in-review",
     "done",
     "cancelled",
 ];
 
 /// The store a snapshot records it was gathered through: onetaskgraph at the version this
 /// crate pins. `tests/store.rs` holds it to the workspace's pin.
-pub const STORE_LINE: &str = "onetaskgraph 0.15.1";
+pub const STORE_LINE: &str = "onetaskgraph 0.16.0";
 
 /// The name of the onetaskgraph configuration document a `store` directory holds.
 pub const STORE_DOCUMENT: &str = "onetaskgraph.yaml";

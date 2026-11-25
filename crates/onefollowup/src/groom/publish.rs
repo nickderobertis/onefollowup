@@ -12,10 +12,10 @@
 //! **Protection is decided by the status read**, by onefollowup's status roles: a ticket still
 //! at a non-claimable open status (the proposal or deferred role's, or one no role maps) is
 //! closed or folded; one still Todo is closed only on a definitely-outdated verdict and never
-//! folded; any other — Todo short of that, Queued, In Progress or no longer open — is left for a
-//! person, written nothing, so its older record selects it again next pass. Each close is held
-//! to the version that read found, so on a source that holds a write to its version a change
-//! made after the read leaves the ticket for a person too.
+//! folded; any other — Todo short of that, Queued, In Progress, In Review or no longer open — is
+//! left for a person, written nothing, so its older record selects it again next pass. Each
+//! close is held to the version that read found, so on a source that holds a write to its
+//! version a change made after the read leaves the ticket for a person too.
 //!
 //! **A re-run reads only `plan.json` and `receipts.json`**, which hold every record and comment
 //! it writes from: it sends only what no receipt confirms, re-reading the status of every close
@@ -302,7 +302,7 @@ impl Publishing<'_> {
                 found.status.name
             )),
             (Protection::Claimed, _) => Err(format!(
-                "publish's status read found it {}, claimed (Queued or In Progress), which grooming never closes or folds",
+                "publish's status read found it {}, claimed (Queued, In Progress or In Review), which grooming never closes or folds",
                 found.status.name
             )),
         }
@@ -683,6 +683,7 @@ impl Publishing<'_> {
             Some(StatusRole::Accepted) => Some("todo"),
             Some(StatusRole::Queued) => Some("queued"),
             Some(StatusRole::InProgress) => Some("in-progress"),
+            Some(StatusRole::InReview) => Some("in-review"),
             _ => None,
         };
         self.body(

@@ -4,9 +4,9 @@
 //! a shard's ticket has no verdict or two, a closing verdict is `low`, or its `deciding_commit`
 //! is not an ancestor of the default-branch commit prepare fetched. Duplicate links are unioned into
 //! clusters, members closing as `fixed` or `obsolete` leave them, and each cluster's survivor is
-//! chosen by a fixed order, whichever ticket the agent named. A Queued or In Progress ticket is
-//! never closed or folded, a Todo ticket never folded and closed only when definitely outdated:
-//! such a ticket with a closing or duplicate verdict is planned as left for a person.
+//! chosen by a fixed order, whichever ticket the agent named. A Queued, In Progress or In Review
+//! ticket is never closed or folded, a Todo ticket never folded and closed only when definitely
+//! outdated: such a ticket with a closing or duplicate verdict is planned as left for a person.
 //!
 //! **A plan is input**: the `plan.json` a batch holds when check runs is what publish sends, so
 //! check holds it, as well as the plan it computes, to the protection rules, and refuses one
@@ -346,7 +346,8 @@ fn plan(batch: &Batch<'_>, judged: &[Judged<'_>]) -> GroomPlan {
             Some(Protection::Claimed) => {
                 left.insert(
                     ticket,
-                    "it is claimed (Queued or In Progress), which grooming never closes".to_owned(),
+                    "it is claimed (Queued, In Progress or In Review), which grooming never closes"
+                        .to_owned(),
                 );
             }
             Some(Protection::Todo)
@@ -404,7 +405,7 @@ fn plan(batch: &Batch<'_>, judged: &[Judged<'_>]) -> GroomPlan {
             let ticket = by_ticket[member.as_str()].verdict.ticket.as_str();
             match batch.protection(member) {
                 Some(Protection::Claimed) => {
-                    left.entry(ticket).or_insert_with(|| format!("it is claimed (Queued or In Progress), which grooming never folds; its cluster's survivor is {survivor}"));
+                    left.entry(ticket).or_insert_with(|| format!("it is claimed (Queued, In Progress or In Review), which grooming never folds; its cluster's survivor is {survivor}"));
                 }
                 Some(Protection::Todo) => {
                     left.entry(ticket).or_insert_with(|| format!("it is Todo, which grooming never folds as a duplicate; its cluster's survivor is {survivor}"));
@@ -460,7 +461,7 @@ fn protect(batch: &mut Batch<'_>, plan: &GroomPlan, what: &str) -> Result<(), Er
             Some(Protection::Claimed) => batch.problem(
                 Some(ticket),
                 GroomRule::ClaimedClosed,
-                format!("{what} closes `{ticket}`, which is Queued or In Progress: grooming never closes claimed work"),
+                format!("{what} closes `{ticket}`, which is Queued, In Progress or In Review: grooming never closes claimed work"),
             ),
             Some(protection) => {
                 let verified = match (batch.selected(ticket), entry.deciding_commit.as_deref()) {
@@ -513,7 +514,7 @@ fn protect(batch: &mut Batch<'_>, plan: &GroomPlan, what: &str) -> Result<(), Er
             Some(Protection::Claimed) => batch.problem(
                 Some(ticket),
                 GroomRule::ClaimedFolded,
-                format!("{what} folds `{ticket}` as a duplicate, and it is Queued or In Progress: grooming never folds claimed work"),
+                format!("{what} folds `{ticket}` as a duplicate, and it is Queued, In Progress or In Review: grooming never folds claimed work"),
             ),
             Some(Protection::Todo) => batch.problem(
                 Some(ticket),

@@ -483,7 +483,9 @@ fn examples() -> BTreeMap<&'static str, Value> {
                     kept: vec![groomed(
                         "followups:item-3",
                         None,
-                        Some("it is claimed (Queued or In Progress), which grooming never closes"),
+                        Some(
+                            "it is claimed (Queued, In Progress or In Review), which grooming never closes",
+                        ),
                     )],
                     unresolved: Vec::new(),
                 },

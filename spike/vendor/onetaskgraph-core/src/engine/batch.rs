@@ -563,10 +563,10 @@ impl Engine {
                         );
                         // spike-prepare-cost (throwaway): the bounded design's per-search hit
                         // limit, before onetaskgraph carries one in `FindQuery`. Under
-                        // ONEFOLLOWUP_SPIKE_BOUNDED, onefollowup's duplicate queries (keys
+                        // SPIKE_PREPARE_BOUNDED, onefollowup's duplicate queries (keys
                         // `input:`, `term:`, `file:`) end their walk once they hold 21 hits.
                         let key = &searches[at].key;
-                        let limited = std::env::var_os("ONEFOLLOWUP_SPIKE_BOUNDED").is_some()
+                        let limited = std::env::var_os("SPIKE_PREPARE_BOUNDED").is_some()
                             && ["input:", "term:", "file:"]
                                 .iter()
                                 .any(|prefix| key.starts_with(prefix));

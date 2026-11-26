@@ -58,6 +58,6 @@ strip = true
 opt-level = 1
 
 # spike-prepare-cost (throwaway, never landed): onetaskgraph-core 0.15.1 with the bounded
-# design's per-search walk limit, gated on ONEFOLLOWUP_SPIKE_BOUNDED.
+# design's per-search walk limit, gated on SPIKE_PREPARE_BOUNDED.
 [patch.crates-io]
 onetaskgraph-core = { path = "spike/vendor/onetaskgraph-core" }

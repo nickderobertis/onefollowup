@@ -17,7 +17,7 @@
 //!
 //! - `base` (the default): the loopback reports a full allowance whatever is spent, so the
 //!   governor never holds and the run ends.
-//! - `bounded`: the binary is run with `ONEFOLLOWUP_SPIKE_BOUNDED=1`, which the spike's
+//! - `bounded`: the binary is run with `SPIKE_PREPARE_BOUNDED=1`, which the spike's
 //!   throwaway patch reads (each draft's searches only to the source its ticket would land in,
 //!   and each search's walk ended once it holds 21 hits); the loopback reports 2,000 of 5,000
 //!   points left, takes each request's price from it, and the governor keeps its 20% floor.
@@ -348,7 +348,14 @@ fn spike_prepare_cost() {
         "private-followups": {"tickets": boards[1].issues.len(), "open": PRIVATE_OPEN},
     });
 
-    let reset = chrono::Utc::now().timestamp() + 3600;
+    // Where in GitHub's hourly window the prepare starts decides how large the governor's
+    // seeded reserve is (its peak rate times the time to the reset): stated, and overridable
+    // with SPIKE_RESET_SECONDS. 1,800 s is the middle of the hour.
+    let reset_in: i64 = std::env::var("SPIKE_RESET_SECONDS")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(1800);
+    let reset = chrono::Utc::now().timestamp() + reset_in;
     let quota = if bounded {
         Quota {
             remaining: 2000,
@@ -407,8 +414,22 @@ fn spike_prepare_cost() {
     if bounded {
         world
             .variables
-            .push(("ONEFOLLOWUP_SPIKE_BOUNDED".to_owned(), "1".to_owned()));
+            .push(("SPIKE_PREPARE_BOUNDED".to_owned(), "1".to_owned()));
     }
+    // SPIKE_GOVERNOR=off: the governor switched off, for a base whose run would otherwise be
+    // held (its figures are then the loopback's alone, and its seconds are not today's).
+    let ungoverned = std::env::var("SPIKE_GOVERNOR").as_deref() == Ok("off");
+    if ungoverned {
+        world.variables.push((
+            "ONEFOLLOWUP_GOVERNOR__ENABLED".to_owned(),
+            "false".to_owned(),
+        ));
+    }
+    let label = if ungoverned {
+        format!("{design}-ungoverned")
+    } else {
+        design.clone()
+    };
 
     // The 50 drafts: the 13 clusters' later members, 27 generated public ones and 10 private.
     let mut drafts: Vec<(String, Option<String>)> = Vec::new();
@@ -448,13 +469,14 @@ fn spike_prepare_cost() {
     let started = Instant::now();
     let output = command.output().expect("the binary runs");
     let elapsed = started.elapsed();
-    assert!(
-        output.status.success(),
-        "prepare exited {:?}: {}",
-        output.status.code(),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let prepared: Value = serde_json::from_slice(&output.stdout).expect("prepare printed JSON");
+    if !output.status.success() {
+        eprintln!(
+            "prepare exited {:?}: {}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let prepared: Value = serde_json::from_slice(&output.stdout).unwrap_or(Value::Null);
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
     let charged = github.charged();
@@ -530,7 +552,9 @@ fn spike_prepare_cost() {
         .collect();
 
     let report = json!({
-        "design": design,
+        "design": label,
+        "completed": output.status.success(),
+        "reset_in_seconds": reset_in,
         "drafts": drafts.len(),
         "queries": queries,
         "boards": board_sizes,
@@ -555,12 +579,18 @@ fn spike_prepare_cost() {
     });
     std::fs::create_dir_all(output_dir()).expect("the output directory");
     std::fs::write(
-        output_dir().join(format!("{design}.json")),
+        output_dir().join(format!("{label}.json")),
         serde_json::to_string_pretty(&report).expect("JSON"),
     )
     .expect("the report");
 
-    println!("\n== spike-prepare-cost: {design} ==");
+    println!(
+        "\n== spike-prepare-cost: {label} (prepare {}, window reset {reset_in} s after start) ==",
+        if output.status.success() { "completed" } else { "DID NOT COMPLETE" }
+    );
+    for line in stderr.lines().filter(|line| line.contains("holding")) {
+        println!("governor: {line}");
+    }
     println!(
         "workload: {} drafts, {queries} searches; boards {board_sizes}",
         drafts.len()
@@ -590,16 +620,19 @@ fn spike_prepare_cost() {
         prepared["governed"]
     );
 
+    // A bounded walk stops at 21 hits, so only the base's hits show a term's full count.
     assert!(
-        common_terms.len() >= 3,
+        bounded || common_terms.len() >= 3,
         "at least 3 unstoplisted terms match 1,000 tickets or more: {term_hits:?}"
     );
 
     // The bounded design keeps every candidate the base rendered for the real clusters.
     if bounded {
-        let base: Option<Value> = std::fs::read_to_string(output_dir().join("base.json"))
-            .ok()
-            .and_then(|text| serde_json::from_str(&text).ok());
+        let base: Option<Value> = ["base.json", "base-ungoverned.json"]
+            .iter()
+            .filter_map(|name| std::fs::read_to_string(output_dir().join(name)).ok())
+            .filter_map(|text| serde_json::from_str::<Value>(&text).ok())
+            .find(|base| base["completed"] == true);
         match base {
             None => println!("no base.json beside this run: candidates not compared"),
             Some(base) => {

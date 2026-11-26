@@ -129,6 +129,17 @@ impl LoopbackGitHub {
     }
 }
 
+/// The quota as GitHub would report it now: a window past its reset is a fresh one, the whole
+/// allowance left until an hour on. Answers the quota after rolling it.
+fn rolled(quota: &mut Quota) -> Quota {
+    let now = chrono::Utc::now().timestamp();
+    while quota.reset <= now {
+        quota.remaining = 5000;
+        quota.reset += 3600;
+    }
+    *quota
+}
+
 /// Serve one connection, request after request, until the client closes it.
 fn serve(
     stream: std::net::TcpStream,
@@ -160,7 +171,7 @@ fn serve(
             return;
         }
         let answer = if line.starts_with("GET /rate_limit") {
-            let quota = *quota.lock().expect("the quota");
+            let quota = rolled(&mut quota.lock().expect("the quota"));
             held.lock().expect("the log").charged.push(Charged {
                 document: "rate_limit".to_owned(),
                 points: 0,
@@ -194,6 +205,7 @@ fn serve(
             match answered {
                 Some(answered) => {
                     let mut quota = quota.lock().expect("the quota");
+                    rolled(&mut quota);
                     let take = if priced { answered.points } else { quota.charge };
                     quota.remaining = quota.remaining.saturating_sub(take);
                     held.charged.push(Charged {
@@ -222,7 +234,7 @@ fn serve(
         let limits = if line.starts_with("GET /rate_limit") {
             String::new()
         } else {
-            let quota = *quota.lock().expect("the quota");
+            let quota = rolled(&mut quota.lock().expect("the quota"));
             format!(
                 "x-ratelimit-limit: 5000\r\nx-ratelimit-remaining: {}\r\nx-ratelimit-used: {}\r\nx-ratelimit-reset: {}\r\nx-ratelimit-resource: graphql\r\n",
                 quota.remaining,

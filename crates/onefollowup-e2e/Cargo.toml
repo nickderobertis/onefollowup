@@ -21,6 +21,8 @@ onebudgetspec-core.workspace = true
 regex.workspace = true
 # The configuration's key list, which the precedence cases are parameterized over.
 onefollowup = { path = "../onefollowup" }
+# spike-prepare-cost: the loopback names the documents it answers by onetaskgraph's own constants.
+onetaskgraph-github-projects = "=0.15.1"
 serde.workspace = true
 serde-saphyr.workspace = true
 serde_json.workspace = true

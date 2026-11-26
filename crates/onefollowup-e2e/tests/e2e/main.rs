@@ -21,15 +21,18 @@ mod duplicates;
 mod examples;
 mod filing_duplicates;
 mod governed_publish;
+mod graphql_cost;
 mod hook_context;
 mod host_governor;
 #[path = "../isolated/mod.rs"]
 mod isolated;
 mod isolated_environment;
 mod journey;
+mod loopback_boards;
 mod loopback_github;
 mod outstanding;
 mod pending_recovery;
+mod prepare_cost;
 mod private_drafts;
 mod refusals;
 mod refused_accounts;

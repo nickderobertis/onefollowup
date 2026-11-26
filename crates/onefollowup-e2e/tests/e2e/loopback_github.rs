@@ -39,6 +39,32 @@ pub struct Quota {
 struct Held {
     received: Vec<Received>,
     comments: u64,
+    /// Every request answered, as the boards' pricing charged it.
+    charged: Vec<Charged>,
+    /// Generated boards answering board-scoped searches and node reads; empty for the
+    /// single-issue loopback the publish journeys use.
+    boards: Arc<Vec<crate::loopback_boards::Board>>,
+    /// Whether each GraphQL request takes its own price from the quota, rather than `charge`.
+    priced: bool,
+}
+
+/// One request the loopback answered, as GitHub's published calculation prices it.
+#[derive(Debug, Clone)]
+pub struct Charged {
+    /// The onetaskgraph document it sent, by name, or `rate_limit` for the REST read.
+    pub document: String,
+    /// Its price in points (0 for the REST read, which GraphQL's allowance does not meter).
+    pub points: u64,
+    /// The connection requests behind that price.
+    pub connection_requests: u64,
+    /// The issue rows its answer held.
+    pub rows: u64,
+    /// The searches (aliased search slots) it asked.
+    pub searches: u64,
+    /// The board's owner it read, when it read one.
+    pub board: String,
+    /// How long the loopback took to answer it.
+    pub busy: std::time::Duration,
 }
 
 /// The loopback GitHub.
@@ -50,9 +76,23 @@ pub struct LoopbackGitHub {
 
 impl LoopbackGitHub {
     pub fn start(quota: Quota) -> Self {
+        Self::serving(quota, Vec::new(), false)
+    }
+
+    /// A loopback answering board-scoped searches and node reads from `boards`, each GraphQL
+    /// request taking its own price from the quota when `priced`.
+    pub fn serving(
+        quota: Quota,
+        boards: Vec<crate::loopback_boards::Board>,
+        priced: bool,
+    ) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").expect("a loopback port");
         let port = listener.local_addr().expect("its address").port();
-        let held = Arc::new(Mutex::new(Held::default()));
+        let held = Arc::new(Mutex::new(Held {
+            boards: Arc::new(boards),
+            priced,
+            ..Held::default()
+        }));
         let quota = Arc::new(Mutex::new(quota));
         let (serving, quoting) = (Arc::clone(&held), Arc::clone(&quota));
         std::thread::spawn(move || {
@@ -63,6 +103,16 @@ impl LoopbackGitHub {
             }
         });
         Self { port, held, quota }
+    }
+
+    /// Every request answered so far, priced.
+    pub fn charged(&self) -> Vec<Charged> {
+        self.held.lock().expect("the log").charged.clone()
+    }
+
+    /// The quota as it stands.
+    pub fn quota(&self) -> Quota {
+        *self.quota.lock().expect("the quota")
     }
 
     /// The GraphQL endpoint a source of this loopback names.
@@ -80,7 +130,11 @@ impl LoopbackGitHub {
 }
 
 /// Serve one connection, request after request, until the client closes it.
-fn serve(stream: std::net::TcpStream, held: &Mutex<Held>, quota: &Mutex<Quota>) {
+fn serve(
+    stream: std::net::TcpStream,
+    held: &Mutex<Held>,
+    quota: &Mutex<Quota>,
+) {
     let mut writer = stream.try_clone().expect("a stream");
     let mut reader = BufReader::new(stream);
     loop {
@@ -107,6 +161,15 @@ fn serve(stream: std::net::TcpStream, held: &Mutex<Held>, quota: &Mutex<Quota>) 
         }
         let answer = if line.starts_with("GET /rate_limit") {
             let quota = *quota.lock().expect("the quota");
+            held.lock().expect("the log").charged.push(Charged {
+                document: "rate_limit".to_owned(),
+                points: 0,
+                connection_requests: 0,
+                rows: 0,
+                searches: 0,
+                board: String::new(),
+                busy: std::time::Duration::ZERO,
+            });
             json!({"resources": {
                 "graphql": {"limit": 5000, "used": 5000 - quota.remaining, "remaining": quota.remaining, "reset": quota.reset},
                 "core": {"limit": 5000, "used": 0, "remaining": 5000, "reset": quota.reset},
@@ -117,18 +180,59 @@ fn serve(stream: std::net::TcpStream, held: &Mutex<Held>, quota: &Mutex<Quota>) 
                 document: request["query"].as_str().unwrap_or_default().to_owned(),
                 variables: request["variables"].clone(),
             };
-            {
-                let mut quota = quota.lock().expect("the quota");
-                quota.remaining = quota.remaining.saturating_sub(quota.charge);
-            }
+            let boards = Arc::clone(&held.lock().expect("the log").boards);
+            let priced = held.lock().expect("the log").priced;
+            let began = std::time::Instant::now();
+            let answered = if boards.is_empty() {
+                None
+            } else {
+                Some(crate::loopback_boards::answer(&boards, &received))
+            };
+            let busy = began.elapsed();
             let mut held = held.lock().expect("the log");
             held.received.push(received.clone());
-            graphql(&received, &mut held)
+            match answered {
+                Some(answered) => {
+                    let mut quota = quota.lock().expect("the quota");
+                    let take = if priced { answered.points } else { quota.charge };
+                    quota.remaining = quota.remaining.saturating_sub(take);
+                    held.charged.push(Charged {
+                        document: answered.document,
+                        points: answered.points,
+                        connection_requests: answered.connection_requests,
+                        rows: answered.rows,
+                        searches: answered.searches,
+                                board: answered.board,
+                        busy,
+                    });
+                    answered.answer
+                }
+                None => {
+                    {
+                        let mut quota = quota.lock().expect("the quota");
+                        quota.remaining = quota.remaining.saturating_sub(quota.charge);
+                    }
+                    graphql(&received, &mut held)
+                }
+            }
         };
         let text = answer.to_string();
+        // Every GraphQL answer carries the rate-limit headers GitHub sends on each response:
+        // the governor learns a request's cost from them and releases its place in flight.
+        let limits = if line.starts_with("GET /rate_limit") {
+            String::new()
+        } else {
+            let quota = *quota.lock().expect("the quota");
+            format!(
+                "x-ratelimit-limit: 5000\r\nx-ratelimit-remaining: {}\r\nx-ratelimit-used: {}\r\nx-ratelimit-reset: {}\r\nx-ratelimit-resource: graphql\r\n",
+                quota.remaining,
+                5000 - quota.remaining,
+                quota.reset
+            )
+        };
         if write!(
             writer,
-            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{text}",
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n{limits}Content-Length: {}\r\n\r\n{text}",
             text.len()
         )
         .is_err()

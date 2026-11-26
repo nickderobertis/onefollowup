@@ -607,6 +607,8 @@ pub struct Store {
     runtime: tokio::runtime::Runtime,
     local: Option<String>,
     log: RefCell<Vec<StoreOperation>>,
+    /// spike-prepare-cost (throwaway): every source's routes, as the configuration states them.
+    routes: onetaskgraph_core::config::Routes,
 }
 
 /// The directory holding the onetaskgraph configuration `store` names, or the nearest one at
@@ -750,7 +752,9 @@ impl Store {
         );
         // Set once, here, before any call can ask for a reading.
         let _ = engine_of_readings.set(Arc::downgrade(&engine));
+        let routes = loaded.config.routes();
         Ok(Self {
+            routes,
             engine,
             governor,
             settings,
@@ -906,6 +910,20 @@ impl Store {
         self.runtime
             .block_on(self.governor.admit_batch(source, reads > 0, updates));
         Ok(())
+    }
+
+    /// spike-prepare-cost (throwaway): the source an item about `repository`, written to
+    /// `source`, lands in by the configuration's routes — read from configuration alone, asking
+    /// no source anything and writing nothing.
+    #[must_use]
+    pub fn routed(&self, source: &str, repository: Option<&str>) -> String {
+        let (Ok(name), Some(repository)) = (source_name(source), repository) else {
+            return source.to_owned();
+        };
+        let Ok(repositories) = repositories(&[repository.to_owned()]) else {
+            return source.to_owned();
+        };
+        self.routes.place(&name, &repositories).destination.to_string()
     }
 
     /// Every operation made so far, in order.

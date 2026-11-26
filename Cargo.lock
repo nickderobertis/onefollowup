@@ -1331,8 +1331,6 @@ dependencies = [
 [[package]]
 name = "onetaskgraph-core"
 version = "0.15.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2e55508c69f91a3c6a58e3cc8d854cd69dbb3041f0f90319a7571e5ffab9c6a8"
 dependencies = [
  "async-trait",
  "chrono",

@@ -333,9 +333,27 @@ pub fn run(settings: &Settings, args: PrepareArgs) -> Result<Prepared, Error> {
     let mut reads: Vec<Read> = Vec::new();
     // How many items the store answered each search with, before its limit.
     let mut answered: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
-    for destination in batch.destinations() {
+    // spike-prepare-cost (throwaway): under ONEFOLLOWUP_SPIKE_BOUNDED, each input's duplicate
+    // queries go only to the source its ticket would land in, by the store's routes.
+    let bounded = std::env::var_os("ONEFOLLOWUP_SPIKE_BOUNDED").is_some();
+    let mut routed: Vec<String> = batch.destinations();
+    if bounded {
+        for (input, _) in &plans {
+            let lands = store.routed(&batch.config.destination, input.repository.as_deref());
+            if !routed.contains(&lands) {
+                routed.push(lands);
+            }
+        }
+    }
+    for destination in routed {
         let mut searches: Vec<Search> = Vec::new();
-        for (_, plan) in &plans {
+        for (input, plan) in &plans {
+            if bounded
+                && store.routed(&batch.config.destination, input.repository.as_deref())
+                    != destination
+            {
+                continue;
+            }
             searches.extend(candidates::searches(plan));
         }
         for ticket in &tickets {

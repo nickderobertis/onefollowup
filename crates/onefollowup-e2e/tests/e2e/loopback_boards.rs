@@ -1,7 +1,7 @@
 //! Generated GitHub Projects boards the loopback answers from: board-scoped issue searches,
 //! one at a time (`SEARCH_ISSUES`) or batched (`SEARCH_BATCH`), issue reads by node id
 //! (`ISSUE_DETAILS`, `ISSUE_DETAIL`) and their relations (`ISSUE_RELATIONS`, every issue
-//! without sub-issues), each answer shaped as onetaskgraph 0.17.0's documents select it, and
+//! without sub-issues), each answer shaped as onetaskgraph 0.17.2's documents select it, and
 //! each request priced by [`crate::graphql_cost`].
 //!
 //! Search follows GitHub's own rules as far as the walk needs them: the `project:<owner>/<n>`

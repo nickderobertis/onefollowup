@@ -3,7 +3,8 @@
     python3 check_public.py [PATH...] [--fresh] [--names]
 
 Scans every file under PATH (default: this directory, which holds every recorded request,
-response, snapshot, summary and fixture), gzip-compressed ones decompressed, tracked or not.
+response, snapshot, summary and fixture), gzip-compressed ones decompressed, tracked or not,
+but the filter's unit test, whose names are invented (`INVENTED`).
 It gathers every repository the files name and every issue, board item or project they name
 by node id (`public.names_in`: a `nameWithOwner` or `repository` value, a github.com URL, a
 cross-repository issue reference), and asks GitHub for each: a repository passes only when GitHub
@@ -33,6 +34,10 @@ sys.path.insert(0, str(HERE))
 # E402: run as a script from anywhere, this file's directory goes on the path first.
 import ghq  # noqa: E402
 import public  # noqa: E402
+
+# The filter's own unit test: every repository and id in it is invented to exercise the
+# filter, names nothing on GitHub, and is recorded from nowhere.
+INVENTED = {"test_public.py"}
 
 CACHE = (
     Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "onefollowup-spike-real-board"
@@ -84,7 +89,7 @@ def main() -> int:
         path
         for root in roots
         for path in ([root] if root.is_file() else root.rglob("*"))
-        if path.is_file() and "__pycache__" not in path.parts
+        if path.is_file() and "__pycache__" not in path.parts and path.name not in INVENTED
     )
     by_file: dict[Path, tuple[set[str], set[str]]] = {}
     for path in files:

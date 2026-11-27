@@ -57,7 +57,7 @@ pub const STATUS_CATEGORIES: &[&str] = &[
 
 /// The store a snapshot records it was gathered through: onetaskgraph at the version this
 /// crate pins. `tests/store.rs` holds it to the workspace's pin.
-pub const STORE_LINE: &str = "onetaskgraph 0.16.0";
+pub const STORE_LINE: &str = "onetaskgraph 0.17.0";
 
 /// The name of the onetaskgraph configuration document a `store` directory holds.
 pub const STORE_DOCUMENT: &str = "onetaskgraph.yaml";
@@ -323,9 +323,9 @@ pub struct Search {
     pub origin: Option<String>,
     /// The status categories kept; empty keeps every one.
     pub statuses: Vec<String>,
-    /// The most items of its answer kept; `None` keeps every one. onetaskgraph's `task find`
-    /// takes no limit, so the store still answers every match and [`Found::total`] counts
-    /// them; what is kept past this point — reads, candidates — is bounded.
+    /// The most items of its answer kept; `None` keeps every one. Handed to onetaskgraph's
+    /// `task find` as the search's limit, so the store stops reading once it holds this many,
+    /// and [`Found::total`] counts what it answered, at most this.
     pub limit: Option<usize>,
 }
 
@@ -336,7 +336,8 @@ pub struct Found {
     pub key: String,
     /// The tasks it matched, in the store's order, at most its search's limit.
     pub items: Vec<StoreItem>,
-    /// How many tasks the store answered it with, before the limit.
+    /// How many tasks the store answered it with: every match, or for a limited search at most
+    /// its limit, the store having stopped there.
     pub total: usize,
     /// Why it stopped short, when it did.
     pub incomplete: Option<String>,
@@ -966,6 +967,19 @@ impl Store {
                                 })
                             })
                             .collect::<Result<_, _>>()?,
+                        // The store stops each search's walk once it holds this many.
+                        limit: search
+                            .limit
+                            .map(|limit| {
+                                NonZeroU32::new(u32::try_from(limit).unwrap_or(u32::MAX))
+                                    .ok_or_else(|| {
+                                        StoreError::Invalid(format!(
+                                            "the search `{}` keeps no item; a limit is at least 1",
+                                            search.key
+                                        ))
+                                    })
+                            })
+                            .transpose()?,
                     })
                 })
                 .collect::<Result<Vec<_>, StoreError>>()?,

@@ -44,7 +44,10 @@ pub struct BoardIssue {
 }
 
 impl BoardIssue {
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "one argument per field of the issue GitHub answers, each a different value the board generator sets"
+    )]
     pub fn new(
         id: String,
         number: u64,

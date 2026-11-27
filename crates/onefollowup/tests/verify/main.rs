@@ -27,6 +27,7 @@ mod refused_accounts;
 mod relations;
 mod renamed_shape;
 mod rollups;
+mod routed_duplicates;
 mod safeguards;
 mod shapes;
 mod snapshot;

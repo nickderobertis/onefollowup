@@ -1,8 +1,10 @@
 //! `prepare`: snapshot the batch's input set — its drafts and the `batch_preparing` hook's
-//! inputs — read the destination once for the whole batch (one search, carrying every input's
-//! duplicate queries, one comments read, and under a configuration with relations one
+//! inputs — read the destination once for the whole batch (one search per source searched,
+//! each input's duplicate queries going only to the source a ticket about it would land in by
+//! the store's routes, one comments read, and under a configuration with relations one
 //! `task relations` read of the tickets found), and write the verifying agent's task, with
-//! each input's duplicate candidates, and answers skeleton.
+//! each input's duplicate candidates, and answers skeleton. Each phase prints its progress on
+//! standard error, for people (`Store::phase`).
 
 use indexmap::IndexMap;
 use serde::Deserialize;
@@ -268,7 +270,13 @@ pub fn input_set(
 pub fn run(settings: &Settings, args: PrepareArgs) -> Result<Prepared, Error> {
     let batch = Batch::new(settings, &args.batch)?;
     let store = batch.store()?;
+    let phase = store.phase(
+        "prepare",
+        "snapshot read",
+        &format!("batch {}", batch.batch),
+    );
     let (mut state, _) = input_set(&batch, &store, &args.aliases)?;
+    phase.finish();
 
     // The answers: an earlier pass's are carried forward as they stand.
     let (answered, written) = answers(&batch)?;
@@ -325,7 +333,9 @@ pub fn run(settings: &Settings, args: PrepareArgs) -> Result<Prepared, Error> {
         })
         .collect();
 
-    // The destination, read once: one search per destination, one comments read.
+    // The destination, read once: one search per source searched, one comments read. Each
+    // input's duplicate queries go only to the source a ticket about it would land in from
+    // each destination, by the store's routes; the tickets' own searches to their destination.
     let tickets = batch.tickets()?;
     let bound = crate::verify::journal::bound(&crate::verify::journal::read(&batch)?);
     let receipted: Vec<&String> = bound.keys().collect();
@@ -333,11 +343,22 @@ pub fn run(settings: &Settings, args: PrepareArgs) -> Result<Prepared, Error> {
     let mut reads: Vec<Read> = Vec::new();
     // How many items the store answered each search with, before its limit.
     let mut answered: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+    // Each source searched: its searches, and the inputs whose queries they carry.
+    let mut routed: IndexMap<String, (Vec<Search>, Vec<String>)> = IndexMap::new();
+    let placed: Vec<(&str, Option<&str>)> = plans
+        .iter()
+        .map(|(input, _)| (input.id.as_str(), input.repository.as_deref()))
+        .collect();
     for destination in batch.destinations() {
-        let mut searches: Vec<Search> = Vec::new();
-        for (_, plan) in &plans {
-            searches.extend(candidates::searches(plan));
+        let lands = store.routed(&destination, &placed)?;
+        for ((input, plan), lands) in plans.iter().zip(lands) {
+            let (searches, inputs) = routed.entry(lands).or_default();
+            if !inputs.contains(&input.id) {
+                searches.extend(candidates::searches(plan));
+                inputs.push(input.id.clone());
+            }
         }
+        let mut searches: Vec<Search> = Vec::new();
         for ticket in &tickets {
             let Some(kind) = ticket.kind(batch.config) else {
                 continue;
@@ -429,10 +450,25 @@ pub fn run(settings: &Settings, args: PrepareArgs) -> Result<Prepared, Error> {
                 }
             }
         }
+        routed.entry(destination).or_default().0.extend(searches);
+    }
+    for (source, (searches, inputs)) in &routed {
         if searches.is_empty() {
             continue;
         }
-        for found in store.find(&destination, &searches)? {
+        let phase = store.phase(
+            "prepare",
+            &format!("duplicate find on {source}"),
+            &format!(
+                "{} drafts ({}), {} searches",
+                inputs.len(),
+                inputs.join(", "),
+                searches.len()
+            ),
+        );
+        let found = store.find(source, searches)?;
+        phase.finish();
+        for found in found {
             *answered.entry(found.key.clone()).or_default() += found.total;
             for item in found.items {
                 match reads.iter_mut().find(|read| read.item.id == item.id) {
@@ -466,7 +502,13 @@ pub fn run(settings: &Settings, args: PrepareArgs) -> Result<Prepared, Error> {
         }
     }
     if !ids.is_empty() {
+        let phase = store.phase(
+            "prepare",
+            "kept-hit detail read",
+            &format!("{} items ({})", ids.len(), ids.join(", ")),
+        );
         let details = store.read(&ids, true)?;
+        phase.finish();
         for (at, detail) in details.into_iter().enumerate() {
             let Some(item) = detail.item else {
                 continue;
@@ -499,10 +541,22 @@ pub fn run(settings: &Settings, args: PrepareArgs) -> Result<Prepared, Error> {
     )?;
     // Under relations, the edges the found tickets hold, in one read; then, in one more, each
     // ticket at their other ends, whose facts a rollup takes.
-    state.relations = if batch.config.relations.is_empty() || existing_tickets.is_empty() {
-        Vec::new()
-    } else {
+    let relating = !batch.config.relations.is_empty() && !existing_tickets.is_empty();
+    let phase = relating.then(|| {
+        store.phase(
+            "prepare",
+            "relation reads",
+            &format!(
+                "{} tickets ({})",
+                existing_tickets.len(),
+                existing_tickets.join(", ")
+            ),
+        )
+    });
+    state.relations = if relating {
         store.relations(&existing_tickets)?
+    } else {
+        Vec::new()
     };
     let mut related: Vec<String> = Vec::new();
     for item in &state.relations {
@@ -527,6 +581,9 @@ pub fn run(settings: &Settings, args: PrepareArgs) -> Result<Prepared, Error> {
                 });
             }
         }
+    }
+    if let Some(phase) = phase {
+        phase.finish();
     }
     state.reads = reads;
     state.read_at_receipt = crate::verify::journal::read(&batch)?.receipts.len();

@@ -30,7 +30,7 @@ library is the `onefollowup` crate.
 |---|---|
 | `draft --batch <ID> --title <T> --repository <ORIGIN> [--path <P>]... [--author <LABEL>] [--stamp <KEY=VALUE>]...` | Record one draft; its body is read from stdin. Filed under the batch's drafts project, `<drafts_source>:<batch>`; see Private drafts, below. |
 | `snapshot --batch <ID> [--alias <ID>]...` | Run `prepare`'s input-set step alone — the drafts search for the batch and its aliases, and the `batch_preparing` hook — and say whether the batch holds anything to verify: `empty` is `true` exactly when the input set holds no draft and no hook input. It reads no destination and renders no task. An empty batch leaves no working file; a non-empty first pass is saved as the batch's state, which the next `prepare` continues without running the hook again. After a settled pass it reports the new pass's input set but saves nothing — the batch state cannot mark a pass open once its last one settled — so the next `prepare` opens that pass itself, running the hook and the drafts search again. Prints `{"schema_version": 1, "batch", "drafts", "inputs", "empty", "store_operations"}`. |
-| `prepare --batch <ID> [--alias <ID>]... [--unanswered]` | Snapshot the batch's inputs (its drafts and the `batch_preparing` hook's inputs), make its destination reads in one batched search — carrying every input's duplicate queries (Duplicate candidates, below) — and one comments read — under relations, also one `task relations` read of the tickets found and one read of the tickets at their edges' other ends — and write the verifying agent's task, each input's duplicate candidates rendered in it; it continues a pass `snapshot` opened, running no hook again. Prints `{"schema_version": 1, "batch", "drafts", "inputs", "answers", "task_template"}`, with `absent_targets` and `missing_links` when there are any (Relations, below) and `duplicate_searches` under a kind whose duplicates the agent judges. |
+| `prepare --batch <ID> [--alias <ID>]... [--unanswered]` | Snapshot the batch's inputs (its drafts and the `batch_preparing` hook's inputs), make its destination reads in one batched search per source searched — each input's duplicate queries going only to the source a ticket about it would land in (Duplicate candidates, below) — and one comments read — under relations, also one `task relations` read of the tickets found and one read of the tickets at their edges' other ends — and write the verifying agent's task, each input's duplicate candidates rendered in it; it continues a pass `snapshot` opened, running no hook again. It reports each phase's progress on stderr (Progress, below). Prints `{"schema_version": 1, "batch", "drafts", "inputs", "answers", "task_template"}`, with `absent_targets` and `missing_links` when there are any (Relations, below) and `duplicate_searches` under a kind whose duplicates the agent judges. |
 | `ticket validate --batch <ID> <TICKET>` | Hold one ticket to the rules; `absent_targets` names each edge its fields derive whose target does not exist. |
 | `ticket board-status --batch <ID> <ITEM>` | Read one destination item's state and comments from the batch's prepared reads. |
 | `ticket search --batch <ID> --ticket <TICKET> <QUERY>` | Search the destination for a ticket's duplicates. |
@@ -770,7 +770,7 @@ priority.
 **Duplicate candidates.** A duplicate worded differently shares no sentence with the ticket it
 repeats, only a few distinctive words and the failing file, and a destination's text search
 matches a query's words exactly. So under a kind whose duplicates the agent judges, `prepare`
-searches each input for them itself, inside its one batched search: its title, then one query
+searches each input for them itself, inside one batched search per source: its title, then one query
 per distinctive term — up to 5 words of its title, then of its body's opening paragraph,
 longest first, never a word of the shipped stoplist
 ([`duplicate-stoplist.txt`](crates/onefollowup/defaults/duplicate-stoplist.txt): common English
@@ -780,7 +780,14 @@ batch filed that those queries found, at any status, open or closed, is a **cand
 how many of the uncapped queries found it, then the capped, then by how few items those queries
 answered; a query answering more than 20 items is capped: it keeps only 21 of them, so its
 reads and candidates stay bounded however crowded the destination, and what only it found ranks
-last. The
+last. The 21 is handed to the store as each query's limit, so the store stops reading a query
+once it holds 21 matches — the first 21 a walk of every page would list, in that order — and
+its `hits` count what the store answered, at most 21: a query answering 21 is still capped.
+Each input is searched only in the source a ticket about it would be filed in: from each
+destination its kinds name, the source onetaskgraph's routes place it in by its repository and
+its classification (`sources route`), read from configuration alone, so a draft about a private
+repository whose ticket a route sends to a private board is searched there, and never on the
+public one. The
 first 8 are rendered into the task under their draft or input and printed as
 `duplicate_searches`; these numbers are onefollowup's constants, not settings. `check` refuses
 an answer whose disposition requires a ticket while a rendered candidate of its input is neither
@@ -789,6 +796,16 @@ answer names — nor **dismissed** in the answer's `dismissed` (`[{"item", "reas
 reason; an earlier pass's carried answers stand as they are. A second ticket of one root cause
 filed by the same batch, or one a concurrent batch files after this batch searched, is never a
 candidate: only what the destination held when `prepare` searched is.
+
+**Progress.** `prepare` writes one line on stderr as each phase starts and as it ends: the
+snapshot read (`onefollowup prepare: snapshot read: started: batch <ID>`), the duplicate find
+on each source searched with its drafts and searches (`duplicate find on <source>: started: <N>
+drafts (<ids>), <M> searches`), the read of the kept hits with its items, and, under relations,
+the relation reads with their tickets — each ending `finished: <R> requests, <P> points`. While
+a phase runs it writes one line every 20 store requests it sent, `<R> requests, <P> points so
+far`: the points each response's rate-limit reading shows it cost, or, where none does, the
+source's own estimate. A phase that does not run prints nothing. The lines are for people, not
+a format: stdout and every record are the same with stderr discarded.
 
 **The shipped ticket shape.** The verifying agent writes every part plain
 ([`ticket-template.md.j2`](crates/onefollowup/defaults/ticket-template.md.j2)): `## Root cause`;
@@ -803,8 +820,10 @@ nothing — local-md, a stdio peer without `quota` — is never held.
 
 - **Where.** At the store, once per destination call before it is sent, and once per backend
   request inside it through onetaskgraph's request gate, so one batched call is paced request
-  by request. It only ever waits, never refuses: a batch it paces completes, however long it
-  takes. No verb knows it is there.
+  by request. A call is admitted against its own next request — at what a request of its kind
+  has been admitted at — never a whole earlier call's spend, which no window might leave room
+  for. It only ever waits, never refuses: a batch it paces completes, however long it takes. No
+  verb knows it is there.
 - **The line.** For each resource (`graphql`, `core`, …) and each rate-limit window of it that
   has not reset, a request estimated to cost `c` goes at once while
   `remaining - own spend since that reading - c >= floor + reserve`. The floor is
@@ -852,7 +871,11 @@ nothing — local-md, a stdio peer without `quota` — is never held.
   costs and the content-write window — is one state in `state_dir`, one file per backend kind
   (`<kind>.json`, written by nothing but the governor, under a lock beside it), so every
   destination of one kind and every onefollowup process on the host, whatever its work
-  directory, share it, and a fresh process starts from the burn estimate others learned. A
+  directory, share it, and a fresh process starts from the burn estimate others learned.
+  Others' burn older than one `peak_window_seconds` is folded into one interval per fifth of
+  it, so the state holds at most one interval per bucket of `burn_history_seconds` however many
+  requests earlier windows made, and a request's bookkeeping costs the same on a host that has
+  run for a day as on a fresh one. A
   missing, unreadable or other-schema state is no history, never a refusal; the cost in flight
   of a process that is gone is dropped. *Known limit:* two GitHub accounts used from one host
   share one window, each held to caps and a burn estimate that count the other's spend.

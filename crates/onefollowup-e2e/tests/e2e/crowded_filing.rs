@@ -283,9 +283,10 @@ fn a_crowded_destination_still_renders_and_relates_every_duplicate_within_a_hand
                 cluster.later
             );
         }
-        // A query the store answered past the cap keeps only `RETAINED` of its hits, and every
-        // other keeps all of its own: the draft's candidates are drawn from those kept alone,
-        // and what only a capped query found ranks below the bound's better-sharing candidates.
+        // A query matching past the cap is answered only `RETAINED` of its hits — the store
+        // stops there — and keeps them all, as every other keeps all of its own: the draft's
+        // candidates are drawn from those kept alone, and what only a capped query found ranks
+        // below the bound's better-sharing candidates.
         let count = |query: &Value, key: &str| {
             usize::try_from(query[key].as_u64().unwrap_or_default()).unwrap_or(usize::MAX)
         };
@@ -293,8 +294,8 @@ fn a_crowded_destination_still_renders_and_relates_every_duplicate_within_a_hand
         for query in search["queries"].as_array().into_iter().flatten() {
             if query["capped"] == true {
                 assert!(
-                    count(query, "hits") > RETAINED && count(query, "retained") == RETAINED,
-                    "{}: {query} keeps {RETAINED} of the hits the store answered: {search}",
+                    count(query, "hits") == RETAINED && count(query, "retained") == RETAINED,
+                    "{}: {query} is answered and keeps {RETAINED} hits, the store stopping there: {search}",
                     cluster.later
                 );
             } else {
@@ -365,8 +366,8 @@ fn a_crowded_destination_still_renders_and_relates_every_duplicate_within_a_hand
             },
         ));
     }
-    // The overflow stays out of the batch's reads: prepare's comments read reads only what
-    // the queries kept, fewer than the store answered its find with.
+    // The overflow stays out of the store's answer and the batch's reads: the find stops each
+    // query at the hits it keeps, and prepare's comments read reads exactly what it answered.
     let prepared_ops: Vec<(String, u64)> = world
         .destination_operations()
         .into_iter()
@@ -391,9 +392,10 @@ fn a_crowded_destination_still_renders_and_relates_every_duplicate_within_a_hand
         })
         .map(|query| query["retained"].as_u64().unwrap_or_default())
         .sum();
+    let kept_bound = u64::try_from(retained_total).unwrap_or(u64::MAX) + fresh_kept;
     assert!(
-        read < answered && read <= u64::try_from(retained_total).unwrap_or(u64::MAX) + fresh_kept,
-        "prepare read {read} items of the {answered} its find was answered with: {prepared_ops:?}"
+        read == answered && answered <= kept_bound,
+        "prepare read {read} items of the {answered} its find was answered with, the find stopping each query at the hits it keeps ({kept_bound}): {prepared_ops:?}"
     );
     let find_searches: Vec<u64> = world
         .phases

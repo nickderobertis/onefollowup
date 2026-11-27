@@ -126,25 +126,7 @@ pub fn ticket(
     body: &str,
 ) {
     let origin = origin(repository);
-    let record = json!({
-        "schema": 14,
-        "root_cause": root_cause,
-        "repository": origin,
-        "created_by_run": batch,
-        "owning_runs": [batch],
-        "drafts": [format!("drafts:{batch}/drafts/x")],
-        "basis": {origin.clone(): COMMIT},
-        "verified_at": "2026-10-01T11:30:00Z",
-        "host": HOST,
-        "priority_estimate": "medium",
-        "board_estimate": "medium",
-        "frequency": "intermittent",
-        "impact": {
-            "Severity": "high",
-            "Workaround": "re-run the failed step",
-            "Severity with the workaround": "medium",
-        },
-    });
+    let record = record(&origin, root_cause, batch);
     world.item(
         destination,
         id,
@@ -155,6 +137,29 @@ pub fn ticket(
         ),
         &format!("{body}\n"),
     );
+}
+
+/// The follow-up record `batch` left on a ticket of root cause `root_cause` about `origin`.
+pub fn record(origin: &str, root_cause: &str, batch: &str) -> Value {
+    json!({
+        "schema": 14,
+        "root_cause": root_cause,
+        "repository": origin,
+        "created_by_run": batch,
+        "owning_runs": [batch],
+        "drafts": [format!("drafts:{batch}/drafts/x")],
+        "basis": {origin: COMMIT},
+        "verified_at": "2026-10-01T11:30:00Z",
+        "host": HOST,
+        "priority_estimate": "medium",
+        "board_estimate": "medium",
+        "frequency": "intermittent",
+        "impact": {
+            "Severity": "high",
+            "Workaround": "re-run the failed step",
+            "Severity with the workaround": "medium",
+        },
+    })
 }
 
 /// File `earlier` on `destination` as another batch left it, answering its id and root cause.
@@ -212,11 +217,25 @@ pub struct Crowd<'a> {
     pub words: &'a [(&'a str, usize)],
 }
 
-/// File `crowd`'s unrelated tickets on `destination`, spread across the six repositories,
-/// as other batches left them; answer how many carry each word.
-pub fn crowd(world: &World, destination: &str, crowd: &Crowd<'_>) {
-    // Each word goes on its own run of tickets, offset per word, so a ticket carries a word
-    // from several lists only where their runs overlap.
+/// One unrelated ticket of a crowd, as another batch left it.
+pub struct CrowdTicket {
+    /// Its id on the board.
+    pub id: String,
+    /// The repository it is filed in, by name.
+    pub repository: String,
+    pub title: String,
+    pub root_cause: String,
+    /// The batch that filed it.
+    pub batch: String,
+    /// `open`, or `fixed`.
+    pub status: &'static str,
+    pub body: String,
+}
+
+/// `crowd`'s unrelated tickets, spread across `repositories`: each word goes on its own run
+/// of tickets, offset per word, so a ticket carries a word from several lists only where
+/// their runs overlap.
+pub fn crowd_tickets(repositories: &[&str], crowd: &Crowd<'_>) -> Vec<CrowdTicket> {
     let mut offset = 0;
     let mut carried: Vec<Vec<&str>> = vec![Vec::new(); crowd.count];
     for (word, many) in crowd.words {
@@ -230,24 +249,41 @@ pub fn crowd(world: &World, destination: &str, crowd: &Crowd<'_>) {
         }
         offset += 13;
     }
-    for (at, words) in carried.iter().enumerate() {
-        let repository = REPOSITORIES[at % REPOSITORIES.len()];
-        let one = FILLER[at % FILLER.len()];
-        let two = FILLER[(at / FILLER.len() + 7) % FILLER.len()];
-        let extra = words.join(" and ");
-        let title = format!("{repository}: the {one} {two} drifts by {at}");
-        let body = format!(
-            "## Root cause\n\nThe {one} {two} {extra} drifts by {at}.\n\n## Suggested fix\n\n- {repository} `src/{one}_{two}.rs`: recompute the {two}."
-        );
-        let status = if at < crowd.open { "open" } else { "fixed" };
-        ticket(
+    carried
+        .iter()
+        .enumerate()
+        .map(|(at, words)| {
+            let repository = repositories[at % repositories.len()];
+            let one = FILLER[at % FILLER.len()];
+            let two = FILLER[(at / FILLER.len() + 7) % FILLER.len()];
+            let extra = words.join(" and ");
+            CrowdTicket {
+                id: format!("crowd-{at:04}"),
+                repository: repository.to_owned(),
+                title: format!("{repository}: the {one} {two} drifts by {at}"),
+                root_cause: format!("{one}-{two}-drifts-{at}"),
+                batch: format!("nightly-crowd-{}", at % 40),
+                status: if at < crowd.open { "open" } else { "fixed" },
+                body: format!(
+                    "## Root cause\n\nThe {one} {two} {extra} drifts by {at}.\n\n## Suggested fix\n\n- {repository} `src/{one}_{two}.rs`: recompute the {two}."
+                ),
+            }
+        })
+        .collect()
+}
+
+/// File `crowd`'s unrelated tickets on `destination`, spread across the six repositories,
+/// as other batches left them.
+pub fn crowd(world: &World, destination: &str, crowd: &Crowd<'_>) {
+    for ticket in crowd_tickets(&REPOSITORIES, crowd) {
+        self::ticket(
             world,
             destination,
-            &format!("crowd-{at:04}"),
-            (repository, &title, &format!("{one}-{two}-drifts-{at}")),
-            &format!("nightly-crowd-{}", at % 40),
-            status,
-            &body,
+            &ticket.id,
+            (&ticket.repository, &ticket.title, &ticket.root_cause),
+            &ticket.batch,
+            ticket.status,
+            &ticket.body,
         );
     }
 }

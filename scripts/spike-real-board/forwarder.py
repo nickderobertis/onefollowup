@@ -107,8 +107,18 @@ class Recorder:
         (self.directory / "documents").mkdir(parents=True, exist_ok=True)
         self.requests = (self.directory / "requests.jsonl").open("a")
         self.responses = gzip.open(self.directory / "responses.jsonl.gz", "at")
-        self.filter = public.Filter(board_project_id=public.board_project_id())
-        self.filter.visibility.preload(public.BOARD_OWNER)
+        # Every visibility answer the run needs is read before it starts, and none during it,
+        # so the shared allowance's fall over the run holds no request of the recorder's own:
+        # a repository the owner's walk did not answer for, and a node id mentioned in a kept
+        # item's text that is not itself a kept item, are dropped unasked.
+        visibility = public.Visibility()
+        visibility.preload(public.BOARD_OWNER)
+        visibility.offline = True
+        self.filter = public.Filter(
+            visibility,
+            board_project_id=public.board_project_id(),
+            resolve_nodes=lambda ids, board, purpose: set(),
+        )
         self.lock = threading.RLock()
         self.sequence = 0
         self.last_remaining: dict[str, int] = {}
@@ -145,7 +155,9 @@ class Recorder:
     def record(self, entry: dict, answer: dict | None) -> int:
         with self.lock:
             self.sequence += 1
-            entry["seq"] = self.sequence
+            # Held locally: a check this record triggers records itself, and takes a later number.
+            seq = self.sequence
+            entry["seq"] = seq
             entry["t"] = round(time.time() - self.started, 3)
             remaining, reset = entry.get("remaining"), entry.get("reset")
             if remaining is not None and reset is not None and entry.get("resource") == "graphql":
@@ -160,10 +172,10 @@ class Recorder:
             self.requests.write(json.dumps(entry, sort_keys=True) + "\n")
             self.requests.flush()
             if scrubbed is not None:
-                self.responses.write(json.dumps({"seq": self.sequence, "answer": scrubbed}) + "\n")
+                self.responses.write(json.dumps({"seq": seq, "answer": scrubbed}) + "\n")
                 self.responses.flush()
             self.write_dropped()
-            return self.sequence
+            return seq
 
     def document(self, text: str) -> str:
         sha = hashlib.sha256(text.encode()).hexdigest()[:16]
@@ -272,11 +284,10 @@ def handler_for(recorder: Recorder):
                 "response_bytes": len(body),
                 "seconds": round(elapsed, 3),
             }
-            seq = recorder.record(entry, answer)
             ghq.ledger(
                 {
                     "at": time.time(),
-                    "purpose": f"prepare via forwarder ({recorder.directory.name} #{seq} {name})",
+                    "purpose": f"prepare via forwarder ({recorder.directory.name} {name})",
                     "status": status,
                     "charged": cost if cost is not None else 1,
                     "cost_reported": cost is not None,
@@ -284,7 +295,10 @@ def handler_for(recorder: Recorder):
                     "reset": headers.get("x-ratelimit-reset"),
                 }
             )
+            # Prepare has its answer before the recording's filtering runs, so the
+            # recording costs prepare no time.
             self.reply(status, headers, body)
+            recorder.record(entry, answer)
 
     return Handler
 

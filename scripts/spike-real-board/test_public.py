@@ -69,6 +69,18 @@ class FilterTest(unittest.TestCase):
         kept = f.scrub([issue("I_kwHIDE00003", "owner/never-answered"), issue("I_kw000004", "")])
         self.assertEqual(kept, [])
 
+    def test_offline_filter_drops_what_it_was_not_told_is_public_without_asking(self):
+        visibility = public.Visibility(cache=False, known={"owner/open-repo"})
+        visibility.offline = True
+        f = public.Filter(visibility, board_project_id=BOARD, resolve_nodes=lambda *_: set())
+        body = "mentions I_kwPUB000077 and other/unasked-repo#2"
+        kept = f.scrub([
+            issue("I_kwPUB000006", "owner/open-repo", body=body),
+            issue("I_kwPUB000007", "other/unasked-repo"),
+        ])
+        self.assertEqual([one["id"] for one in kept], ["I_kwPUB000006"])
+        self.assertEqual(kept[0]["body"], "mentions (dropped) and (dropped)#2")
+
     def test_other_projects_memberships_keep_only_the_fact(self):
         f = gate()
         node = issue(

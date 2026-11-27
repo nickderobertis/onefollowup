@@ -122,12 +122,16 @@ class Visibility:
         self.answers: dict[str, bool] = {name: True for name in known}
         self.lock = threading.Lock()
         self.cache = cache
+        # Offline, a name not yet answered for is not public, and nothing is asked.
+        self.offline = False
         if cache and CACHE.exists():
             for line in CACHE.read_text().splitlines():
                 if line.strip():
                     self.answers[line.strip()] = True
 
     def resolve(self, names: set[str]) -> None:
+        if self.offline:
+            return
         with self.lock:
             unknown = sorted(name for name in names if name not in self.answers)
         for at in range(0, len(unknown), 50):

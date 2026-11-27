@@ -1,0 +1,34 @@
+query($id0:ID!,$id1:ID!,$id2:ID!,$id3:ID!,$id4:ID!,$id5:ID!,$id6:ID!,$id7:ID!,$id8:ID!,$id9:ID!,$id10:ID!,$id11:ID!,$id12:ID!,$id13:ID!,$id14:ID!,$id15:ID!,$id16:ID!,$id17:ID!,$id18:ID!,$id19:ID!,$id20:ID!,$id21:ID!,$id22:ID!,$id23:ID!,$first:Int!,$comments:Boolean!,$nestedFirst:Int!,$boardItems:Int!,$duplicates:Boolean!,$relationshipEvents:[IssueTimelineItemsItemType!]=[BLOCKED_BY_ADDED_EVENT,BLOCKED_BY_REMOVED_EVENT,BLOCKING_ADDED_EVENT,BLOCKING_REMOVED_EVENT,PARENT_ISSUE_ADDED_EVENT,PARENT_ISSUE_REMOVED_EVENT]){
+      i0:node(id:$id0){__typename ...BoardIssue ... on Issue{comments(first:$first) @include(if:$comments){nodes{id author{__typename login} createdAt updatedAt body url}pageInfo{hasNextPage endCursor}}}}
+      i1:node(id:$id1){__typename ...BoardIssue ... on Issue{comments(first:$first) @include(if:$comments){nodes{id author{__typename login} createdAt updatedAt body url}pageInfo{hasNextPage endCursor}}}}
+      i2:node(id:$id2){__typename ...BoardIssue ... on Issue{comments(first:$first) @include(if:$comments){nodes{id author{__typename login} createdAt updatedAt body url}pageInfo{hasNextPage endCursor}}}}
+      i3:node(id:$id3){__typename ...BoardIssue ... on Issue{comments(first:$first) @include(if:$comments){nodes{id author{__typename login} createdAt updatedAt body url}pageInfo{hasNextPage endCursor}}}}
+      i4:node(id:$id4){__typename ...BoardIssue ... on Issue{comments(first:$first) @include(if:$comments){nodes{id author{__typename login} createdAt updatedAt body url}pageInfo{hasNextPage endCursor}}}}
+      i5:node(id:$id5){__typename ...BoardIssue ... on Issue{comments(first:$first) @include(if:$comments){nodes{id author{__typename login} createdAt updatedAt body url}pageInfo{hasNextPage endCursor}}}}
+      i6:node(id:$id6){__typename ...BoardIssue ... on Issue{comments(first:$first) @include(if:$comments){nodes{id author{__typename login} createdAt updatedAt body url}pageInfo{hasNextPage endCursor}}}}
+      i7:node(id:$id7){__typename ...BoardIssue ... on Issue{comments(first:$first) @include(if:$comments){nodes{id author{__typename login} createdAt updatedAt body url}pageInfo{hasNextPage endCursor}}}}
+      i8:node(id:$id8){__typename ...BoardIssue ... on Issue{comments(first:$first) @include(if:$comments){nodes{id author{__typename login} createdAt updatedAt body url}pageInfo{hasNextPage endCursor}}}}
+      i9:node(id:$id9){__typename ...BoardIssue ... on Issue{comments(first:$first) @include(if:$comments){nodes{id author{__typename login} createdAt updatedAt body url}pageInfo{hasNextPage endCursor}}}}
+      i10:node(id:$id10){__typename ...BoardIssue ... on Issue{comments(first:$first) @include(if:$comments){nodes{id author{__typename login} createdAt updatedAt body url}pageInfo{hasNextPage endCursor}}}}
+      i11:node(id:$id11){__typename ...BoardIssue ... on Issue{comments(first:$first) @include(if:$comments){nodes{id author{__typename login} createdAt updatedAt body url}pageInfo{hasNextPage endCursor}}}}
+      i12:node(id:$id12){__typename ...BoardIssue ... on Issue{comments(first:$first) @include(if:$comments){nodes{id author{__typename login} createdAt updatedAt body url}pageInfo{hasNextPage endCursor}}}}
+      i13:node(id:$id13){__typename ...BoardIssue ... on Issue{comments(first:$first) @include(if:$comments){nodes{id author{__typename login} createdAt updatedAt body url}pageInfo{hasNextPage endCursor}}}}
+      i14:node(id:$id14){__typename ...BoardIssue ... on Issue{comments(first:$first) @include(if:$comments){nodes{id author{__typename login} createdAt updatedAt body url}pageInfo{hasNextPage endCursor}}}}
+      i15:node(id:$id15){__typename ...BoardIssue ... on Issue{comments(first:$first) @include(if:$comments){nodes{id author{__typename login} createdAt updatedAt body url}pageInfo{hasNextPage endCursor}}}}
+      i16:node(id:$id16){__typename ...BoardIssue ... on Issue{comments(first:$first) @include(if:$comments){nodes{id author{__typename login} createdAt updatedAt body url}pageInfo{hasNextPage endCursor}}}}
+      i17:node(id:$id17){__typename ...BoardIssue ... on Issue{comments(first:$first) @include(if:$comments){nodes{id author{__typename login} createdAt updatedAt body url}pageInfo{hasNextPage endCursor}}}}
+      i18:node(id:$id18){__typename ...BoardIssue ... on Issue{comments(first:$first) @include(if:$comments){nodes{id author{__typename login} createdAt updatedAt body url}pageInfo{hasNextPage endCursor}}}}
+      i19:node(id:$id19){__typename ...BoardIssue ... on Issue{comments(first:$first) @include(if:$comments){nodes{id author{__typename login} createdAt updatedAt body url}pageInfo{hasNextPage endCursor}}}}
+      i20:node(id:$id20){__typename ...BoardIssue ... on Issue{comments(first:$first) @include(if:$comments){nodes{id author{__typename login} createdAt updatedAt body url}pageInfo{hasNextPage endCursor}}}}
+      i21:node(id:$id21){__typename ...BoardIssue ... on Issue{comments(first:$first) @include(if:$comments){nodes{id author{__typename login} createdAt updatedAt body url}pageInfo{hasNextPage endCursor}}}}
+      i22:node(id:$id22){__typename ...BoardIssue ... on Issue{comments(first:$first) @include(if:$comments){nodes{id author{__typename login} createdAt updatedAt body url}pageInfo{hasNextPage endCursor}}}}
+      i23:node(id:$id23){__typename ...BoardIssue ... on Issue{comments(first:$first) @include(if:$comments){nodes{id author{__typename login} createdAt updatedAt body url}pageInfo{hasNextPage endCursor}}}}
+    } fragment BoardIssue on Issue{__typename id number title body url createdAt updatedAt state stateReason(enableDuplicate:$duplicates) repository{nameWithOwner} parent{id} subIssuesSummary{total} commentCount:comments{totalCount} relationshipEvents:timelineItems(itemTypes:$relationshipEvents){totalCount}
+      labels(first:$nestedFirst){nodes{id name color}pageInfo{hasNextPage}}
+      projectItems(first:$boardItems){nodes{id updatedAt project{id number}
+        fieldValues(first:$nestedFirst){nodes{
+          ... on ProjectV2ItemFieldSingleSelectValue{name field{
+            ... on ProjectV2SingleSelectField{id name options{id name}}
+          }}
+          ... on ProjectV2ItemFieldTextValue{text field{... on ProjectV2Field{id name}}}
+        }pageInfo{hasNextPage}}}pageInfo{hasNextPage endCursor}}}

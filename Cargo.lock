@@ -1320,6 +1320,7 @@ dependencies = [
  "jsonschema",
  "onebudgetspec-core",
  "onefollowup",
+ "onetaskgraph-github-projects",
  "regex",
  "serde",
  "serde-saphyr",

@@ -18,6 +18,9 @@ authors = ["Nick DeRobertis"]
 onetaskgraph-core = { version = "=0.17.0", features = ["github-projects", "linear"] }
 # The contract crate, for the status vocabulary a status role maps to.
 onetaskgraph-plugin-api = "=0.17.0"
+# The e2e loopback GitHub names the documents it answers by the GitHub Projects plugin's own
+# constants: the release onetaskgraph-core's `github-projects` feature already resolves.
+onetaskgraph-github-projects = "=0.17.0"
 # The request gate onetaskgraph's engine asks is an `async_trait`.
 async-trait = "0.1.92"
 clap = { version = "4.6.6", features = ["derive"] }

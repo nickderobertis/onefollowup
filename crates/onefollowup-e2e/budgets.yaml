@@ -157,3 +157,54 @@ budgets:
     unit: operations
     direction: max
     threshold: 3
+  # The GitHub points one 50-draft `prepare` spends, recorded by tests/e2e/prepare_cost.rs over
+  # the loopback GitHub, which charges each request by GitHub's published calculation (each
+  # connection's requests, its `first` times its parents' page sizes, summed, over 100, rounded,
+  # at least 1), from a fresh window. Basis, a design target from the user's goal (manager
+  # ruling a4): a 50-draft batch at a tenth of an hour's 5,000 points, 500 points, 10 a draft.
+  # `spike-prepare-cost` measured the bounded design at 6.62 a draft (331 points), against 104.2
+  # for the unbounded search (5,210 points, more than an hour's allowance), on a loopback whose
+  # prices agreed with onetaskgraph's own hints within 2.4%. The journey records the figure
+  # rounded up to whole points. About 60 seconds to report, as above; the journey also asserts
+  # each draft's routing and prepare's progress lines.
+  # llmlint: ignore[budgets_track_product_owner_outcomes] Manager ruling a5: `follow-up-batch-store-operations` stays beside the new budget as a different measure. It counts store calls, and a batched find is one call whatever it reads, which is how this regression passed it; the points prepare spends are the figure that grew, held per draft at a workload of its own.
+  - id: prepare-graphql-points-per-draft
+    description: >-
+      GitHub GraphQL points one `onefollowup prepare` of a 50-draft batch spends, from its first
+      destination request to its result, per draft prepared — 40 drafts routed to a 2,000-ticket
+      public board, 10 to a 400-ticket private one, each searching its title, terms and file
+      names, at least 3 of the terms matching 1,000 tickets or more — with points by phase,
+      searches asked, rows read, searches ended at their limit and drafts per routed destination
+      in the detail. It protects the hourly GitHub allowance every run on the host's token
+      shares, by holding prepare's cost to its drafts rather than to how many tickets match a
+      common term.
+    measure: reported
+    command: ["cargo", "test", "--quiet", "-p", "onefollowup-e2e", "--locked", "--test", "e2e", "--", "budget_runner::report", "--exact", "--nocapture", "../../target/debug/telemetry/onefollowup-e2e"]
+    unit: points
+    direction: max
+    threshold: 10
+  # The same journey's seconds: the built `prepare` process's wall clock from spawn to exit,
+  # timed with a monotonic clock, every governor hold inside it as real time, plus each request
+  # it sent in sequence at a stated 0.5 s GitHub round trip, which a loopback answering in
+  # microseconds cannot reproduce; nothing sleeps for it. The loopback reports a fresh window,
+  # 5,000 of 5,000 points resetting 1,800 s after the start, and the governor keeps its 20% floor
+  # and seeded reserve, starting from a host state carried over from many earlier windows, about
+  # the 910 KB this host's held. Basis, a design target from the user's goal (manager ruling a4):
+  # a 50-draft batch prepares in minutes, 300 s. `spike-prepare-cost` measured the bounded design
+  # at 161 s with the governor off; a fresh window leaves about 2,800 points above the floor and
+  # reserve, so with the governor's estimate and state fixes it is expected near that. The
+  # journey records the figure rounded up to whole seconds. About 60 seconds to report, as above.
+  # llmlint: ignore[budgets_track_product_owner_outcomes] Manager ruling a5: `follow-up-batch-store-operations` stays beside the new budget as a different measure. It counts store calls, and a batched find is one call whatever it reads, which is how this regression passed it; the points prepare spends are the figure that grew, held per draft at a workload of its own.
+  - id: prepare-seconds-per-batch
+    description: >-
+      Seconds one `onefollowup prepare` of the same 50-draft batch takes to reach its result:
+      the process's measured elapsed, governor holds included, plus its GitHub requests in
+      sequence at a stated 0.5 s round trip, from a fresh quota window and a governor state
+      carried over from many earlier windows, with the holds, the state's size at start and end
+      and the requests by phase in the detail. It protects follow-up verification as something a
+      person can wait on.
+    measure: reported
+    command: ["cargo", "test", "--quiet", "-p", "onefollowup-e2e", "--locked", "--test", "e2e", "--", "budget_runner::report", "--exact", "--nocapture", "../../target/debug/telemetry/onefollowup-e2e"]
+    unit: seconds
+    direction: max
+    threshold: 300

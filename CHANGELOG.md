@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.0](https://github.com/nickderobertis/onefollowup/compare/v0.13.4...v0.14.0) - 2026-11-27
+
+### Added
+
+- *(prepare)* search each draft where its ticket lands, stop at the hits kept, show progress, never hold a call forever ([#95](https://github.com/nickderobertis/onefollowup/pull/95))
+- *(status)* [**breaking**] link the store that converts every details block and adds in-review, and give in-review a status role ([#91](https://github.com/nickderobertis/onefollowup/pull/91))
+
 ## [0.13.4](https://github.com/nickderobertis/onefollowup/compare/v0.13.3...v0.13.4) - 2026-11-23
 
 ### Fixed

@@ -1,0 +1,61 @@
+{
+  "board_public": false,
+  "items_on_board": 2138,
+  "items_dropped_as_not_public": 9,
+  "mentions_dropped_as_not_public": 26,
+  "board_issue_counts_from_search": {
+    "issues": 2138,
+    "open": 465
+  },
+  "public_issues": 2129,
+  "public_open": 465,
+  "repositories": {
+    "nickderobertis/ai-orchestrator": 407,
+    "nickderobertis/allowlister": 6,
+    "nickderobertis/allowlister-remote": 7,
+    "nickderobertis/allowlister-terminal-approval-plugin": 2,
+    "nickderobertis/cargo-prune-superseded": 3,
+    "nickderobertis/cloud-agent-dev-env": 2,
+    "nickderobertis/crozier": 271,
+    "nickderobertis/dero-skills": 48,
+    "nickderobertis/github-graphql-node-count": 1,
+    "nickderobertis/github-secrets": 5,
+    "nickderobertis/llmlint": 23,
+    "nickderobertis/notignored": 9,
+    "nickderobertis/oneagentgraph": 26,
+    "nickderobertis/onebudgetspec": 8,
+    "nickderobertis/onebudgetspec-github-action": 6,
+    "nickderobertis/onebudgetspec-plugin-onevcs": 2,
+    "nickderobertis/onefollowup": 14,
+    "nickderobertis/oneharness": 105,
+    "nickderobertis/oneharness-ui": 19,
+    "nickderobertis/onejudge": 43,
+    "nickderobertis/onemessagebus": 31,
+    "nickderobertis/onepipeline": 441,
+    "nickderobertis/onepipeline-ui": 111,
+    "nickderobertis/onetaskgraph": 213,
+    "nickderobertis/onetaskgraph-ui": 1,
+    "nickderobertis/onevcs": 208,
+    "nickderobertis/printobserver": 84,
+    "nickderobertis/privateterms": 2,
+    "nickderobertis/screencomp": 14,
+    "nickderobertis/skilltest": 17
+  },
+  "body_bytes": {
+    "n": 2129,
+    "min": 2030,
+    "p50": 4498,
+    "p90": 5823,
+    "p99": 8611,
+    "max": 40249,
+    "mean": 4700.2
+  },
+  "body_bytes_total": 10006653,
+  "labels_per_issue": {
+    "0": 2116,
+    "1": 13
+  },
+  "project_memberships_per_issue": {
+    "1": 2129
+  }
+}

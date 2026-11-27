@@ -1,0 +1,82 @@
+[
+  {
+    "ticket": {"repository": "nickderobertis/onepipeline", "number": 1487},
+    "ticket_open": true,
+    "title": "onepipeline: export journeys fail late when Git LFS is missing instead of naming it",
+    "body": "The export journeys need Git LFS on the host, but nothing provisions it or refuses up front when the lfs executable is absent, so the missing prerequisite surfaces as a node-status failure or a consumer timeout rather than a named refusal.",
+    "paths": ["tests/e2e/harness.rs", "tests/e2e/publication_boundary.rs"],
+    "distinctive": ["export", "journeys", "prerequisite"]
+  },
+  {
+    "ticket": {"repository": "nickderobertis/onevcs", "number": 343},
+    "ticket_open": true,
+    "title": "onevcs: gate timing journey compares hook stamps with the publication interval",
+    "body": "Under shared-host load the pre-push gate timing journey fails, 4.882 s against 5 s, because it compares externally stamped hook and receive-side events, and exact sleep lower bounds, with the recorded publication interval; run alone it passes.",
+    "paths": ["tests/gate_runs.rs"],
+    "distinctive": ["timing", "stamps", "gate_runs.rs"]
+  },
+  {
+    "ticket": {"repository": "nickderobertis/onetaskgraph", "number": 4041},
+    "ticket_open": true,
+    "title": "onetaskgraph: copying onto a linked Linear item loses its readable link titles",
+    "body": "A copy refresh over an existing Linear item that carries links replaces each link's readable title and address with a bare internal reference, and they stay missing until some other link edit happens.",
+    "paths": ["crates/onetaskgraph-linear/src/lib.rs", "crates/onetaskgraph-linear/src/relation.rs"],
+    "distinctive": ["linear", "readable", "relation.rs"]
+  },
+  {
+    "ticket": {"repository": "nickderobertis/allowlister-remote", "number": 112},
+    "ticket_open": false,
+    "title": "allowlister-remote: broker readiness probe accepts another process's listener",
+    "body": "free_port drops its ephemeral listener before the broker binds, and boot_broker_on takes any TCP connect as readiness, so a concurrent listener passes the probe and the healthz journey reads ConnectionReset.",
+    "paths": ["tests/full_chain.rs"],
+    "distinctive": ["broker", "readiness", "listener"]
+  },
+  {
+    "ticket": {"repository": "nickderobertis/onetaskgraph", "number": 3756},
+    "ticket_open": false,
+    "title": "onetaskgraph: simulated clock refuses reattach while the old client is still detaching",
+    "body": "Under instrumented macOS coverage the simulated test clock refuses a client that reattaches after five real seconds, though the earlier client is still detaching normally, so the cache budget journey fails.",
+    "paths": ["tests/cache_budget.rs", "tests/support/clock.rs"],
+    "distinctive": ["simulated", "clock", "reattach"]
+  },
+  {
+    "ticket": {"repository": "nickderobertis/oneharness", "number": 1405},
+    "ticket_open": false,
+    "title": "oneharness: control interrupt acknowledges a redirect before the next turn takes it",
+    "body": "A redirect sent through the control channel is reported served as soon as it is committed, while delivery on the stdin path waits on a terminal frame; under load the turn ends without the instruction yet the report says it was served.",
+    "paths": ["src/control.rs", "src/cli.rs"],
+    "distinctive": ["interrupt", "redirect", "control"]
+  },
+  {
+    "ticket": {"repository": "nickderobertis/onepipeline", "number": 360},
+    "ticket_open": false,
+    "title": "onepipeline: host prerequisite publication refusals burn worker retry turns",
+    "body": "Every preserving publication failure goes back through the bounded worker redispatch loop, whether it is a tree defect or a host prerequisite no worker edit can repair, so a host-side refusal exhausts the node's retry budget.",
+    "paths": ["src/lifecycle.rs"],
+    "distinctive": ["publication", "refusals", "retry"]
+  },
+  {
+    "ticket": {"repository": "nickderobertis/onepipeline", "number": 416},
+    "ticket_open": false,
+    "title": "onepipeline: judged lint diagnostics are lost when Nx drops the streams",
+    "body": "The judged lint tier records the no-verdict refusal but leaves findings, toolchain failures and empty failure reports on stderr only, so when Nx does not forward those streams a developer sees a failed tier with no diagnostic.",
+    "paths": ["scripts/llmlint-diff.sh", "scripts/llmlint-judge.sh"],
+    "distinctive": ["judged", "streams", "llmlint-judge.sh"]
+  },
+  {
+    "ticket": {"repository": "nickderobertis/onetaskgraph", "number": 3606},
+    "ticket_open": false,
+    "title": "onetaskgraph: concurrent SDK verification races on shared package build staging",
+    "body": "Two SDK verification tasks run together move the same staged Python package build out from under each other, so integration tests fail after compilation and pass when rerun alone.",
+    "paths": ["tests/copy_cost.rs", "pyproject.toml"],
+    "distinctive": ["verification", "staging", "copy_cost.rs"]
+  },
+  {
+    "ticket": {"repository": "nickderobertis/ai-orchestrator", "number": 1832},
+    "ticket_open": false,
+    "title": "ai-orchestrator: live review of a retry rejudges the whole accepted task",
+    "body": "A retry amending one criterion is reviewed as if the accepted task were new, so review asks for unrelated journeys and recovery waits on repeated refusals, instead of judging the change against the accepted baseline.",
+    "paths": ["orchestrator/envelope_review.py", "orchestrator/plan_review.py"],
+    "distinctive": ["retry", "accepted", "baseline"]
+  }
+]

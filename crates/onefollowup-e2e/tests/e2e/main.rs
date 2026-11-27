@@ -35,6 +35,7 @@ mod outstanding;
 mod pending_recovery;
 mod prepare_cost;
 mod private_drafts;
+mod real_board_prices;
 mod refusals;
 mod refused_accounts;
 mod renamed_shape;

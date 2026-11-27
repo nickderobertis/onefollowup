@@ -1,0 +1,3 @@
+{"as_sent": {"cost": 3, "nodeCount": 12240}, "document": "SEARCH_BATCH", "same": true, "with_actual_cost": {"cost": 3, "nodeCount": 12240}}
+{"as_sent": {"cost": 1, "nodeCount": 4080}, "document": "SEARCH_ISSUES", "same": true, "with_actual_cost": {"cost": 1, "nodeCount": 4080}}
+{"as_sent": {"cost": 1, "nodeCount": 7272}, "document": "ISSUE_DETAILS", "same": true, "with_actual_cost": {"cost": 1, "nodeCount": 7272}}

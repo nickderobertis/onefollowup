@@ -1,0 +1,44 @@
+{
+  "run": "ten-drafts-ungoverned",
+  "searches_recorded": 77,
+  "distinct_query_texts": 74,
+  "distinct_hits_read": 643,
+  "prices": {
+    "today: SEARCH_BATCH first round (20 slots x 3 rows)": {
+      "cost": 3,
+      "nodeCount": 12240
+    },
+    "today: SEARCH_BATCH resumed round (20 slots sharing 20 rows)": {
+      "cost": 1,
+      "nodeCount": 4080
+    },
+    "today: ISSUE_DETAILS (24 items, comments)": {
+      "cost": 1,
+      "nodeCount": 7272
+    },
+    "bound: SEARCH_BATCH, 20 first pages and 5 origin slots of 100 items": {
+      "cost": 13,
+      "nodeCount": 62740
+    },
+    "today's SEARCH_BATCH, every slot one 21-row page": {
+      "cost": 21,
+      "nodeCount": 85680
+    },
+    "candidate 1: 20 scalar search slots x 21 rows": {
+      "cost": 1,
+      "nodeCount": 420
+    },
+    "candidate 1: 20 scalar search slots x 100 rows": {
+      "cost": 1,
+      "nodeCount": 2000
+    },
+    "candidate 2: 20 search slots x 21 rows, each with Status by name": {
+      "cost": 4,
+      "nodeCount": 1680
+    },
+    "candidate 2: detail batch of 24 with Status by name, comments": {
+      "cost": 1,
+      "nodeCount": 3672
+    }
+  }
+}

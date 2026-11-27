@@ -1,0 +1,14 @@
+{
+  "candidate 1: 20 scalar search slots x 21 rows": {
+    "cost": 1.0,
+    "seconds": 5.578,
+    "response_bytes": 68236,
+    "rows": 255
+  },
+  "candidate 2: detail batch of 24 with Status by name, comments": {
+    "cost": 1.0,
+    "seconds": 1.674,
+    "response_bytes": 167051,
+    "rows": 24
+  }
+}

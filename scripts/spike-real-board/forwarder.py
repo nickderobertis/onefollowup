@@ -223,6 +223,19 @@ def handler_for(recorder: Recorder):
                     "resource": "graphql" if window else None,
                     "seconds": round(elapsed, 3),
                     "response_bytes": len(body),
+                    # What the answer's own headers read (the `core` window, which prepare's
+                    # gate is told of), and every window the body reports: counts only.
+                    "header_window": {
+                        "resource": headers.get("x-ratelimit-resource"),
+                        "remaining": headers.get("x-ratelimit-remaining"),
+                        "reset": headers.get("x-ratelimit-reset"),
+                    },
+                    "windows": {
+                        name: {key: held.get(key) for key in ("limit", "remaining", "reset", "used")}
+                        for name, held in (
+                            (json.loads(body).get("resources") or {}) if status == 200 else {}
+                        ).items()
+                    },
                 },
                 None,
             )

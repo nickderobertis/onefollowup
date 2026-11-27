@@ -1,0 +1,1926 @@
+{
+  "schema_version": 1,
+  "batch": "spike-ten-drafts-governed-2",
+  "drafts": 10,
+  "inputs": 0,
+  "answers": "/home/whoop/ai-orchestrator/runs/Follow-up-prepare-s-duplicate-search-costs-what-its-budget-says-on-a-real-board-spikes/scratch/1059890-3/real-board-world.rvI2Zm/.onefollowup/dispositions/spike-ten-drafts-governed-2.json",
+  "task_template": "/home/whoop/ai-orchestrator/runs/Follow-up-prepare-s-duplicate-search-costs-what-its-budget-says-on-a-real-board-spikes/scratch/1059890-3/real-board-world.rvI2Zm/.onefollowup/tasks/spike-ten-drafts-governed-2/task.md",
+  "duplicate_searches": [
+    {
+      "input": "drafts:ai-orchestrator-live-review-of-a-retry-rejudges-the-whole-accepted-task",
+      "stoplisted": [
+        "ai-orchestrator",
+        "whole",
+        "task"
+      ],
+      "queries": [
+        {
+          "text": "ai-orchestrator: live review of a retry rejudges the whole accepted task",
+          "kind": "title",
+          "hits": 0,
+          "retained": 0,
+          "capped": false
+        },
+        {
+          "text": "accepted",
+          "kind": "term",
+          "hits": 21,
+          "retained": 21,
+          "capped": true
+        },
+        {
+          "text": "rejudge",
+          "kind": "term",
+          "hits": 0,
+          "retained": 0,
+          "capped": false
+        },
+        {
+          "text": "review",
+          "kind": "term",
+          "hits": 21,
+          "retained": 21,
+          "capped": true
+        },
+        {
+          "text": "retry",
+          "kind": "term",
+          "hits": 21,
+          "retained": 21,
+          "capped": true
+        },
+        {
+          "text": "live",
+          "kind": "term",
+          "hits": 21,
+          "retained": 21,
+          "capped": true
+        },
+        {
+          "text": "envelope_review.py",
+          "kind": "file",
+          "hits": 8,
+          "retained": 8,
+          "capped": false
+        },
+        {
+          "text": "plan_review.py",
+          "kind": "file",
+          "hits": 7,
+          "retained": 7,
+          "capped": false
+        }
+      ],
+      "matching": 90,
+      "candidates": [
+        {
+          "item": "followups:I_kwDOTXCWqs8AAAABW0tydw",
+          "title": "ai-orchestrator: Live retry review must preserve the accepted task baseline",
+          "status": {
+            "category": "cancelled",
+            "name": "Cancelled"
+          },
+          "url": "https://github.com/nickderobertis/ai-orchestrator/issues/1832",
+          "root_cause": "live-review-must-preserve-reviewed-task-baseline",
+          "shared": [
+            "envelope_review.py",
+            "plan_review.py"
+          ],
+          "capped": [
+            "accepted"
+          ]
+        },
+        {
+          "item": "followups:I_kwDOTXCWqs8AAAABaKzkyA",
+          "title": "ai-orchestrator: Retry reviews must preserve accepted unchanged criteria",
+          "status": {
+            "category": "cancelled",
+            "name": "Cancelled"
+          },
+          "url": "https://github.com/nickderobertis/ai-orchestrator/issues/2143",
+          "root_cause": "retry-reviews-preserve-accepted-unchanged-criteria",
+          "shared": [
+            "envelope_review.py",
+            "plan_review.py"
+          ],
+          "capped": [
+            "accepted"
+          ]
+        },
+        {
+          "item": "followups:I_kwDOTXCWqs8AAAABRZhTNQ",
+          "title": "ai-orchestrator: cross-DAG dependencies produce inconsistent plan review keys",
+          "status": {
+            "category": "done",
+            "name": "Done"
+          },
+          "url": "https://github.com/nickderobertis/ai-orchestrator/issues/1071",
+          "root_cause": "plan-review-cross-dag-dependency-key-drift",
+          "shared": [
+            "plan_review.py"
+          ],
+          "capped": []
+        },
+        {
+          "item": "followups:I_kwDOTXCWqs8AAAABSNZOJw",
+          "title": "ai-orchestrator: Claude fallback rejects authored response schemas",
+          "status": {
+            "category": "done",
+            "name": "Done"
+          },
+          "url": "https://github.com/nickderobertis/ai-orchestrator/issues/1228",
+          "root_cause": "claude-fallback-rejects-authored-schemas",
+          "shared": [
+            "plan_review.py"
+          ],
+          "capped": []
+        },
+        {
+          "item": "followups:I_kwDOTXCWqs8AAAABTRJ7CQ",
+          "title": "ai-orchestrator: planning closeout claims every project new during its window",
+          "status": {
+            "category": "cancelled",
+            "name": "Cancelled"
+          },
+          "url": "https://github.com/nickderobertis/ai-orchestrator/issues/1325",
+          "root_cause": "planning-closeout-stamps-unowned-projects",
+          "shared": [
+            "plan_review.py"
+          ],
+          "capped": []
+        },
+        {
+          "item": "followups:I_kwDOTXCWqs8AAAABWADLYw",
+          "title": "ai-orchestrator: Missing coverage causes repeated publication and cycle-time overrun",
+          "status": {
+            "category": "cancelled",
+            "name": "Cancelled"
+          },
+          "url": "https://github.com/nickderobertis/ai-orchestrator/issues/1657",
+          "root_cause": "ai-orchestrator-cycle-time-over-repeated-publication-attempts",
+          "shared": [
+            "plan_review.py"
+          ],
+          "capped": []
+        },
+        {
+          "item": "followups:I_kwDOTx8aUc8AAAABTtMFow",
+          "title": "onepipeline: expects_no_diff review conflicts with no-dispatch engine rule",
+          "status": {
+            "category": "cancelled",
+            "name": "Cancelled"
+          },
+          "url": "https://github.com/nickderobertis/onepipeline/issues/562",
+          "root_cause": "expects-no-diff-review-disagrees-with-engine",
+          "shared": [
+            "plan_review.py"
+          ],
+          "capped": []
+        },
+        {
+          "item": "followups:I_kwDOTXCWqs8AAAABRbPGjQ",
+          "title": "ai-orchestrator: envelope validator crashes look like policy refusals",
+          "status": {
+            "category": "cancelled",
+            "name": "Cancelled"
+          },
+          "url": "https://github.com/nickderobertis/ai-orchestrator/issues/1076",
+          "root_cause": "envelope-validator-crashes-look-like-refusals",
+          "shared": [
+            "envelope_review.py"
+          ],
+          "capped": []
+        }
+      ]
+    },
+    {
+      "input": "drafts:allowlister-remote-broker-readiness-probe-accepts-another-process-s-listener",
+      "stoplisted": [
+        "allowlister-remote",
+        "another",
+        "process"
+      ],
+      "queries": [
+        {
+          "text": "allowlister-remote: broker readiness probe accepts another process's listener",
+          "kind": "title",
+          "hits": 0,
+          "retained": 0,
+          "capped": false
+        },
+        {
+          "text": "readiness",
+          "kind": "term",
+          "hits": 21,
+          "retained": 21,
+          "capped": true
+        },
+        {
+          "text": "listener",
+          "kind": "term",
+          "hits": 7,
+          "retained": 7,
+          "capped": false
+        },
+        {
+          "text": "broker",
+          "kind": "term",
+          "hits": 1,
+          "retained": 1,
+          "capped": false
+        },
+        {
+          "text": "accept",
+          "kind": "term",
+          "hits": 21,
+          "retained": 21,
+          "capped": true
+        },
+        {
+          "text": "probe",
+          "kind": "term",
+          "hits": 21,
+          "retained": 21,
+          "capped": true
+        },
+        {
+          "text": "full_chain.rs",
+          "kind": "file",
+          "hits": 1,
+          "retained": 1,
+          "capped": false
+        }
+      ],
+      "matching": 68,
+      "candidates": [
+        {
+          "item": "followups:I_kwDOS-Nt8c8AAAABWEN12g",
+          "title": "allowlister-remote: Broker readiness can accept a different listener",
+          "status": {
+            "category": "cancelled",
+            "name": "Cancelled"
+          },
+          "url": "https://github.com/nickderobertis/allowlister-remote/issues/112",
+          "root_cause": "broker-readiness-accepts-another-process-port",
+          "shared": [
+            "listener",
+            "broker",
+            "full_chain.rs"
+          ],
+          "capped": [
+            "readiness"
+          ]
+        },
+        {
+          "item": "followups:I_kwDOTx3Fc88AAAABb8A3Xw",
+          "title": "onepipeline-ui: Shared browser fixture origins must remain reserved until serving ends",
+          "status": {
+            "category": "cancelled",
+            "name": "Cancelled"
+          },
+          "url": "https://github.com/nickderobertis/onepipeline-ui/issues/590",
+          "root_cause": "shared-browser-servers-release-probed-ports",
+          "shared": [
+            "listener"
+          ],
+          "capped": []
+        },
+        {
+          "item": "followups:I_kwDOTx3Fc88AAAABem8w1g",
+          "title": "onepipeline-ui: Browser fixtures must retain ownership of their selected ports",
+          "status": {
+            "category": "backlog",
+            "name": "Proposal"
+          },
+          "url": "https://github.com/nickderobertis/onepipeline-ui/issues/752",
+          "root_cause": "fixture-ports-remain-owned-until-serving",
+          "shared": [
+            "listener"
+          ],
+          "capped": []
+        },
+        {
+          "item": "followups:I_kwDOTx8aUc8AAAABVMLxsA",
+          "title": "onepipeline: interrupted ask leaves its correlation falsely deliverable",
+          "status": {
+            "category": "cancelled",
+            "name": "Cancelled"
+          },
+          "url": "https://github.com/nickderobertis/onepipeline/issues/759",
+          "root_cause": "interrupted-ask-leaves-unattended-correlation",
+          "shared": [
+            "listener"
+          ],
+          "capped": []
+        },
+        {
+          "item": "followups:I_kwDOTx8aUc8AAAABYCf_Gg",
+          "title": "onepipeline: Channel journeys let their live asker expire before inspecting its status",
+          "status": {
+            "category": "cancelled",
+            "name": "Cancelled"
+          },
+          "url": "https://github.com/nickderobertis/onepipeline/issues/1006",
+          "root_cause": "channel-journeys-let-their-live-asker-expire-before-inspection",
+          "shared": [
+            "listener"
+          ],
+          "capped": []
+        },
+        {
+          "item": "followups:I_kwDOTx8aUc8AAAABdFPvmA",
+          "title": "onepipeline: Late manager answers do not reach the worker that asked",
+          "status": {
+            "category": "backlog",
+            "name": "Proposal"
+          },
+          "url": "https://github.com/nickderobertis/onepipeline/issues/1437",
+          "root_cause": "late-manager-answers-do-not-reach-abandoned-askers",
+          "shared": [
+            "listener"
+          ],
+          "capped": []
+        },
+        {
+          "item": "followups:I_kwDOUQmSo88AAAABSU8Jtw",
+          "title": "printobserver: released ephemeral ports can be rebound before clients connect",
+          "status": {
+            "category": "done",
+            "name": "Done"
+          },
+          "url": "https://github.com/nickderobertis/printobserver/issues/113",
+          "root_cause": "released-ephemeral-port-reuse",
+          "shared": [
+            "listener"
+          ],
+          "capped": []
+        },
+        {
+          "item": "followups:I_kwDOTx8aUc8AAAABfsXMSA",
+          "title": "onepipeline: A waiting human action must accept the attestation status recommends",
+          "status": {
+            "category": "backlog",
+            "name": "Proposal"
+          },
+          "url": "https://github.com/nickderobertis/onepipeline/issues/1655",
+          "root_cause": "human-readiness-agrees-with-attestation",
+          "shared": [],
+          "capped": [
+            "readiness",
+            "accept"
+          ]
+        }
+      ]
+    },
+    {
+      "input": "drafts:oneharness-control-interrupt-acknowledges-a-redirect-before-the-next-turn-takes-it",
+      "stoplisted": [
+        "oneharness",
+        "before",
+        "next",
+        "takes"
+      ],
+      "queries": [
+        {
+          "text": "oneharness: control interrupt acknowledges a redirect before the next turn takes it",
+          "kind": "title",
+          "hits": 0,
+          "retained": 0,
+          "capped": false
+        },
+        {
+          "text": "acknowledge",
+          "kind": "term",
+          "hits": 21,
+          "retained": 21,
+          "capped": true
+        },
+        {
+          "text": "interrupt",
+          "kind": "term",
+          "hits": 21,
+          "retained": 21,
+          "capped": true
+        },
+        {
+          "text": "redirect",
+          "kind": "term",
+          "hits": 21,
+          "retained": 21,
+          "capped": true
+        },
+        {
+          "text": "control",
+          "kind": "term",
+          "hits": 21,
+          "retained": 21,
+          "capped": true
+        },
+        {
+          "text": "turn",
+          "kind": "term",
+          "hits": 21,
+          "retained": 21,
+          "capped": true
+        },
+        {
+          "text": "control.rs",
+          "kind": "file",
+          "hits": 8,
+          "retained": 8,
+          "capped": false
+        },
+        {
+          "text": "cli.rs",
+          "kind": "file",
+          "hits": 21,
+          "retained": 21,
+          "capped": true
+        }
+      ],
+      "matching": 109,
+      "candidates": [
+        {
+          "item": "followups:I_kwDOS0pFSM8AAAABd5ap4g",
+          "title": "oneharness: Live control must follow turns resumed by background completion",
+          "status": {
+            "category": "backlog",
+            "name": "Proposal"
+          },
+          "url": "https://github.com/nickderobertis/oneharness/issues/1564",
+          "root_cause": "live-control-must-follow-background-resumed-turns",
+          "shared": [
+            "control.rs"
+          ],
+          "capped": [
+            "interrupt",
+            "redirect",
+            "control",
+            "turn"
+          ]
+        },
+        {
+          "item": "followups:I_kwDOS0pFSM8AAAABfzdVYQ",
+          "title": "oneharness: HTTP interruption must retain a redirect when the aborted turn ends early",
+          "status": {
+            "category": "backlog",
+            "name": "Proposal"
+          },
+          "url": "https://github.com/nickderobertis/oneharness/issues/1650",
+          "root_cause": "http-interrupt-retains-early-redirect",
+          "shared": [
+            "control.rs"
+          ],
+          "capped": [
+            "interrupt",
+            "redirect",
+            "control",
+            "turn"
+          ]
+        },
+        {
+          "item": "followups:I_kwDOS0pFSM8AAAABUV_R3Q",
+          "title": "oneharness: control interrupt can report a redirect served without delivering it",
+          "status": {
+            "category": "done",
+            "name": "Done"
+          },
+          "url": "https://github.com/nickderobertis/oneharness/issues/1405",
+          "root_cause": "control-redirect-can-report-served-without-delivery",
+          "shared": [
+            "control.rs"
+          ],
+          "capped": [
+            "acknowledge",
+            "redirect"
+          ]
+        },
+        {
+          "item": "followups:I_kwDOS0pFSM8AAAABVIb13A",
+          "title": "oneharness: Default Codex exec sandbox inherits host policy instead of matching controlled turns",
+          "status": {
+            "category": "cancelled",
+            "name": "Cancelled"
+          },
+          "url": "https://github.com/nickderobertis/oneharness/issues/1416",
+          "root_cause": "codex-default-sandbox-inherits-host",
+          "shared": [
+            "control.rs"
+          ],
+          "capped": []
+        },
+        {
+          "item": "followups:I_kwDOS0pFSM8AAAABYtQcNw",
+          "title": "oneharness: Control addresses must fit after the session store is resolved",
+          "status": {
+            "category": "cancelled",
+            "name": "Cancelled"
+          },
+          "url": "https://github.com/nickderobertis/oneharness/issues/1514",
+          "root_cause": "control-address-budget-uses-resolved-store",
+          "shared": [
+            "control.rs"
+          ],
+          "capped": []
+        },
+        {
+          "item": "followups:I_kwDOS0pFSM8AAAABbJ_9xg",
+          "title": "oneharness: Windows users must be able to control a harness turn",
+          "status": {
+            "category": "cancelled",
+            "name": "Cancelled"
+          },
+          "url": "https://github.com/nickderobertis/oneharness/issues/1547",
+          "root_cause": "windows-users-can-control-harness-turns",
+          "shared": [
+            "control.rs"
+          ],
+          "capped": []
+        },
+        {
+          "item": "followups:I_kwDOTXCWqs8AAAABVwexqw",
+          "title": "ai-orchestrator: Held planner notes cannot be withdrawn before presentation",
+          "status": {
+            "category": "done",
+            "name": "Done"
+          },
+          "url": "https://github.com/nickderobertis/ai-orchestrator/issues/1622",
+          "root_cause": "held-live-note-cannot-be-superseded",
+          "shared": [
+            "control.rs"
+          ],
+          "capped": []
+        },
+        {
+          "item": "followups:I_kwDOTXCWqs8AAAABXipQVQ",
+          "title": "ai-orchestrator: Live corrections need a bounded delivery outcome",
+          "status": {
+            "category": "done",
+            "name": "Done"
+          },
+          "url": "https://github.com/nickderobertis/ai-orchestrator/issues/1902",
+          "root_cause": "live-note-delivery-has-no-outcome-deadline",
+          "shared": [
+            "control.rs"
+          ],
+          "capped": []
+        }
+      ]
+    },
+    {
+      "input": "drafts:onepipeline-export-journeys-fail-late-when-git-lfs-is-missing-instead-of-naming-it",
+      "stoplisted": [
+        "onepipeline",
+        "journeys",
+        "fail",
+        "when",
+        "instead",
+        "need",
+        "host",
+        "nothing",
+        "failure",
+        "rather",
+        "than"
+      ],
+      "queries": [
+        {
+          "text": "onepipeline: export journeys fail late when Git LFS is missing instead of naming it",
+          "kind": "title",
+          "hits": 0,
+          "retained": 0,
+          "capped": false
+        },
+        {
+          "text": "missing",
+          "kind": "term",
+          "hits": 21,
+          "retained": 21,
+          "capped": true
+        },
+        {
+          "text": "export",
+          "kind": "term",
+          "hits": 21,
+          "retained": 21,
+          "capped": true
+        },
+        {
+          "text": "naming",
+          "kind": "term",
+          "hits": 21,
+          "retained": 21,
+          "capped": true
+        },
+        {
+          "text": "late",
+          "kind": "term",
+          "hits": 21,
+          "retained": 21,
+          "capped": true
+        },
+        {
+          "text": "prerequisite",
+          "kind": "term",
+          "hits": 21,
+          "retained": 21,
+          "capped": true
+        },
+        {
+          "text": "harness.rs",
+          "kind": "file",
+          "hits": 21,
+          "retained": 21,
+          "capped": true
+        },
+        {
+          "text": "publication_boundary.rs",
+          "kind": "file",
+          "hits": 1,
+          "retained": 1,
+          "capped": false
+        }
+      ],
+      "matching": 117,
+      "candidates": [
+        {
+          "item": "followups:I_kwDOTx8aUc8AAAABdm357Q",
+          "title": "onepipeline: LFS export verification must name its missing prerequisite",
+          "status": {
+            "category": "backlog",
+            "name": "Proposal"
+          },
+          "url": "https://github.com/nickderobertis/onepipeline/issues/1487",
+          "root_cause": "lfs-export-journeys-declare-their-prerequisite",
+          "shared": [
+            "publication_boundary.rs"
+          ],
+          "capped": [
+            "missing",
+            "export",
+            "prerequisite",
+            "harness.rs"
+          ]
+        },
+        {
+          "item": "followups:I_kwDOTXCWqs8AAAABZ425pg",
+          "title": "ai-orchestrator: Dispatches must provision their repository\u2019s locked environment",
+          "status": {
+            "category": "backlog",
+            "name": "Proposal"
+          },
+          "url": "https://github.com/nickderobertis/ai-orchestrator/issues/2117",
+          "root_cause": "dispatches-provision-their-own-locked-environment",
+          "shared": [],
+          "capped": [
+            "missing",
+            "export"
+          ]
+        },
+        {
+          "item": "followups:I_kwDOTXCWqs8AAAABc1Wkyw",
+          "title": "ai-orchestrator: Private inventory reads must finish or refuse within a bounded time",
+          "status": {
+            "category": "backlog",
+            "name": "Proposal"
+          },
+          "url": "https://github.com/nickderobertis/ai-orchestrator/issues/2315",
+          "root_cause": "private-inventory-requests-have-a-deadline",
+          "shared": [],
+          "capped": [
+            "export",
+            "naming"
+          ]
+        },
+        {
+          "item": "followups:I_kwDOTXCWqs8AAAABfr38kw",
+          "title": "ai-orchestrator: Live edits receive judge identity settings without a driver",
+          "status": {
+            "category": "todo",
+            "name": "Todo"
+          },
+          "url": "https://github.com/nickderobertis/ai-orchestrator/issues/2547",
+          "root_cause": "offline-live-edits-receive-judge-environment",
+          "shared": [],
+          "capped": [
+            "missing",
+            "export"
+          ]
+        },
+        {
+          "item": "followups:I_kwDOTXCWqs8AAAABfsXPfg",
+          "title": "ai-orchestrator: Standalone plan reviews must use the checkout\u2019s pinned harness",
+          "status": {
+            "category": "backlog",
+            "name": "Proposal"
+          },
+          "url": "https://github.com/nickderobertis/ai-orchestrator/issues/2549",
+          "root_cause": "standalone-review-uses-pinned-harness",
+          "shared": [],
+          "capped": [
+            "missing",
+            "prerequisite"
+          ]
+        },
+        {
+          "item": "followups:I_kwDOTx8aUc8AAAABfzdUJA",
+          "title": "onepipeline: Check waits must explain required contexts that never report",
+          "status": {
+            "category": "backlog",
+            "name": "Proposal"
+          },
+          "url": "https://github.com/nickderobertis/onepipeline/issues/1663",
+          "root_cause": "required-checks-explain-missing-contexts",
+          "shared": [],
+          "capped": [
+            "missing",
+            "prerequisite"
+          ]
+        },
+        {
+          "item": "followups:I_kwDOTx8aUc8AAAABhsOWcg",
+          "title": "onepipeline: test fixtures provide required tools",
+          "status": {
+            "category": "backlog",
+            "name": "Proposal"
+          },
+          "url": "https://github.com/nickderobertis/onepipeline/issues/1817",
+          "root_cause": "test-fixtures-provide-required-tools",
+          "shared": [],
+          "capped": [
+            "missing",
+            "prerequisite"
+          ]
+        },
+        {
+          "item": "followups:I_kwDOS0jAoc8AAAABdFN8FQ",
+          "title": "dero-skills: Cache evidence errors discard the recorded unavailability reason",
+          "status": {
+            "category": "backlog",
+            "name": "Proposal"
+          },
+          "url": "https://github.com/nickderobertis/dero-skills/issues/176",
+          "root_cause": "cache-evidence-errors-hide-unavailable-telemetry-reasons",
+          "shared": [],
+          "capped": [
+            "missing"
+          ]
+        }
+      ]
+    },
+    {
+      "input": "drafts:onepipeline-host-prerequisite-publication-refusals-burn-worker-retry-turns",
+      "stoplisted": [
+        "onepipeline",
+        "host",
+        "worker"
+      ],
+      "queries": [
+        {
+          "text": "onepipeline: host prerequisite publication refusals burn worker retry turns",
+          "kind": "title",
+          "hits": 0,
+          "retained": 0,
+          "capped": false
+        },
+        {
+          "text": "prerequisite",
+          "kind": "term",
+          "hits": 21,
+          "retained": 21,
+          "capped": true
+        },
+        {
+          "text": "publication",
+          "kind": "term",
+          "hits": 21,
+          "retained": 21,
+          "capped": true
+        },
+        {
+          "text": "refusal",
+          "kind": "term",
+          "hits": 21,
+          "retained": 21,
+          "capped": true
+        },
+        {
+          "text": "retry",
+          "kind": "term",
+          "hits": 21,
+          "retained": 21,
+          "capped": true
+        },
+        {
+          "text": "burn",
+          "kind": "term",
+          "hits": 2,
+          "retained": 2,
+          "capped": false
+        },
+        {
+          "text": "lifecycle.rs",
+          "kind": "file",
+          "hits": 21,
+          "retained": 21,
+          "capped": true
+        }
+      ],
+      "matching": 101,
+      "candidates": [
+        {
+          "item": "followups:I_kwDOTx3GGM8AAAABYtAZXg",
+          "title": "onevcs: A hung journey must end with usable test evidence",
+          "status": {
+            "category": "cancelled",
+            "name": "Cancelled"
+          },
+          "url": "https://github.com/nickderobertis/onevcs/issues/504",
+          "root_cause": "hung-journey-bounded-diagnostics",
+          "shared": [
+            "burn"
+          ],
+          "capped": []
+        },
+        {
+          "item": "followups:I_kwDOVmtlgM8AAAABiPZUdQ",
+          "title": "onefollowup: Quota pacing must leave an attainable admission threshold when the allowance can support work",
+          "status": {
+            "category": "backlog",
+            "name": "Proposal"
+          },
+          "url": "https://github.com/nickderobertis/onefollowup/issues/90",
+          "root_cause": "quota-reserves-leave-attainable-request-headroom",
+          "shared": [
+            "burn"
+          ],
+          "capped": []
+        },
+        {
+          "item": "followups:I_kwDOTXCWqs8AAAABjC5Gmw",
+          "title": "ai-orchestrator: Shared dispatch guidance preserves task publication capacity",
+          "status": {
+            "category": "backlog",
+            "name": "Proposal"
+          },
+          "url": "https://github.com/nickderobertis/ai-orchestrator/issues/2746",
+          "root_cause": "shared-dispatch-guidance-fits-task-body-limit",
+          "shared": [],
+          "capped": [
+            "publication",
+            "retry"
+          ]
+        },
+        {
+          "item": "followups:I_kwDOTx3GGM8AAAABdGkcsQ",
+          "title": "onevcs: The normal required CI path must fit the publication wait",
+          "status": {
+            "category": "backlog",
+            "name": "Proposal"
+          },
+          "url": "https://github.com/nickderobertis/onevcs/issues/631",
+          "root_cause": "required-ci-path-fits-publication-check-window",
+          "shared": [],
+          "capped": [
+            "prerequisite",
+            "publication"
+          ]
+        },
+        {
+          "item": "followups:I_kwDOTx8aUc8AAAABdm4xZw",
+          "title": "onepipeline: A reused session must emit each event only once in the run stream",
+          "status": {
+            "category": "backlog",
+            "name": "Proposal"
+          },
+          "url": "https://github.com/nickderobertis/onepipeline/issues/1490",
+          "root_cause": "retried-session-events-are-relayed-once",
+          "shared": [],
+          "capped": [
+            "retry",
+            "lifecycle.rs"
+          ]
+        },
+        {
+          "item": "followups:I_kwDOTx8aUc8AAAABdwwR4g",
+          "title": "onepipeline: Squash publication must preserve a worker breaking announcement",
+          "status": {
+            "category": "backlog",
+            "name": "Proposal"
+          },
+          "url": "https://github.com/nickderobertis/onepipeline/issues/1499",
+          "root_cause": "publication-preserves-breaking-announcements",
+          "shared": [],
+          "capped": [
+            "publication",
+            "lifecycle.rs"
+          ]
+        },
+        {
+          "item": "followups:I_kwDOTx8aUc8AAAABfzdUJA",
+          "title": "onepipeline: Check waits must explain required contexts that never report",
+          "status": {
+            "category": "backlog",
+            "name": "Proposal"
+          },
+          "url": "https://github.com/nickderobertis/onepipeline/issues/1663",
+          "root_cause": "required-checks-explain-missing-contexts",
+          "shared": [],
+          "capped": [
+            "prerequisite",
+            "lifecycle.rs"
+          ]
+        },
+        {
+          "item": "followups:I_kwDOTx8aUc8AAAABhSyH1Q",
+          "title": "onepipeline: Publication settles once its change is recorded as landed",
+          "status": {
+            "category": "backlog",
+            "name": "Proposal"
+          },
+          "url": "https://github.com/nickderobertis/onepipeline/issues/1768",
+          "root_cause": "publication-stops-after-landing",
+          "shared": [],
+          "capped": [
+            "publication",
+            "lifecycle.rs"
+          ]
+        }
+      ]
+    },
+    {
+      "input": "drafts:onepipeline-judged-lint-diagnostics-are-lost-when-nx-drops-the-streams",
+      "stoplisted": [
+        "onepipeline",
+        "when"
+      ],
+      "queries": [
+        {
+          "text": "onepipeline: judged lint diagnostics are lost when Nx drops the streams",
+          "kind": "title",
+          "hits": 0,
+          "retained": 0,
+          "capped": false
+        },
+        {
+          "text": "diagnostic",
+          "kind": "term",
+          "hits": 21,
+          "retained": 21,
+          "capped": true
+        },
+        {
+          "text": "judged",
+          "kind": "term",
+          "hits": 21,
+          "retained": 21,
+          "capped": true
+        },
+        {
+          "text": "stream",
+          "kind": "term",
+          "hits": 21,
+          "retained": 21,
+          "capped": true
+        },
+        {
+          "text": "lint",
+          "kind": "term",
+          "hits": 21,
+          "retained": 21,
+          "capped": true
+        },
+        {
+          "text": "lost",
+          "kind": "term",
+          "hits": 21,
+          "retained": 21,
+          "capped": true
+        },
+        {
+          "text": "llmlint-diff.sh",
+          "kind": "file",
+          "hits": 3,
+          "retained": 3,
+          "capped": false
+        },
+        {
+          "text": "llmlint-judge.sh",
+          "kind": "file",
+          "hits": 6,
+          "retained": 6,
+          "capped": false
+        }
+      ],
+      "matching": 97,
+      "candidates": [
+        {
+          "item": "followups:I_kwDOTx8aUc8AAAABSPGgqg",
+          "title": "onepipeline: judged-lint failures depend on Nx forwarding streams",
+          "status": {
+            "category": "done",
+            "name": "Done"
+          },
+          "url": "https://github.com/nickderobertis/onepipeline/issues/416",
+          "root_cause": "judged-lint-failures-depend-on-nx-streams",
+          "shared": [
+            "llmlint-diff.sh",
+            "llmlint-judge.sh"
+          ],
+          "capped": [
+            "judged",
+            "stream"
+          ]
+        },
+        {
+          "item": "followups:I_kwDOTx8aUc8AAAABXsH-nw",
+          "title": "onepipeline: Cached lint verdicts must identify the diff they judged",
+          "status": {
+            "category": "cancelled",
+            "name": "Cancelled"
+          },
+          "url": "https://github.com/nickderobertis/onepipeline/issues/961",
+          "root_cause": "judged-diff-cache-must-include-effective-ancestry",
+          "shared": [
+            "llmlint-diff.sh",
+            "llmlint-judge.sh"
+          ],
+          "capped": [
+            "judged",
+            "lint"
+          ]
+        },
+        {
+          "item": "followups:I_kwDOTx8aUc8AAAABXww3pw",
+          "title": "onepipeline: Every judged-check refusal must reach its caller even when the task runner drops captured output",
+          "status": {
+            "category": "cancelled",
+            "name": "Cancelled"
+          },
+          "url": "https://github.com/nickderobertis/onepipeline/issues/973",
+          "root_cause": "judge-refusals-survive-task-output-loss",
+          "shared": [
+            "llmlint-diff.sh",
+            "llmlint-judge.sh"
+          ],
+          "capped": []
+        },
+        {
+          "item": "followups:I_kwDOTx3GGM8AAAABXSAjdQ",
+          "title": "onevcs: Judged lint must retain the host adapter required to run its agent",
+          "status": {
+            "category": "cancelled",
+            "name": "Cancelled"
+          },
+          "url": "https://github.com/nickderobertis/onevcs/issues/413",
+          "root_cause": "judged-lint-respects-required-host-adapter",
+          "shared": [
+            "llmlint-judge.sh"
+          ],
+          "capped": [
+            "judged"
+          ]
+        },
+        {
+          "item": "followups:I_kwDOTXCWqs8AAAABSTpGlg",
+          "title": "ai-orchestrator: Nx fast-exit capture can drop judged-lint output",
+          "status": {
+            "category": "cancelled",
+            "name": "Cancelled"
+          },
+          "url": "https://github.com/nickderobertis/ai-orchestrator/issues/1267",
+          "root_cause": "nx-fast-exit-drops-task-output",
+          "shared": [
+            "llmlint-judge.sh"
+          ],
+          "capped": []
+        },
+        {
+          "item": "followups:I_kwDOTx3GGM8AAAABSf4SOA",
+          "title": "onevcs: llmlint cache journey loses its refusal text",
+          "status": {
+            "category": "cancelled",
+            "name": "Cancelled"
+          },
+          "url": "https://github.com/nickderobertis/onevcs/issues/197",
+          "root_cause": "llmlint-cache-refusal-text-not-preserved",
+          "shared": [
+            "llmlint-judge.sh"
+          ],
+          "capped": []
+        },
+        {
+          "item": "followups:I_kwDOTx3Fc88AAAABdww_Iw",
+          "title": "onepipeline-ui: A failed CI judge must retain the reason its harness failed",
+          "status": {
+            "category": "backlog",
+            "name": "Proposal"
+          },
+          "url": "https://github.com/nickderobertis/onepipeline-ui/issues/713",
+          "root_cause": "judged-ci-failures-retain-diagnostics",
+          "shared": [],
+          "capped": [
+            "diagnostic",
+            "judged",
+            "lint"
+          ]
+        },
+        {
+          "item": "followups:I_kwDOS0jAoc8AAAABckPM4g",
+          "title": "dero-skills: Generated installer suppressions must match the composed lint rules",
+          "status": {
+            "category": "backlog",
+            "name": "Proposal"
+          },
+          "url": "https://github.com/nickderobertis/dero-skills/issues/170",
+          "root_cause": "generated-suppressions-match-composed-rules",
+          "shared": [],
+          "capped": [
+            "judged",
+            "lint"
+          ]
+        }
+      ]
+    },
+    {
+      "input": "drafts:onetaskgraph-concurrent-sdk-verification-races-on-shared-package-build-staging",
+      "stoplisted": [
+        "onetaskgraph"
+      ],
+      "queries": [
+        {
+          "text": "onetaskgraph: concurrent SDK verification races on shared package build staging",
+          "kind": "title",
+          "hits": 0,
+          "retained": 0,
+          "capped": false
+        },
+        {
+          "text": "verification",
+          "kind": "term",
+          "hits": 21,
+          "retained": 21,
+          "capped": true
+        },
+        {
+          "text": "concurrent",
+          "kind": "term",
+          "hits": 21,
+          "retained": 21,
+          "capped": true
+        },
+        {
+          "text": "package",
+          "kind": "term",
+          "hits": 21,
+          "retained": 21,
+          "capped": true
+        },
+        {
+          "text": "staging",
+          "kind": "term",
+          "hits": 14,
+          "retained": 14,
+          "capped": false
+        },
+        {
+          "text": "shared",
+          "kind": "term",
+          "hits": 21,
+          "retained": 21,
+          "capped": true
+        },
+        {
+          "text": "copy_cost.rs",
+          "kind": "file",
+          "hits": 1,
+          "retained": 1,
+          "capped": false
+        },
+        {
+          "text": "pyproject.toml",
+          "kind": "file",
+          "hits": 18,
+          "retained": 18,
+          "capped": false
+        }
+      ],
+      "matching": 105,
+      "candidates": [
+        {
+          "item": "followups:I_kwDOUBBgxs8AAAABXAdowQ",
+          "title": "onetaskgraph: Parallel SDK verification must not race shared build staging",
+          "status": {
+            "category": "cancelled",
+            "name": "Cancelled"
+          },
+          "url": "https://github.com/nickderobertis/onetaskgraph/issues/3606",
+          "root_cause": "parallel-sdk-verification-must-isolate-build-staging",
+          "shared": [
+            "staging",
+            "copy_cost.rs",
+            "pyproject.toml"
+          ],
+          "capped": []
+        },
+        {
+          "item": "followups:I_kwDOTT3WVc8AAAABdMIutg",
+          "title": "crozier: Concurrent tests must clean only their own temporary files",
+          "status": {
+            "category": "backlog",
+            "name": "Proposal"
+          },
+          "url": "https://github.com/nickderobertis/crozier/issues/784",
+          "root_cause": "pytest-cleanup-crosses-worktree-boundaries",
+          "shared": [
+            "pyproject.toml"
+          ],
+          "capped": [
+            "concurrent"
+          ]
+        },
+        {
+          "item": "followups:I_kwDOS0jAoc8AAAABioGC-Q",
+          "title": "dero-skills: Coverage tools follow the selected Cargo output root",
+          "status": {
+            "category": "backlog",
+            "name": "Proposal"
+          },
+          "url": "https://github.com/nickderobertis/dero-skills/issues/214",
+          "root_cause": "coverage-tools-follow-cargo-output-root",
+          "shared": [
+            "staging"
+          ],
+          "capped": []
+        },
+        {
+          "item": "followups:I_kwDOS9Um9s8AAAABfJm97A",
+          "title": "cloud-agent-dev-env: startup private state is not excluded",
+          "status": {
+            "category": "backlog",
+            "name": "Proposal"
+          },
+          "url": "https://github.com/nickderobertis/cloud-agent-dev-env/issues/22",
+          "root_cause": "startup-private-state-is-not-excluded",
+          "shared": [
+            "staging"
+          ],
+          "capped": []
+        },
+        {
+          "item": "followups:I_kwDOTT3WVc8AAAABizMDlA",
+          "title": "crozier: Ledger recording rejects source-tree destinations",
+          "status": {
+            "category": "done",
+            "name": "Done"
+          },
+          "url": "https://github.com/nickderobertis/crozier/issues/989",
+          "root_cause": "ledger-recordings-stay-outside-source-trees",
+          "shared": [
+            "staging"
+          ],
+          "capped": []
+        },
+        {
+          "item": "followups:I_kwDOTUou6M8AAAABZv3wUw",
+          "title": "onejudge: Concurrent defaults initialization must not share a staging file",
+          "status": {
+            "category": "done",
+            "name": "Done"
+          },
+          "url": "https://github.com/nickderobertis/onejudge/issues/193",
+          "root_cause": "defaults-concurrent-initialization",
+          "shared": [
+            "staging"
+          ],
+          "capped": []
+        },
+        {
+          "item": "followups:I_kwDOTXCWqs8AAAABYISahQ",
+          "title": "ai-orchestrator: Short test state must be placeable on a filesystem with free space",
+          "status": {
+            "category": "cancelled",
+            "name": "Cancelled"
+          },
+          "url": "https://github.com/nickderobertis/ai-orchestrator/issues/1967",
+          "root_cause": "short-test-state-has-a-selectable-filesystem",
+          "shared": [
+            "staging"
+          ],
+          "capped": []
+        },
+        {
+          "item": "followups:I_kwDOTXCWqs8AAAABak-OhQ",
+          "title": "ai-orchestrator: Live run snapshots exclude every writer\u2019s temporary records",
+          "status": {
+            "category": "cancelled",
+            "name": "Cancelled"
+          },
+          "url": "https://github.com/nickderobertis/ai-orchestrator/issues/2163",
+          "root_cause": "live-run-snapshots-exclude-all-writer-staging-names",
+          "shared": [
+            "staging"
+          ],
+          "capped": []
+        }
+      ]
+    },
+    {
+      "input": "drafts:onetaskgraph-copying-onto-a-linked-linear-item-loses-its-readable-link-titles",
+      "stoplisted": [
+        "onetaskgraph",
+        "onto",
+        "item"
+      ],
+      "queries": [
+        {
+          "text": "onetaskgraph: copying onto a linked Linear item loses its readable link titles",
+          "kind": "title",
+          "hits": 0,
+          "retained": 0,
+          "capped": false
+        },
+        {
+          "text": "readable",
+          "kind": "term",
+          "hits": 21,
+          "retained": 21,
+          "capped": true
+        },
+        {
+          "text": "copying",
+          "kind": "term",
+          "hits": 21,
+          "retained": 21,
+          "capped": true
+        },
+        {
+          "text": "linked",
+          "kind": "term",
+          "hits": 21,
+          "retained": 21,
+          "capped": true
+        },
+        {
+          "text": "linear",
+          "kind": "term",
+          "hits": 21,
+          "retained": 21,
+          "capped": true
+        },
+        {
+          "text": "title",
+          "kind": "term",
+          "hits": 21,
+          "retained": 21,
+          "capped": true
+        },
+        {
+          "text": "lib.rs",
+          "kind": "file",
+          "hits": 21,
+          "retained": 21,
+          "capped": true
+        },
+        {
+          "text": "relation.rs",
+          "kind": "file",
+          "hits": 1,
+          "retained": 1,
+          "capped": false
+        }
+      ],
+      "matching": 101,
+      "candidates": [
+        {
+          "item": "followups:I_kwDOUBBgxs8AAAABfiZK_A",
+          "title": "onetaskgraph: linear copy preserves readable link lines",
+          "status": {
+            "category": "backlog",
+            "name": "Proposal"
+          },
+          "url": "https://github.com/nickderobertis/onetaskgraph/issues/4041",
+          "root_cause": "linear-copy-preserves-readable-link-lines",
+          "shared": [
+            "relation.rs"
+          ],
+          "capped": [
+            "readable",
+            "copying",
+            "linked",
+            "linear",
+            "title",
+            "lib.rs"
+          ]
+        },
+        {
+          "item": "followups:I_kwDOUBBgxs8AAAABdwwo6Q",
+          "title": "onetaskgraph: A partial copy must retain relations derived from stored links",
+          "status": {
+            "category": "backlog",
+            "name": "Proposal"
+          },
+          "url": "https://github.com/nickderobertis/onetaskgraph/issues/3965",
+          "root_cause": "derived-relations-survive-partial-copies",
+          "shared": [],
+          "capped": [
+            "copying",
+            "linked",
+            "linear",
+            "lib.rs"
+          ]
+        },
+        {
+          "item": "followups:I_kwDOTx8aUc8AAAABhV3_PQ",
+          "title": "onepipeline: Linear loopback resolves issue keys as well as UUIDs",
+          "status": {
+            "category": "backlog",
+            "name": "Proposal"
+          },
+          "url": "https://github.com/nickderobertis/onepipeline/issues/1773",
+          "root_cause": "loopback-resolves-issue-keys",
+          "shared": [],
+          "capped": [
+            "readable",
+            "linked",
+            "linear"
+          ]
+        },
+        {
+          "item": "followups:I_kwDOUBBgxs8AAAABeoj1ew",
+          "title": "onetaskgraph: Metadata writes must return the version they leave behind",
+          "status": {
+            "category": "backlog",
+            "name": "Proposal"
+          },
+          "url": "https://github.com/nickderobertis/onetaskgraph/issues/3987",
+          "root_cause": "github-metadata-writes-return-stale-versions",
+          "shared": [],
+          "capped": [
+            "copying",
+            "linear",
+            "lib.rs"
+          ]
+        },
+        {
+          "item": "followups:I_kwDOUBBgxs8AAAABfiZLMg",
+          "title": "onetaskgraph: dependency writes preserve far end link mirrors",
+          "status": {
+            "category": "backlog",
+            "name": "Proposal"
+          },
+          "url": "https://github.com/nickderobertis/onetaskgraph/issues/4042",
+          "root_cause": "dependency-writes-preserve-far-end-link-mirrors",
+          "shared": [],
+          "capped": [
+            "linked",
+            "linear",
+            "lib.rs"
+          ]
+        },
+        {
+          "item": "followups:I_kwDOTXCWqs8AAAABXLGAxw",
+          "title": "ai-orchestrator: Host store settings must remain readable by live drivers",
+          "status": {
+            "category": "backlog",
+            "name": "Proposal"
+          },
+          "url": "https://github.com/nickderobertis/ai-orchestrator/issues/1886",
+          "root_cause": "host-store-settings-must-remain-readable-by-live-drivers",
+          "shared": [],
+          "capped": [
+            "readable",
+            "linked"
+          ]
+        },
+        {
+          "item": "followups:I_kwDOTXCWqs8AAAABc1Wkyw",
+          "title": "ai-orchestrator: Private inventory reads must finish or refuse within a bounded time",
+          "status": {
+            "category": "backlog",
+            "name": "Proposal"
+          },
+          "url": "https://github.com/nickderobertis/ai-orchestrator/issues/2315",
+          "root_cause": "private-inventory-requests-have-a-deadline",
+          "shared": [],
+          "capped": [
+            "copying",
+            "lib.rs"
+          ]
+        },
+        {
+          "item": "followups:I_kwDOTx8aUc8AAAABgo1T2A",
+          "title": "onepipeline: Flow names preserve natural language display text",
+          "status": {
+            "category": "backlog",
+            "name": "Proposal"
+          },
+          "url": "https://github.com/nickderobertis/onepipeline/issues/1713",
+          "root_cause": "flow-names-preserve-display-text",
+          "shared": [],
+          "capped": [
+            "readable",
+            "title"
+          ]
+        }
+      ]
+    },
+    {
+      "input": "drafts:onetaskgraph-simulated-clock-refuses-reattach-while-the-old-client-is-still-detaching",
+      "stoplisted": [
+        "onetaskgraph",
+        "while",
+        "still"
+      ],
+      "queries": [
+        {
+          "text": "onetaskgraph: simulated clock refuses reattach while the old client is still detaching",
+          "kind": "title",
+          "hits": 0,
+          "retained": 0,
+          "capped": false
+        },
+        {
+          "text": "simulated",
+          "kind": "term",
+          "hits": 21,
+          "retained": 21,
+          "capped": true
+        },
+        {
+          "text": "detaching",
+          "kind": "term",
+          "hits": 2,
+          "retained": 2,
+          "capped": false
+        },
+        {
+          "text": "reattach",
+          "kind": "term",
+          "hits": 1,
+          "retained": 1,
+          "capped": false
+        },
+        {
+          "text": "refuse",
+          "kind": "term",
+          "hits": 21,
+          "retained": 21,
+          "capped": true
+        },
+        {
+          "text": "client",
+          "kind": "term",
+          "hits": 21,
+          "retained": 21,
+          "capped": true
+        },
+        {
+          "text": "cache_budget.rs",
+          "kind": "file",
+          "hits": 4,
+          "retained": 4,
+          "capped": false
+        },
+        {
+          "text": "clock.rs",
+          "kind": "file",
+          "hits": 3,
+          "retained": 3,
+          "capped": false
+        }
+      ],
+      "matching": 68,
+      "candidates": [
+        {
+          "item": "followups:I_kwDOUBBgxs8AAAABZucOyQ",
+          "title": "onetaskgraph: simulated clock reattach must wait for real detachment",
+          "status": {
+            "category": "cancelled",
+            "name": "Cancelled"
+          },
+          "url": "https://github.com/nickderobertis/onetaskgraph/issues/3756",
+          "root_cause": "simulated-clock-reattach-must-wait-for-real-detachment",
+          "shared": [
+            "detaching",
+            "reattach",
+            "cache_budget.rs",
+            "clock.rs"
+          ],
+          "capped": [
+            "simulated"
+          ]
+        },
+        {
+          "item": "followups:I_kwDOTXCWqs8AAAABURrDiw",
+          "title": "ai-orchestrator: detached host sweep keeps using a disposable dispatch worktree",
+          "status": {
+            "category": "cancelled",
+            "name": "Cancelled"
+          },
+          "url": "https://github.com/nickderobertis/ai-orchestrator/issues/1441",
+          "root_cause": "detached-host-sweep-depends-on-disposable-worktree",
+          "shared": [
+            "detaching"
+          ],
+          "capped": []
+        },
+        {
+          "item": "followups:I_kwDOUQmSo88AAAABXxnN9g",
+          "title": "printobserver: Temporary interventions must keep their duration across clock corrections",
+          "status": {
+            "category": "done",
+            "name": "Done"
+          },
+          "url": "https://github.com/nickderobertis/printobserver/issues/250",
+          "root_cause": "bounded-interventions-survive-wall-clock-steps",
+          "shared": [
+            "clock.rs"
+          ],
+          "capped": []
+        },
+        {
+          "item": "followups:I_kwDOUQmSo88AAAABXxnUnQ",
+          "title": "printobserver: Agent actions must keep their minimum spacing across clock corrections",
+          "status": {
+            "category": "done",
+            "name": "Done"
+          },
+          "url": "https://github.com/nickderobertis/printobserver/issues/251",
+          "root_cause": "agent-action-spacing-survives-clock-steps",
+          "shared": [
+            "clock.rs"
+          ],
+          "capped": []
+        },
+        {
+          "item": "followups:I_kwDOUBBgxs8AAAABXqTQjA",
+          "title": "onetaskgraph: Live Linear proofs must exercise the cache guarantees they claim",
+          "status": {
+            "category": "cancelled",
+            "name": "Cancelled"
+          },
+          "url": "https://github.com/nickderobertis/onetaskgraph/issues/3635",
+          "root_cause": "linear-cached-token-contract-needs-live-proof",
+          "shared": [
+            "cache_budget.rs"
+          ],
+          "capped": []
+        },
+        {
+          "item": "followups:I_kwDOUBBgxs8AAAABXqTioA",
+          "title": "onetaskgraph: Asset verification must tolerate bounded transient read failures",
+          "status": {
+            "category": "backlog",
+            "name": "Proposal"
+          },
+          "url": "https://github.com/nickderobertis/onetaskgraph/issues/3637",
+          "root_cause": "asset-verification-must-recover-transient-read-transport-errors",
+          "shared": [
+            "cache_budget.rs"
+          ],
+          "capped": []
+        },
+        {
+          "item": "followups:I_kwDOUBBgxs8AAAABZys8Hw",
+          "title": "onetaskgraph: Default verification separates long scaling experiments",
+          "status": {
+            "category": "cancelled",
+            "name": "Cancelled"
+          },
+          "url": "https://github.com/nickderobertis/onetaskgraph/issues/3765",
+          "root_cause": "default-verification-isolates-scaling-experiments",
+          "shared": [
+            "cache_budget.rs"
+          ],
+          "capped": []
+        },
+        {
+          "item": "followups:I_kwDOTXCWqs8AAAABc1Wkyw",
+          "title": "ai-orchestrator: Private inventory reads must finish or refuse within a bounded time",
+          "status": {
+            "category": "backlog",
+            "name": "Proposal"
+          },
+          "url": "https://github.com/nickderobertis/ai-orchestrator/issues/2315",
+          "root_cause": "private-inventory-requests-have-a-deadline",
+          "shared": [],
+          "capped": [
+            "refuse",
+            "client"
+          ]
+        }
+      ]
+    },
+    {
+      "input": "drafts:onevcs-gate-timing-journey-compares-hook-stamps-with-the-publication-interval",
+      "stoplisted": [
+        "onevcs",
+        "journey",
+        "with"
+      ],
+      "queries": [
+        {
+          "text": "onevcs: gate timing journey compares hook stamps with the publication interval",
+          "kind": "title",
+          "hits": 0,
+          "retained": 0,
+          "capped": false
+        },
+        {
+          "text": "publication",
+          "kind": "term",
+          "hits": 21,
+          "retained": 21,
+          "capped": true
+        },
+        {
+          "text": "interval",
+          "kind": "term",
+          "hits": 21,
+          "retained": 21,
+          "capped": true
+        },
+        {
+          "text": "compare",
+          "kind": "term",
+          "hits": 21,
+          "retained": 21,
+          "capped": true
+        },
+        {
+          "text": "timing",
+          "kind": "term",
+          "hits": 21,
+          "retained": 21,
+          "capped": true
+        },
+        {
+          "text": "stamp",
+          "kind": "term",
+          "hits": 21,
+          "retained": 21,
+          "capped": true
+        },
+        {
+          "text": "gate_runs.rs",
+          "kind": "file",
+          "hits": 3,
+          "retained": 3,
+          "capped": false
+        }
+      ],
+      "matching": 93,
+      "candidates": [
+        {
+          "item": "followups:I_kwDOTx3GGM8AAAABWEM01g",
+          "title": "onevcs: Gate timing journeys compare different wall-clock stamps",
+          "status": {
+            "category": "backlog",
+            "name": "Proposal"
+          },
+          "url": "https://github.com/nickderobertis/onevcs/issues/343",
+          "root_cause": "pre-push-gate-timing-assertions-use-wall-clock",
+          "shared": [
+            "gate_runs.rs"
+          ],
+          "capped": [
+            "interval",
+            "compare",
+            "timing",
+            "stamp"
+          ]
+        },
+        {
+          "item": "followups:I_kwDOTx3GGM8AAAABXGFeHA",
+          "title": "onevcs: Watched-check journeys must settle independently of runner load",
+          "status": {
+            "category": "cancelled",
+            "name": "Cancelled"
+          },
+          "url": "https://github.com/nickderobertis/onevcs/issues/409",
+          "root_cause": "watched-check-journeys-must-not-time-out-on-runner-load",
+          "shared": [
+            "gate_runs.rs"
+          ],
+          "capped": []
+        },
+        {
+          "item": "followups:I_kwDOTx3GGM8AAAABfytrSg",
+          "title": "onevcs: gate recording checks tolerate scheduling between events",
+          "status": {
+            "category": "done",
+            "name": "Done"
+          },
+          "url": "https://github.com/nickderobertis/onevcs/issues/688",
+          "root_cause": "gate-records-are-tested-with-causal-time-bounds",
+          "shared": [
+            "gate_runs.rs"
+          ],
+          "capped": []
+        },
+        {
+          "item": "followups:I_kwDOTx8aUc8AAAABdm4kPA",
+          "title": "onepipeline: Retry schedule verification must use monotonic intervals",
+          "status": {
+            "category": "backlog",
+            "name": "Proposal"
+          },
+          "url": "https://github.com/nickderobertis/onepipeline/issues/1488",
+          "root_cause": "retry-schedule-verification-uses-monotonic-intervals",
+          "shared": [],
+          "capped": [
+            "interval",
+            "compare",
+            "stamp"
+          ]
+        },
+        {
+          "item": "followups:I_kwDOTx3Fc88AAAABdf-EsQ",
+          "title": "onepipeline-ui: Report timing baselines must measure the same workload",
+          "status": {
+            "category": "backlog",
+            "name": "Proposal"
+          },
+          "url": "https://github.com/nickderobertis/onepipeline-ui/issues/702",
+          "root_cause": "report-timing-baselines-match-workload",
+          "shared": [],
+          "capped": [
+            "compare",
+            "timing"
+          ]
+        },
+        {
+          "item": "followups:I_kwDOTx3GGM8AAAABdChzWg",
+          "title": "onevcs: Repeat-sweep performance checks must tolerate normal runner noise",
+          "status": {
+            "category": "backlog",
+            "name": "Proposal"
+          },
+          "url": "https://github.com/nickderobertis/onevcs/issues/627",
+          "root_cause": "repeat-sweep-timing-is-stable-under-runner-noise",
+          "shared": [],
+          "capped": [
+            "compare",
+            "timing"
+          ]
+        },
+        {
+          "item": "followups:I_kwDOTx8aUc8AAAABdChK-A",
+          "title": "onepipeline: Quota workload check durations must start when publication returns",
+          "status": {
+            "category": "backlog",
+            "name": "Proposal"
+          },
+          "url": "https://github.com/nickderobertis/onepipeline/issues/1425",
+          "root_cause": "quota-check-clocks-start-at-publication",
+          "shared": [],
+          "capped": [
+            "publication",
+            "stamp"
+          ]
+        },
+        {
+          "item": "followups:I_kwDOTx8aUc8AAAABdChgnQ",
+          "title": "onepipeline: Quota workloads must exercise the configured read cadence",
+          "status": {
+            "category": "backlog",
+            "name": "Proposal"
+          },
+          "url": "https://github.com/nickderobertis/onepipeline/issues/1426",
+          "root_cause": "quota-workload-represents-configured-read-cadence",
+          "shared": [],
+          "capped": [
+            "interval",
+            "timing"
+          ]
+        }
+      ]
+    }
+  ],
+  "store_operations": [
+    {
+      "op": "find",
+      "source": "drafts",
+      "destination": false,
+      "items": 10,
+      "searches": 1
+    },
+    {
+      "op": "find",
+      "source": "followups",
+      "destination": true,
+      "items": 645,
+      "searches": 77
+    },
+    {
+      "op": "read",
+      "source": "followups",
+      "destination": true,
+      "items": 645
+    }
+  ],
+  "quota_reads": 9,
+  "governor": {
+    "waits": []
+  }
+}

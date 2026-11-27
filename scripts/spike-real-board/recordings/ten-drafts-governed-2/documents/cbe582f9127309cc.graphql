@@ -1,0 +1,14 @@
+query($search:String!,$type:SearchType!,$first:Int!,$after:String,$nestedFirst:Int!,$boardItems:Int!,$duplicates:Boolean!,$relationshipEvents:[IssueTimelineItemsItemType!]=[BLOCKED_BY_ADDED_EVENT,BLOCKED_BY_REMOVED_EVENT,BLOCKING_ADDED_EVENT,BLOCKING_REMOVED_EVENT,PARENT_ISSUE_ADDED_EVENT,PARENT_ISSUE_REMOVED_EVENT]){
+      search(query:$search,type:$type,first:$first,after:$after){
+        pageInfo{hasNextPage endCursor}
+        nodes{__typename ...BoardIssue}
+      }
+    } fragment BoardIssue on Issue{__typename id number title body url createdAt updatedAt state stateReason(enableDuplicate:$duplicates) repository{nameWithOwner} parent{id} subIssuesSummary{total} commentCount:comments{totalCount} relationshipEvents:timelineItems(itemTypes:$relationshipEvents){totalCount}
+      labels(first:$nestedFirst){nodes{id name color}pageInfo{hasNextPage}}
+      projectItems(first:$boardItems){nodes{id updatedAt project{id number}
+        fieldValues(first:$nestedFirst){nodes{
+          ... on ProjectV2ItemFieldSingleSelectValue{name field{
+            ... on ProjectV2SingleSelectField{id name options{id name}}
+          }}
+          ... on ProjectV2ItemFieldTextValue{text field{... on ProjectV2Field{id name}}}
+        }pageInfo{hasNextPage}}}pageInfo{hasNextPage endCursor}}}

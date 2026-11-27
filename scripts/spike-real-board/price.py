@@ -17,6 +17,7 @@ from pathlib import Path
 import analyze
 import ghq
 import pricing
+import public
 
 SLOTS = 20
 DETAIL = 24
@@ -87,7 +88,7 @@ def recorded(run: Path):
         if request.get("document") == "ISSUE_DETAILS":
             for slot in range(DETAIL):
                 held = request["variables"].get(f"id{slot}")
-                if held and held not in ids:
+                if held and held != public.DROPPED and held not in ids:
                     ids.append(held)
     return requests, texts, ids
 
@@ -112,7 +113,21 @@ def candidates(run: Path) -> dict:
     # Today's documents, as recorded, to hold the dry run to GitHub's reported cost.
     price("today: SEARCH_BATCH first round (20 slots x 3 rows)", document_of(run, first_round), first_round["variables"])
     price("today: SEARCH_BATCH resumed round (20 slots sharing 20 rows)", document_of(run, resumed_round), resumed_round["variables"])
-    price("today: ISSUE_DETAILS (24 items, comments)", document_of(run, details[0]), details[0]["variables"])
+    # A dropped id (an item whose repository is not public) is priced as a kept one: the
+    # price depends on how many items a batch reads, not which.
+    detail_variables = {
+        key: (ids[0] if held == public.DROPPED else held) for key, held in details[0]["variables"].items()
+    }
+    price("today: ISSUE_DETAILS (24 items, comments)", document_of(run, details[0]), detail_variables)
+    # The most a SEARCH_BATCH request can be priced at: every slot's first page and every
+    # origin slot asked at 100 board items, a bound on any request of today's find.
+    widest = dict(first_round["variables"])
+    for slot in range(SLOTS):
+        widest[f"ask{slot}"], widest[f"first{slot}"] = True, 3
+        widest.setdefault(f"search{slot}", distinct[slot % len(distinct)])
+    for slot in range(5):
+        widest[f"origin{slot}"], widest[f"itemsFirst{slot}"], widest[f"filter{slot}"] = True, 100, "is:issue"
+    price("bound: SEARCH_BATCH, 20 first pages and 5 origin slots of 100 items", document_of(run, first_round), widest)
     # Today's SEARCH_BATCH slots asking all 21 kept hits at once.
     widened = dict(first_round["variables"])
     for slot in range(SLOTS):

@@ -145,7 +145,9 @@ def main() -> None:
     for held in by_document.values():
         held["costs"] = sorted(set(held["costs"]), key=lambda c: (c is None, c))
 
-    own = sum(one.get("cost") or 0 for one in sent)
+    # Prepare's own requests apart from the spike's (`forwarder:`), which are reported beside.
+    own = sum(one.get("cost") or 0 for one in sent if not one["document"].startswith("forwarder:"))
+    spike_own = sum(one.get("cost") or 0 for one in sent if one["document"].startswith("forwarder:"))
     fall = sum(one.get("fall") or 0 for one in sent)
     stderr = (run / "prepare.stderr").read_text() if (run / "prepare.stderr").exists() else ""
     finished = re.findall(r"^onefollowup prepare: (.+?): finished: (\d+) requests, (\d+) points$", stderr, re.M)
@@ -173,6 +175,7 @@ def main() -> None:
         "refused": len(graphql) - len(sent),
         "rate_limit_reads": len(requests) - len(graphql),
         "reported_points": own,
+        "spike_reported_points_in_interval": spike_own,
         "shared_fall": fall,
         "falls_unknown": sum(one.get("fall") is None for one in sent),
         "own_share_of_fall": round(own / fall, 4) if fall else None,

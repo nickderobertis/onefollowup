@@ -1,0 +1,345 @@
+{
+  "spend": {
+    "github_reported_points": 720.0,
+    "dry_run_points_assumed_at_1_each": 52.0,
+    "total_counted_against_the_1500_cap": 772.0,
+    "this_dispatch_reported_requests": 409,
+    "this_dispatch_dry_runs": 27,
+    "note": "the first two ledger lines carry the earlier dispatch's totals (243 reported, 25 dry runs); its recordings were discarded"
+  },
+  "runs": {
+    "ten-drafts-ungoverned": {
+      "governor_enabled": false,
+      "seconds": 289.742,
+      "prepare_requests": 86,
+      "prepare_own_reported_points": 94,
+      "prepare_own_reported_per_draft": 9.4,
+      "shared_fall_all_windows": 321,
+      "shared_fall_per_draft": 32.1,
+      "spike_requests_in_interval_reported_points": 0,
+      "spike_dry_runs_in_interval_cost_not_reported": 6,
+      "unexplained": 227,
+      "unexplained_per_draft": 22.7,
+      "windows": {
+        "1795823895": {
+          "readings": 22,
+          "first": 4692,
+          "last": 4604,
+          "fall": 88,
+          "prepare_own_reported": 21.0,
+          "unexplained": 67.0
+        },
+        "1795822346": {
+          "readings": 72,
+          "first": 2779,
+          "last": 2546,
+          "fall": 233,
+          "prepare_own_reported": 73.0,
+          "unexplained": 160.0
+        }
+      },
+      "per_request": {
+        "requests_with_a_known_fall": 86,
+        "fall_equals_own_cost": 26,
+        "fall_exceeds_own_cost": 60,
+        "fall_below_own_cost": 0,
+        "largest_fall_beside_a_request": 21
+      },
+      "prepare_progress_counted": [
+        {
+          "phase": "snapshot read",
+          "requests": 0,
+          "points": 0
+        },
+        {
+          "phase": "duplicate find on followups",
+          "requests": 59,
+          "points": 264
+        },
+        {
+          "phase": "kept-hit detail read",
+          "requests": 27,
+          "points": 49
+        }
+      ],
+      "prepare_progress_counted_points": 313
+    },
+    "ten-drafts-governed": {
+      "governor_enabled": true,
+      "seconds": 320.288,
+      "prepare_requests": 86,
+      "prepare_own_reported_points": 94,
+      "prepare_own_reported_per_draft": 9.4,
+      "shared_fall_all_windows": 399,
+      "shared_fall_per_draft": 39.9,
+      "spike_requests_in_interval_reported_points": 28.0,
+      "spike_dry_runs_in_interval_cost_not_reported": 6,
+      "unexplained": 277.0,
+      "unexplained_per_draft": 27.7,
+      "windows": {
+        "1795823895": {
+          "readings": 43,
+          "first": 4850,
+          "last": 4739,
+          "fall": 111,
+          "prepare_own_reported": 24.0,
+          "unexplained": 87.0
+        },
+        "1795822346": {
+          "readings": 90,
+          "first": 3214,
+          "last": 2926,
+          "fall": 288,
+          "prepare_own_reported": 70.0,
+          "unexplained": 218.0
+        }
+      },
+      "per_request": {
+        "requests_with_a_known_fall": 86,
+        "fall_equals_own_cost": 30,
+        "fall_exceeds_own_cost": 56,
+        "fall_below_own_cost": 0,
+        "largest_fall_beside_a_request": 10
+      },
+      "prepare_progress_counted": [
+        {
+          "phase": "snapshot read",
+          "requests": 0,
+          "points": 0
+        },
+        {
+          "phase": "duplicate find on followups",
+          "requests": 68,
+          "points": 559
+        },
+        {
+          "phase": "kept-hit detail read",
+          "requests": 29,
+          "points": 175
+        }
+      ],
+      "prepare_progress_counted_points": 734
+    },
+    "ten-drafts-governed-2": {
+      "governor_enabled": true,
+      "seconds": 259.197,
+      "prepare_requests": 86,
+      "prepare_own_reported_points": 94,
+      "prepare_own_reported_per_draft": 9.4,
+      "shared_fall_all_windows": 511,
+      "shared_fall_per_draft": 51.1,
+      "spike_requests_in_interval_reported_points": 0,
+      "spike_dry_runs_in_interval_cost_not_reported": 6,
+      "unexplained": 417,
+      "unexplained_per_draft": 41.7,
+      "windows": {
+        "1795823895": {
+          "readings": 41,
+          "first": 4577,
+          "last": 4432,
+          "fall": 145,
+          "prepare_own_reported": 37.0,
+          "unexplained": 108.0
+        },
+        "1795822346": {
+          "readings": 62,
+          "first": 2439,
+          "last": 2073,
+          "fall": 366,
+          "prepare_own_reported": 57.0,
+          "unexplained": 309.0
+        }
+      },
+      "per_request": {
+        "requests_with_a_known_fall": 86,
+        "fall_equals_own_cost": 11,
+        "fall_exceeds_own_cost": 75,
+        "fall_below_own_cost": 0,
+        "largest_fall_beside_a_request": 22
+      },
+      "prepare_progress_counted": [
+        {
+          "phase": "snapshot read",
+          "requests": 0,
+          "points": 0
+        },
+        {
+          "phase": "duplicate find on followups",
+          "requests": 66,
+          "points": 596
+        },
+        {
+          "phase": "kept-hit detail read",
+          "requests": 29,
+          "points": 242
+        }
+      ],
+      "prepare_progress_counted_points": 838,
+      "progress_reconstruction": {
+        "duplicate find on followups": {
+          "requests": 66,
+          "points": 601,
+          "core_points": 270
+        },
+        "kept-hit detail read": {
+          "requests": 29,
+          "points": 233,
+          "core_points": 105
+        }
+      }
+    }
+  },
+  "per_draft": {
+    "run": "ten-drafts-ungoverned",
+    "drafts": [
+      {
+        "draft": "drafts:ai-orchestrator-live-review-of-a-retry-rejudges-the-whole-accepted-task",
+        "own_points": 9.67
+      },
+      {
+        "draft": "drafts:allowlister-remote-broker-readiness-probe-accepts-another-process-s-listener",
+        "own_points": 7.62
+      },
+      {
+        "draft": "drafts:oneharness-control-interrupt-acknowledges-a-redirect-before-the-next-turn-takes-it",
+        "own_points": 10.48
+      },
+      {
+        "draft": "drafts:onepipeline-export-journeys-fail-late-when-git-lfs-is-missing-instead-of-naming-it",
+        "own_points": 10.09
+      },
+      {
+        "draft": "drafts:onepipeline-host-prerequisite-publication-refusals-burn-worker-retry-turns",
+        "own_points": 8.17
+      },
+      {
+        "draft": "drafts:onepipeline-judged-lint-diagnostics-are-lost-when-nx-drops-the-streams",
+        "own_points": 9.67
+      },
+      {
+        "draft": "drafts:onetaskgraph-concurrent-sdk-verification-races-on-shared-package-build-staging",
+        "own_points": 9.63
+      },
+      {
+        "draft": "drafts:onetaskgraph-copying-onto-a-linked-linear-item-loses-its-readable-link-titles",
+        "own_points": 12.06
+      },
+      {
+        "draft": "drafts:onetaskgraph-simulated-clock-refuses-reattach-while-the-old-client-is-still-detaching",
+        "own_points": 7.01
+      },
+      {
+        "draft": "drafts:onevcs-gate-timing-journey-compares-hook-stamps-with-the-publication-interval",
+        "own_points": 9.59
+      }
+    ],
+    "total_own_points": 94.0
+  },
+  "projections": {
+    "basis": {
+      "searches_at_50_drafts": "365, the live 50-draft run's own count",
+      "today_points_per_search": 0.87,
+      "today_seconds_per_search": 2.936,
+      "measured_repeat_rate_of_query_texts": 0.039,
+      "distinct_hits_per_draft": 64.3,
+      "detail_seconds_per_batch_today": 2.039,
+      "scalar_round_points_dry_run": 1,
+      "scalar_round_seconds_measured": 5.578,
+      "status_by_name_round_points_dry_run": 4,
+      "status_by_name_detail_points_dry_run": 1,
+      "status_by_name_detail_seconds_measured": 1.674,
+      "candidate 2's seconds": "its slots timed at the scalar round's measured seconds (not measured with Status)"
+    },
+    "cases": {
+      "hits drawn independently": {
+        "distinct_hits": 1674,
+        "detail_batches": 70,
+        "today": {
+          "points": 388,
+          "points_per_draft": 7.75,
+          "within_10_points_a_draft": true,
+          "seconds": 1214,
+          "within_300_seconds": false
+        },
+        "candidate 1: scalar slots of 21, then detail batches": {
+          "points": 89,
+          "points_per_draft": 1.78,
+          "within_10_points_a_draft": true,
+          "seconds": 249,
+          "within_300_seconds": true
+        },
+        "candidate 2: Status by name in slots and detail batches (answers less)": {
+          "points": 146,
+          "points_per_draft": 2.92,
+          "within_10_points_a_draft": true,
+          "seconds": 223,
+          "within_300_seconds": true
+        },
+        "candidate 3: today's slots, one search per distinct text": {
+          "points": 375,
+          "points_per_draft": 7.5,
+          "within_10_points_a_draft": true,
+          "seconds": 1173,
+          "within_300_seconds": false
+        },
+        "candidates 1 + 3": {
+          "points": 88,
+          "points_per_draft": 1.76,
+          "within_10_points_a_draft": true,
+          "seconds": 243,
+          "within_300_seconds": true
+        }
+      },
+      "no overlap, capped at the board": {
+        "distinct_hits": 2138,
+        "detail_batches": 90,
+        "today": {
+          "points": 408,
+          "points_per_draft": 8.15,
+          "within_10_points_a_draft": true,
+          "seconds": 1255,
+          "within_300_seconds": false
+        },
+        "candidate 1: scalar slots of 21, then detail batches": {
+          "points": 109,
+          "points_per_draft": 2.18,
+          "within_10_points_a_draft": true,
+          "seconds": 290,
+          "within_300_seconds": true
+        },
+        "candidate 2: Status by name in slots and detail batches (answers less)": {
+          "points": 166,
+          "points_per_draft": 3.32,
+          "within_10_points_a_draft": true,
+          "seconds": 257,
+          "within_300_seconds": true
+        },
+        "candidate 3: today's slots, one search per distinct text": {
+          "points": 395,
+          "points_per_draft": 7.9,
+          "within_10_points_a_draft": true,
+          "seconds": 1214,
+          "within_300_seconds": false
+        },
+        "candidates 1 + 3": {
+          "points": 108,
+          "points_per_draft": 2.16,
+          "within_10_points_a_draft": true,
+          "seconds": 284,
+          "within_300_seconds": true
+        }
+      }
+    }
+  },
+  "live_run": {
+    "drafts": 50,
+    "searches": 365,
+    "counted_points": 13331,
+    "counted_requests": 380,
+    "prepare_own_at_most_if_rounds_as_measured": 1140,
+    "prepare_own_at_most_at_the_priced_bound": 4940,
+    "unexplained_at_least": 8391,
+    "unexplained_at_least_if_rounds_as_measured": 12191,
+    "note": "No response of the live run recorded its own cost. Its 380 counted requests include its governor's rate-limit reads, which cost nothing, so these bounds are generous. Every measured round was priced 1 or 3 and no measured round asked an origin slot; the bound prices one asking all 20 first pages and all 5 origin slots at 100 items."
+  }
+}

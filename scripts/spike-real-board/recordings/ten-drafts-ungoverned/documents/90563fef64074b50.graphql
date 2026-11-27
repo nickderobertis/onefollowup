@@ -1,0 +1,80 @@
+query($owner:String!,$number:Int!,$type:SearchType!,$nestedFirst:Int!,$boardItems:Int!,$duplicates:Boolean!,$relationshipEvents:[IssueTimelineItemsItemType!]=[BLOCKED_BY_ADDED_EVENT,BLOCKED_BY_REMOVED_EVENT,BLOCKING_ADDED_EVENT,BLOCKING_REMOVED_EVENT,PARENT_ISSUE_ADDED_EVENT,PARENT_ISSUE_REMOVED_EVENT],$search0:String!,$after0:String,$first0:Int!,$ask0:Boolean!,$search1:String!,$after1:String,$first1:Int!,$ask1:Boolean!,$search2:String!,$after2:String,$first2:Int!,$ask2:Boolean!,$search3:String!,$after3:String,$first3:Int!,$ask3:Boolean!,$search4:String!,$after4:String,$first4:Int!,$ask4:Boolean!,$search5:String!,$after5:String,$first5:Int!,$ask5:Boolean!,$search6:String!,$after6:String,$first6:Int!,$ask6:Boolean!,$search7:String!,$after7:String,$first7:Int!,$ask7:Boolean!,$search8:String!,$after8:String,$first8:Int!,$ask8:Boolean!,$search9:String!,$after9:String,$first9:Int!,$ask9:Boolean!,$search10:String!,$after10:String,$first10:Int!,$ask10:Boolean!,$search11:String!,$after11:String,$first11:Int!,$ask11:Boolean!,$search12:String!,$after12:String,$first12:Int!,$ask12:Boolean!,$search13:String!,$after13:String,$first13:Int!,$ask13:Boolean!,$search14:String!,$after14:String,$first14:Int!,$ask14:Boolean!,$search15:String!,$after15:String,$first15:Int!,$ask15:Boolean!,$search16:String!,$after16:String,$first16:Int!,$ask16:Boolean!,$search17:String!,$after17:String,$first17:Int!,$ask17:Boolean!,$search18:String!,$after18:String,$first18:Int!,$ask18:Boolean!,$search19:String!,$after19:String,$first19:Int!,$ask19:Boolean!,$filter0:String!,$itemsAfter0:String,$itemsFirst0:Int!,$origin0:Boolean!,$filter1:String!,$itemsAfter1:String,$itemsFirst1:Int!,$origin1:Boolean!,$filter2:String!,$itemsAfter2:String,$itemsFirst2:Int!,$origin2:Boolean!,$filter3:String!,$itemsAfter3:String,$itemsFirst3:Int!,$origin3:Boolean!,$filter4:String!,$itemsAfter4:String,$itemsFirst4:Int!,$origin4:Boolean!){
+      s0:search(query:$search0,type:$type,first:$first0,after:$after0) @include(if:$ask0){pageInfo{hasNextPage endCursor} nodes{__typename ...BoardIssue}}
+      s1:search(query:$search1,type:$type,first:$first1,after:$after1) @include(if:$ask1){pageInfo{hasNextPage endCursor} nodes{__typename ...BoardIssue}}
+      s2:search(query:$search2,type:$type,first:$first2,after:$after2) @include(if:$ask2){pageInfo{hasNextPage endCursor} nodes{__typename ...BoardIssue}}
+      s3:search(query:$search3,type:$type,first:$first3,after:$after3) @include(if:$ask3){pageInfo{hasNextPage endCursor} nodes{__typename ...BoardIssue}}
+      s4:search(query:$search4,type:$type,first:$first4,after:$after4) @include(if:$ask4){pageInfo{hasNextPage endCursor} nodes{__typename ...BoardIssue}}
+      s5:search(query:$search5,type:$type,first:$first5,after:$after5) @include(if:$ask5){pageInfo{hasNextPage endCursor} nodes{__typename ...BoardIssue}}
+      s6:search(query:$search6,type:$type,first:$first6,after:$after6) @include(if:$ask6){pageInfo{hasNextPage endCursor} nodes{__typename ...BoardIssue}}
+      s7:search(query:$search7,type:$type,first:$first7,after:$after7) @include(if:$ask7){pageInfo{hasNextPage endCursor} nodes{__typename ...BoardIssue}}
+      s8:search(query:$search8,type:$type,first:$first8,after:$after8) @include(if:$ask8){pageInfo{hasNextPage endCursor} nodes{__typename ...BoardIssue}}
+      s9:search(query:$search9,type:$type,first:$first9,after:$after9) @include(if:$ask9){pageInfo{hasNextPage endCursor} nodes{__typename ...BoardIssue}}
+      s10:search(query:$search10,type:$type,first:$first10,after:$after10) @include(if:$ask10){pageInfo{hasNextPage endCursor} nodes{__typename ...BoardIssue}}
+      s11:search(query:$search11,type:$type,first:$first11,after:$after11) @include(if:$ask11){pageInfo{hasNextPage endCursor} nodes{__typename ...BoardIssue}}
+      s12:search(query:$search12,type:$type,first:$first12,after:$after12) @include(if:$ask12){pageInfo{hasNextPage endCursor} nodes{__typename ...BoardIssue}}
+      s13:search(query:$search13,type:$type,first:$first13,after:$after13) @include(if:$ask13){pageInfo{hasNextPage endCursor} nodes{__typename ...BoardIssue}}
+      s14:search(query:$search14,type:$type,first:$first14,after:$after14) @include(if:$ask14){pageInfo{hasNextPage endCursor} nodes{__typename ...BoardIssue}}
+      s15:search(query:$search15,type:$type,first:$first15,after:$after15) @include(if:$ask15){pageInfo{hasNextPage endCursor} nodes{__typename ...BoardIssue}}
+      s16:search(query:$search16,type:$type,first:$first16,after:$after16) @include(if:$ask16){pageInfo{hasNextPage endCursor} nodes{__typename ...BoardIssue}}
+      s17:search(query:$search17,type:$type,first:$first17,after:$after17) @include(if:$ask17){pageInfo{hasNextPage endCursor} nodes{__typename ...BoardIssue}}
+      s18:search(query:$search18,type:$type,first:$first18,after:$after18) @include(if:$ask18){pageInfo{hasNextPage endCursor} nodes{__typename ...BoardIssue}}
+      s19:search(query:$search19,type:$type,first:$first19,after:$after19) @include(if:$ask19){pageInfo{hasNextPage endCursor} nodes{__typename ...BoardIssue}}
+      o0:repositoryOwner(login:$owner) @include(if:$origin0){... on ProjectV2Owner{projectV2(number:$number){items(first:$itemsFirst0,after:$itemsAfter0,query:$filter0){nodes{id updatedAt fieldValues(first:$nestedFirst){nodes{
+          ... on ProjectV2ItemFieldSingleSelectValue{name field{
+            ... on ProjectV2SingleSelectField{id name options{id name}}
+          }}
+          ... on ProjectV2ItemFieldTextValue{text field{... on ProjectV2Field{id name}}}
+        }pageInfo{hasNextPage}} content{
+        ... on Issue{__typename id number title body url createdAt updatedAt state stateReason(enableDuplicate:$duplicates) repository{nameWithOwner} parent{id} subIssuesSummary{total} commentCount:comments{totalCount} relationshipEvents:timelineItems(itemTypes:$relationshipEvents){totalCount} labels(first:$nestedFirst){nodes{id name color}pageInfo{hasNextPage}}}
+        ... on PullRequest{__typename id}
+        ... on DraftIssue{__typename id title body createdAt updatedAt}
+      }} pageInfo{hasNextPage endCursor}}}}}
+      o1:repositoryOwner(login:$owner) @include(if:$origin1){... on ProjectV2Owner{projectV2(number:$number){items(first:$itemsFirst1,after:$itemsAfter1,query:$filter1){nodes{id updatedAt fieldValues(first:$nestedFirst){nodes{
+          ... on ProjectV2ItemFieldSingleSelectValue{name field{
+            ... on ProjectV2SingleSelectField{id name options{id name}}
+          }}
+          ... on ProjectV2ItemFieldTextValue{text field{... on ProjectV2Field{id name}}}
+        }pageInfo{hasNextPage}} content{
+        ... on Issue{__typename id number title body url createdAt updatedAt state stateReason(enableDuplicate:$duplicates) repository{nameWithOwner} parent{id} subIssuesSummary{total} commentCount:comments{totalCount} relationshipEvents:timelineItems(itemTypes:$relationshipEvents){totalCount} labels(first:$nestedFirst){nodes{id name color}pageInfo{hasNextPage}}}
+        ... on PullRequest{__typename id}
+        ... on DraftIssue{__typename id title body createdAt updatedAt}
+      }} pageInfo{hasNextPage endCursor}}}}}
+      o2:repositoryOwner(login:$owner) @include(if:$origin2){... on ProjectV2Owner{projectV2(number:$number){items(first:$itemsFirst2,after:$itemsAfter2,query:$filter2){nodes{id updatedAt fieldValues(first:$nestedFirst){nodes{
+          ... on ProjectV2ItemFieldSingleSelectValue{name field{
+            ... on ProjectV2SingleSelectField{id name options{id name}}
+          }}
+          ... on ProjectV2ItemFieldTextValue{text field{... on ProjectV2Field{id name}}}
+        }pageInfo{hasNextPage}} content{
+        ... on Issue{__typename id number title body url createdAt updatedAt state stateReason(enableDuplicate:$duplicates) repository{nameWithOwner} parent{id} subIssuesSummary{total} commentCount:comments{totalCount} relationshipEvents:timelineItems(itemTypes:$relationshipEvents){totalCount} labels(first:$nestedFirst){nodes{id name color}pageInfo{hasNextPage}}}
+        ... on PullRequest{__typename id}
+        ... on DraftIssue{__typename id title body createdAt updatedAt}
+      }} pageInfo{hasNextPage endCursor}}}}}
+      o3:repositoryOwner(login:$owner) @include(if:$origin3){... on ProjectV2Owner{projectV2(number:$number){items(first:$itemsFirst3,after:$itemsAfter3,query:$filter3){nodes{id updatedAt fieldValues(first:$nestedFirst){nodes{
+          ... on ProjectV2ItemFieldSingleSelectValue{name field{
+            ... on ProjectV2SingleSelectField{id name options{id name}}
+          }}
+          ... on ProjectV2ItemFieldTextValue{text field{... on ProjectV2Field{id name}}}
+        }pageInfo{hasNextPage}} content{
+        ... on Issue{__typename id number title body url createdAt updatedAt state stateReason(enableDuplicate:$duplicates) repository{nameWithOwner} parent{id} subIssuesSummary{total} commentCount:comments{totalCount} relationshipEvents:timelineItems(itemTypes:$relationshipEvents){totalCount} labels(first:$nestedFirst){nodes{id name color}pageInfo{hasNextPage}}}
+        ... on PullRequest{__typename id}
+        ... on DraftIssue{__typename id title body createdAt updatedAt}
+      }} pageInfo{hasNextPage endCursor}}}}}
+      o4:repositoryOwner(login:$owner) @include(if:$origin4){... on ProjectV2Owner{projectV2(number:$number){items(first:$itemsFirst4,after:$itemsAfter4,query:$filter4){nodes{id updatedAt fieldValues(first:$nestedFirst){nodes{
+          ... on ProjectV2ItemFieldSingleSelectValue{name field{
+            ... on ProjectV2SingleSelectField{id name options{id name}}
+          }}
+          ... on ProjectV2ItemFieldTextValue{text field{... on ProjectV2Field{id name}}}
+        }pageInfo{hasNextPage}} content{
+        ... on Issue{__typename id number title body url createdAt updatedAt state stateReason(enableDuplicate:$duplicates) repository{nameWithOwner} parent{id} subIssuesSummary{total} commentCount:comments{totalCount} relationshipEvents:timelineItems(itemTypes:$relationshipEvents){totalCount} labels(first:$nestedFirst){nodes{id name color}pageInfo{hasNextPage}}}
+        ... on PullRequest{__typename id}
+        ... on DraftIssue{__typename id title body createdAt updatedAt}
+      }} pageInfo{hasNextPage endCursor}}}}}
+    } fragment BoardIssue on Issue{__typename id number title body url createdAt updatedAt state stateReason(enableDuplicate:$duplicates) repository{nameWithOwner} parent{id} subIssuesSummary{total} commentCount:comments{totalCount} relationshipEvents:timelineItems(itemTypes:$relationshipEvents){totalCount}
+      labels(first:$nestedFirst){nodes{id name color}pageInfo{hasNextPage}}
+      projectItems(first:$boardItems){nodes{id updatedAt project{id number}
+        fieldValues(first:$nestedFirst){nodes{
+          ... on ProjectV2ItemFieldSingleSelectValue{name field{
+            ... on ProjectV2SingleSelectField{id name options{id name}}
+          }}
+          ... on ProjectV2ItemFieldTextValue{text field{... on ProjectV2Field{id name}}}
+        }pageInfo{hasNextPage}}}pageInfo{hasNextPage endCursor}}}

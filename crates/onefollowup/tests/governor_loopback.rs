@@ -263,6 +263,21 @@ fn a_request_held_on_exhausted_headroom_goes_once_when_a_rate_limit_read_while_h
 /// `other-board`, both at the loopback on `port`, governed on `clock` by the store's own
 /// readings and the shipped defaults.
 fn two_board_store(root: &std::path::Path, port: u16, clock: &Arc<Virtual>) -> Store {
+    two_board_store_noting(
+        root,
+        port,
+        clock,
+        Arc::new(|line: &str| eprintln!("{line}")),
+    )
+}
+
+/// [`two_board_store`], its governor's and its phases' lines going to `notices`.
+fn two_board_store_noting(
+    root: &std::path::Path,
+    port: u16,
+    clock: &Arc<Virtual>,
+    notices: governor::Notices,
+) -> Store {
     std::fs::create_dir_all(root.join("drafts-root")).expect("the drafts root");
     let mut store = String::from(
         "sources:\n  drafts:\n    plugin: local-md\n    config:\n      root: drafts-root\n",
@@ -289,7 +304,7 @@ fn two_board_store(root: &std::path::Path, port: u16, clock: &Arc<Virtual>) -> S
     let parts = Parts {
         clock: clock.clone(),
         readings: None,
-        notices: Arc::new(|line: &str| eprintln!("{line}")),
+        notices,
     };
     governor::with_parts(parts, || {
         Store::open(Some(root), root, &environment).expect("the store opens")
@@ -375,4 +390,86 @@ fn a_request_failed_in_transport_before_any_header_ends_and_the_next_of_the_same
         "nothing waited on quota"
     );
     assert_eq!(operations, 2, "one read a board");
+}
+
+#[test]
+fn a_phase_says_when_it_starts_every_20_requests_it_sends_and_when_it_ends() {
+    // A read of 30 items the loopback holds none of: one batched request of 24 and one of 6,
+    // each refused for a node that does not resolve, then each item read again on its own —
+    // 32 requests in all, each priced by the source's own hint, no response reporting a
+    // reading. The phase's lines name it, the 20th request and the points so far, and its end.
+    let start = DateTime::from_timestamp(Utc::now().timestamp(), 0).expect("now");
+    let clock = Virtual::at(start);
+    let loopback = Loopback::start(Arc::clone(&clock), 5000, start.timestamp() + 3600);
+    let directory = tempfile::tempdir().expect("a directory");
+    let lines = Arc::new(Mutex::new(Vec::new()));
+    let sink = Arc::clone(&lines);
+    let store = two_board_store_noting(
+        directory.path(),
+        loopback.port,
+        &clock,
+        Arc::new(move |line: &str| sink.lock().expect("the lines").push(line.to_owned())),
+    );
+    let ids: Vec<String> = (0..30).map(|at| format!("board:I_kwDO{at:04}")).collect();
+    let phase = store.phase("prepare", "kept-hit detail read", "30 items");
+    store.read(&ids, true).expect("answered item by item");
+    phase.finish();
+    let posts = loopback
+        .received()
+        .iter()
+        .filter(|one| one.line.starts_with("POST /graphql"))
+        .count();
+    let lines = lines.lock().expect("the lines").clone();
+    let progress: Vec<&String> = lines
+        .iter()
+        .filter(|line| line.starts_with("onefollowup prepare: kept-hit detail read: "))
+        .collect();
+    assert_eq!(
+        progress.first().map(|line| line.as_str()),
+        Some("onefollowup prepare: kept-hit detail read: started: 30 items"),
+        "{lines:?}"
+    );
+    let ticks = regex::Regex::new(
+        r"^onefollowup prepare: kept-hit detail read: (\d+) requests, (\d+) points so far$",
+    )
+    .expect("a pattern");
+    let ticked: Vec<(u64, u64)> = progress
+        .iter()
+        .filter_map(|line| ticks.captures(line))
+        .map(|held| {
+            (
+                held[1].parse().expect("a count"),
+                held[2].parse().expect("a count"),
+            )
+        })
+        .collect();
+    let finished = regex::Regex::new(
+        r"^onefollowup prepare: kept-hit detail read: finished: (\d+) requests, (\d+) points$",
+    )
+    .expect("a pattern");
+    let last = progress
+        .last()
+        .and_then(|line| finished.captures(line))
+        .expect("its end");
+    let (requests, points): (u64, u64) = (
+        last[1].parse().expect("a count"),
+        last[2].parse().expect("a count"),
+    );
+    // Every request the phase sent is counted: the GraphQL ones and the quota reads with them.
+    let sent = loopback.received().len() as u64;
+    assert_eq!(requests, sent, "{lines:?}");
+    assert!(posts >= 26, "{posts} requests: one per item at least");
+    let expected: Vec<u64> = (1..=requests / 20).map(|at| at * 20).collect();
+    assert_eq!(
+        ticked.iter().map(|(at, _)| *at).collect::<Vec<_>>(),
+        expected,
+        "one line every 20 requests: {lines:?}"
+    );
+    assert!(
+        ticked
+            .iter()
+            .all(|(_, so_far)| *so_far >= 1 && *so_far <= points),
+        "{ticked:?} of {points}"
+    );
+    assert_eq!(progress.len(), 2 + expected.len(), "{lines:?}");
 }

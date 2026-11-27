@@ -2011,8 +2011,10 @@ struct Counted {
     phase: Option<String>,
     requests: u64,
     points: u64,
-    /// The hint of the request last sent, until its response measures it.
+    /// The hint of the request last sent, until it ends.
     hint: Option<u64>,
+    /// What its response's reading showed it cost, when one did.
+    measured: Option<u64>,
     /// The last remaining read of each window, by resource and reset.
     remaining: HashMap<(String, chrono::DateTime<chrono::Utc>), u64>,
 }
@@ -2064,7 +2066,9 @@ impl Progress {
     }
 
     fn hinted(&self, hint: Option<u64>) {
-        self.counted().hint = hint;
+        let mut counted = self.counted();
+        counted.hint = hint;
+        counted.measured = None;
     }
 
     /// Readings taken outside any response: what later falls are measured from.
@@ -2087,18 +2091,19 @@ impl Progress {
                 *cost.get_or_insert(0) += before.saturating_sub(reading.remaining);
             }
         }
-        let hint = counted.hint.take();
-        if counted.phase.is_some() {
-            counted.points += cost.or(hint).unwrap_or(0);
+        if cost.is_some() {
+            counted.measured = cost;
         }
     }
 
     fn ended(&self) {
         let line = {
             let mut counted = self.counted();
+            let cost = counted.measured.take().or(counted.hint.take()).unwrap_or(0);
             match counted.phase.clone() {
                 Some(phase) => {
                     counted.requests += 1;
+                    counted.points += cost;
                     counted.requests.is_multiple_of(PROGRESS_EVERY).then(|| {
                         format!(
                             "{phase}: {} requests, {} points so far",

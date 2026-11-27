@@ -900,3 +900,84 @@ fn a_refresh_s_own_rate_limit_read_passes_the_gate_without_waiting_on_the_admiss
         "nothing waited on core: {waits:?}"
     );
 }
+
+#[test]
+fn a_call_after_one_that_cost_more_than_a_window_leaves_above_its_floor_is_admitted_in_the_next_window()
+ {
+    // Floor 1000 and no reserve, so the line is the floor: a full window leaves 4,000 above it.
+    // The first call is one large find: 45 requests of 100 points, 40 of them in the window
+    // resetting at T0 + 600 (5,000 down to 1,000), its 41st held to that reset, the last 5 in
+    // the next window — 4,500 points in all, more than any window leaves above its floor. A
+    // second, one-request call of the same kind is then admitted at once on its own request's
+    // estimate, in the window resetting at T0 + 4,200: estimated at the 4,500 the first call
+    // spent, it would wait for every reset there is.
+    let mut settings = shipped();
+    settings.reserve_factor = 0.0;
+    let spent: Arc<Mutex<std::collections::BTreeMap<i64, u64>>> = Arc::default();
+    let window = |at: i64| if at >= T0 + 600 { T0 + 4200 } else { T0 + 600 };
+    let script = Arc::clone(&spent);
+    let harness = Harness::new(settings, instant(T0), move |at| {
+        let reset = window(at.timestamp());
+        let left = 5000 - script.lock().unwrap().get(&reset).copied().unwrap_or(0);
+        vec![
+            reading("graphql", left, reset),
+            reading("core", 5000, T0 + 3600),
+        ]
+    });
+    let (sender, answered) = std::sync::mpsc::channel();
+    let clock = Arc::clone(&harness.clock);
+    // On a thread of its own, under a deadline: a call held for good fails the case rather
+    // than waiting through every reset of the virtual clock.
+    std::thread::spawn(move || {
+        let destination = [DESTINATION.to_owned()];
+        let send = |harness: &Harness| {
+            harness
+                .runtime
+                .block_on(harness.governor.before_request(&Request {
+                    resource: "graphql".to_owned(),
+                    cost_hint: Some(100),
+                    content_creating: false,
+                }));
+            let reset = window(harness.clock.now().timestamp());
+            let left = {
+                let mut spent = spent.lock().unwrap();
+                let held = spent.entry(reset).or_default();
+                *held += 100;
+                5000 - *held
+            };
+            harness.respond(&[reading("graphql", left, reset)]);
+        };
+        harness
+            .runtime
+            .block_on(harness.governor.admit_call(&destination, Kind::Read));
+        for _ in 0..45 {
+            send(&harness);
+        }
+        harness.end();
+        let first_waits = harness.waits();
+        let second_at = harness.clock.now();
+        harness
+            .runtime
+            .block_on(harness.governor.admit_call(&destination, Kind::Read));
+        send(&harness);
+        harness.end();
+        let _ = sender.send((first_waits, second_at, harness.clock.now(), harness.waits()));
+    });
+    let (first_waits, second_at, admitted_at, waits) = answered
+        .recv_timeout(Duration::from_secs(60))
+        .expect("the second call was admitted rather than held for good");
+    assert_eq!(
+        first_waits.len(),
+        1,
+        "the large call's 41st request waited: {first_waits:?}"
+    );
+    assert_eq!(first_waits[0].reason, Reason::Floor);
+    assert!(
+        second_at >= instant(T0 + 600),
+        "the large call ended in the next window: {second_at} {clock:?}",
+        clock = clock.now()
+    );
+    assert_eq!(admitted_at, second_at, "the second call went at once");
+    assert!(admitted_at < instant(T0 + 4200), "within that window");
+    assert_eq!(waits, first_waits, "the second call waited for nothing");
+}

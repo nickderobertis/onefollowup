@@ -41,7 +41,12 @@
 //! `governor.state_dir` (the private `host` module), so admission counts every process's
 //! spend and a fresh process starts from the burn estimate others learned. Sources are keyed by
 //! their backend kind ([`Governor::set_backends`]), so every destination of one kind shares one
-//! state; with no state directory the state is the process's alone. Each process still holds its
+//! state; with no state directory the state is the process's alone. Others' burn history older
+//! than one peak window is folded into one interval per fifth of a peak window, so the state's
+//! size is bounded by `burn_history_seconds` rather than by how many requests earlier windows
+//! made, and each request's bookkeeping costs the same however long a host has run. A call is
+//! admitted at its boundary against its own next request's estimate, never an earlier whole
+//! call's spend, which no window might leave room for. Each process still holds its
 //! own slot, so onefollowup's own spend crosses a floor by at most one request's estimate error
 //! per process.
 //!
@@ -302,8 +307,10 @@ struct Metered {
     history: VecDeque<Interval>,
     /// The observed cost of one request, by [`Kind`].
     request_cost: [Mean; 2],
-    /// The observed own spend of one whole call, by [`Kind`].
-    call_cost: [Mean; 2],
+    /// What one request was admitted at — its hint, or the estimate standing in for one — by
+    /// [`Kind`]: what a call's next pending request is estimated at, at the call boundary.
+    #[serde(default)]
+    admitted_cost: [Mean; 2],
 }
 
 /// Admitted spend of one request no response has reported yet, which a reading taken
@@ -341,8 +348,6 @@ impl Shared {
 struct Call {
     sources: Vec<String>,
     kind: Kind,
-    /// Each (backend, resource)'s [`Metered::own`] when the call began.
-    own_at_start: BTreeMap<(String, String), f64>,
     /// How many content items the call may create, when it declared it
     /// ([`Governor::admit_content_call`]).
     contents: Option<usize>,
@@ -678,26 +683,12 @@ impl Governor {
     async fn admit_declared(&self, sources: &[String], kind: Kind, contents: Option<usize>) {
         *self.stamp.lock().await = None;
         let settings = self.settings().clone();
-        let backends = self.backends_of(sources);
-        let own_at_start = self.shared(&backends, |shared| {
-            backends
-                .iter()
-                .flat_map(|backend| {
-                    shared.get(backend).into_iter().flat_map(move |held| {
-                        held.resources.iter().map(move |(resource, metered)| {
-                            ((backend.clone(), resource.clone()), metered.own)
-                        })
-                    })
-                })
-                .collect()
-        });
         {
             let mut state = self.state();
             state.calls += 1;
             state.call = Some(Call {
                 sources: sources.to_vec(),
                 kind,
-                own_at_start,
                 contents,
             });
         }
@@ -793,7 +784,7 @@ impl Governor {
         }
     }
 
-    /// The call in progress has answered: learn what it spent.
+    /// The call in progress has answered: every request of it is over.
     pub fn end_call(&self) {
         if let Ok(mut stamp) = self.stamp.try_lock() {
             *stamp = None;
@@ -817,17 +808,6 @@ impl Governor {
                 };
                 held.in_flight
                     .retain(|flight| flight.process != self.process);
-                for (resource, metered) in &mut held.resources {
-                    let before = call
-                        .own_at_start
-                        .get(&(backend.clone(), resource.clone()))
-                        .copied()
-                        .unwrap_or(0.0);
-                    let spent = metered.own - before;
-                    if spent > 0.0 {
-                        metered.call_cost[call.kind.index()].push(spent);
-                    }
-                }
             }
         });
     }
@@ -894,7 +874,7 @@ impl Governor {
                 .admit(
                     &sources,
                     &request.resource,
-                    cost,
+                    (kind, cost),
                     content_creating,
                     &settings,
                 )
@@ -935,7 +915,7 @@ impl Governor {
         &self,
         sources: &[String],
         resource: &str,
-        cost: f64,
+        (kind, cost): (Kind, f64),
         content_creating: bool,
         settings: &GovernorSettings,
     ) -> Result<(), Refusal> {
@@ -982,6 +962,7 @@ impl Governor {
                     && !metered.windows.is_empty()
                 {
                     metered.own += cost;
+                    metered.admitted_cost[kind.index()].push(cost);
                     held.in_flight.push(Flight {
                         process: self.process.clone(),
                         resource: resource.to_owned(),
@@ -1072,7 +1053,7 @@ impl Governor {
     /// window at no quota cost, and teaches the governor what a request of its kind costs.
     pub fn after_response(&self, readings: &[Reading]) {
         let now = self.clock.now();
-        let history = self.settings().burn_history_seconds;
+        let history = Kept::of(&self.settings());
         let (in_flight, sources) = {
             let mut state = self.state();
             // A response reporting nothing teaches nothing, and leaves the slot's request to
@@ -1128,7 +1109,7 @@ impl Governor {
         self.state().refreshing = true;
         let read = self.readings.read(source).await;
         let now = self.clock.now();
-        let history = self.settings().burn_history_seconds;
+        let history = Kept::of(&self.settings());
         {
             let mut state = self.state();
             state.refreshing = false;
@@ -1163,6 +1144,12 @@ impl Governor {
         })
     }
 
+    /// What a call of `kind` to `source` is admitted against at its boundary: its own next
+    /// pending request — the one it sends before the gate admits each later one on its own —
+    /// at what a request of its kind has been admitted at, else the observed cost of one, else
+    /// [`UNKNOWN_COST`]. Never a whole earlier call's spend: a call costing more than a window
+    /// leaves above its floor would then hold every later call of its kind for good, however
+    /// small.
     fn call_estimate(&self, source: &str, resource: &str, kind: Kind) -> f64 {
         let backend = self.backend(source);
         self.shared(std::slice::from_ref(&backend), |shared| {
@@ -1170,7 +1157,7 @@ impl Governor {
                 .get(&backend)
                 .and_then(|held| held.resources.get(resource))
                 .and_then(|metered| {
-                    metered.call_cost[kind.index()]
+                    metered.admitted_cost[kind.index()]
                         .get()
                         .or_else(|| metered.request_cost[kind.index()].get())
                 })
@@ -1393,7 +1380,7 @@ fn observe(
     reading: &Reading,
     now: DateTime<Utc>,
     learn: Option<(Kind, f64)>,
-    history_seconds: u64,
+    history: Kept,
 ) {
     // What the reading can show of own spend: everything admitted but what is unanswered.
     let unanswered = held.unanswered(&reading.resource);
@@ -1441,7 +1428,7 @@ fn observe(
         }
     }
     let horizon =
-        now - chrono::Duration::seconds(i64::try_from(history_seconds).unwrap_or(i64::MAX / 1000));
+        now - chrono::Duration::seconds(i64::try_from(history.seconds).unwrap_or(i64::MAX / 1000));
     while metered
         .history
         .front()
@@ -1449,6 +1436,66 @@ fn observe(
     {
         metered.history.pop_front();
     }
+    fold(&mut metered.history, now, history.peak_window_seconds);
+}
+
+/// What of others' burn history is kept: how long it is remembered, and the span its peak is
+/// measured over.
+#[derive(Debug, Clone, Copy)]
+struct Kept {
+    seconds: u64,
+    peak_window_seconds: u64,
+}
+
+impl Kept {
+    fn of(settings: &GovernorSettings) -> Self {
+        Self {
+            seconds: settings.burn_history_seconds,
+            peak_window_seconds: settings.peak_window_seconds,
+        }
+    }
+}
+
+/// How many buckets one peak window's span of expired history is folded into.
+const FOLDS_PER_PEAK_WINDOW: i64 = 5;
+
+/// Fold the intervals of `history` that ended more than one peak window before `now` — which
+/// no reading's live window reaches any more — into one interval per bucket of a fifth of a peak
+/// window, by when each ended: the first start to the last end of the bucket's intervals,
+/// their spend summed. So what is kept of earlier windows is at most one interval per bucket
+/// of `burn_history_seconds`, however many requests they made, and each request's bookkeeping
+/// costs the same on a host that has carried a day of history as on a fresh one. Spend is
+/// never lost; within a folded bucket it is spread pro rata, as the peak reads any interval.
+fn fold(history: &mut VecDeque<Interval>, now: DateTime<Utc>, peak_window_seconds: u64) {
+    let window = i64::try_from(peak_window_seconds).unwrap_or(i64::MAX / 1000);
+    let bucket_millis = (window * 1000 / FOLDS_PER_PEAK_WINDOW).max(1);
+    let expired = now - chrono::Duration::seconds(window);
+    let bucket = |interval: &Interval| interval.to.timestamp_millis().div_euclid(bucket_millis);
+    // Nothing to fold until two expired intervals share a bucket.
+    let foldable = history
+        .iter()
+        .take_while(|interval| interval.to < expired)
+        .zip(history.iter().skip(1))
+        .any(|(one, next)| next.to < expired && bucket(one) == bucket(next));
+    if !foldable {
+        return;
+    }
+    let mut folded: VecDeque<Interval> = VecDeque::with_capacity(history.len());
+    for interval in history.drain(..) {
+        match folded.back_mut() {
+            Some(last)
+                if interval.to < expired
+                    && last.to < expired
+                    && bucket(last) == bucket(&interval) =>
+            {
+                last.from = last.from.min(interval.from);
+                last.to = last.to.max(interval.to);
+                last.spend += interval.spend;
+            }
+            _ => folded.push_back(interval),
+        }
+    }
+    *history = folded;
 }
 
 /// Others' mean and peak burn of one resource, in points a minute: the peak the most they
@@ -1463,15 +1510,47 @@ fn burn(metered: &Metered, window_seconds: u64) -> (f64, f64) {
     let total: f64 = metered.history.iter().map(|interval| interval.spend).sum();
     let mean = if span > 0.0 { total / span * 60.0 } else { 0.0 };
     let width = points(window_seconds);
+    let width_nanos = whole_millis(width) * 1_000_000;
+    // Each interval in nanoseconds since the epoch, in the order kept: by when it ended, since
+    // every interval ends at the reading that recorded it.
+    let nanos = |at: DateTime<Utc>| at.timestamp_nanos_opt().unwrap_or(i64::MAX);
+    let held: Vec<(i64, i64, f64)> = metered
+        .history
+        .iter()
+        .map(|interval| (nanos(interval.from), nanos(interval.to), interval.spend))
+        .collect();
+    // In that order the intervals overlapping a span are one run of them, so only that run is
+    // read: none ending by its start, and none starting at or after its end, which every one
+    // ending `longest` past it does. Out of order — never written so — every one is read.
+    let ordered = held.is_sorted_by_key(|(_, to, _)| *to);
+    let longest = held
+        .iter()
+        .map(|(from, to, _)| to - from)
+        .max()
+        .unwrap_or(0);
+    // A span in seconds, at the millisecond precision `seconds` states it in.
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "a span of under 2^53 milliseconds converts exactly"
+    )]
+    let span_of = |from: i64, to: i64| ((to - from) / 1_000_000) as f64 / 1000.0;
     let mut peak: f64 = 0.0;
-    for end in metered.history.iter().map(|interval| interval.to) {
-        let start = end - chrono::Duration::milliseconds(whole_millis(width));
+    for &(_, end, _) in &held {
+        let start = end - width_nanos;
+        let first = if ordered {
+            held.partition_point(|(_, to, _)| *to <= start)
+        } else {
+            0
+        };
         let mut spent = 0.0;
-        for interval in &metered.history {
-            let length = seconds(interval.from, interval.to);
-            let overlap = seconds(interval.from.max(start), interval.to.min(end));
+        for &(from, to, spend) in &held[first..] {
+            if ordered && to - longest >= end {
+                break;
+            }
+            let length = span_of(from, to);
+            let overlap = span_of(from.max(start), to.min(end));
             if length > 0.0 && overlap > 0.0 {
-                spent += interval.spend * overlap / length;
+                spent += spend * overlap / length;
             }
         }
         peak = peak.max(spent / width * 60.0);

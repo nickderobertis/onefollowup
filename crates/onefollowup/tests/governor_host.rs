@@ -896,3 +896,133 @@ fn two_processes_contending_for_headroom_for_one_estimate_admit_one_and_the_othe
     assert_eq!(held.len(), 1, "{reports:?}");
     assert_eq!(held[0].reason, Reason::Floor);
 }
+
+/// A host state for `followups` carried over from many earlier windows, as this host's
+/// `github-projects.json` held it on 2026-11-25 (about 910 KB): every resource's last day of
+/// others' burn, one interval every `every` seconds up to `now`, and the per-call means an
+/// earlier release kept beside the per-request ones.
+fn carried_state(now: DateTime<Utc>, every: i64) -> serde_json::Value {
+    let format = |at: DateTime<Utc>| at.to_rfc3339_opts(chrono::SecondsFormat::Nanos, true);
+    let history = |spend: f64| -> Vec<serde_json::Value> {
+        // Ended by the earlier windows' last reading, ten minutes before this case's start.
+        let last = now - chrono::Duration::seconds(600);
+        let mut at = now - chrono::Duration::seconds(86_000);
+        let mut held = Vec::new();
+        while at < last - chrono::Duration::seconds(every) {
+            let to = at + chrono::Duration::seconds(every);
+            held.push(serde_json::json!({"from": format(at), "to": format(to), "spend": spend}));
+            at = to;
+        }
+        held
+    };
+    let mean = serde_json::json!([{"sum": 0.0, "count": 0}, {"sum": 0.0, "count": 0}]);
+    let resource = |spend: f64| {
+        serde_json::json!({
+            "windows": {},
+            "own": 6298.0,
+            "history": history(spend),
+            "request_cost": mean,
+            "call_cost": [{"sum": 5319.0, "count": 1}, {"sum": 0.0, "count": 0}],
+        })
+    };
+    serde_json::json!({
+        "schema_version": 1,
+        "resources": {"graphql": resource(1.0), "core": resource(0.5)},
+        "in_flight": [],
+        "content_writes": [],
+    })
+}
+
+#[test]
+fn a_state_carried_over_from_many_earlier_windows_is_kept_to_a_bound_its_history_does_not_set() {
+    // Two hosts, one carrying a day's burn history at an interval every 17 s (as large as this
+    // host's 910 KB file) and one at every 68 s, each send 30 governed GraphQL requests. What
+    // either keeps afterwards is bounded by the history's span — one interval per fifth of a
+    // peak window, 86,400 / 60 — plus what the last peak window's readings made, however many
+    // requests the earlier windows made; and neither request was held.
+    let settings_for = |directory: &Path| sharing(directory);
+    let mut kept = Vec::new();
+    for every in [17, 68] {
+        let state = tempfile::tempdir().unwrap();
+        let now = instant(T0);
+        let file = state.path().join("followups.json");
+        std::fs::write(&file, carried_state(now, every).to_string()).unwrap();
+        let carried = std::fs::metadata(&file).unwrap().len();
+        if every == 17 {
+            assert!(carried > 900_000, "about this host's 910 KB: {carried}");
+        }
+        let clock = Simulated::at(now);
+        let _taking_part = clock.join();
+        let remaining = Arc::new(Mutex::new(5000_u64));
+        let script = Arc::clone(&remaining);
+        let readings = Arc::new(Scripted(Box::new(move || {
+            vec![
+                reading("graphql", *script.lock().unwrap(), T0 + 1800),
+                reading("core", 5000, T0 + 1800),
+            ]
+        })));
+        let governor = Governor::new(
+            settings_for(state.path()),
+            clock.clone(),
+            readings,
+            Arc::new(|line: &str| eprintln!("{line}")),
+        );
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let sent = 30;
+        runtime.block_on(async {
+            governor
+                .admit_call(&["followups".to_owned()], Kind::Read)
+                .await;
+            for _ in 0..sent {
+                governor
+                    .before_request(&Request {
+                        resource: "graphql".to_owned(),
+                        cost_hint: Some(2),
+                        content_creating: false,
+                    })
+                    .await;
+                let left = {
+                    let mut left = remaining.lock().unwrap();
+                    *left -= 2;
+                    *left
+                };
+                clock.advance(1);
+                governor.after_response(&[reading("graphql", left, T0 + 1800)]);
+                governor.request_ended();
+            }
+            governor.end_call();
+        });
+        assert_eq!(governor.report().unwrap().waits, Vec::new(), "nothing held");
+        let written: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        let entries = |resource: &str| {
+            written["resources"][resource]["history"]
+                .as_array()
+                .map_or(0, Vec::len)
+        };
+        let peak_window = i64::try_from(shipped().peak_window_seconds).unwrap();
+        let burn_history = i64::try_from(shipped().burn_history_seconds).unwrap();
+        // One per fifth of a peak window over the remembered span, the bucket straddling its
+        // edge, and every interval of the live peak window: at most one a reading this case
+        // took, which its requests and the refresh before them made.
+        let bound = burn_history / (peak_window / 5) + 2 + (sent + 2) as i64;
+        let bound = usize::try_from(bound).unwrap();
+        for resource in ["graphql", "core"] {
+            assert!(
+                entries(resource) <= bound,
+                "{resource}: {} entries kept of a history every {every} s, over the bound {bound}",
+                entries(resource)
+            );
+        }
+        let size = std::fs::metadata(&file).unwrap().len();
+        assert!(
+            size < carried / 2 || every == 68,
+            "the state shrank from {carried} bytes: {size}"
+        );
+        kept.push((every, entries("graphql"), size));
+    }
+    // The bound is the same for both, and the busier host keeps no more than it allows.
+    eprintln!("kept (interval s, graphql entries, bytes): {kept:?}");
+}

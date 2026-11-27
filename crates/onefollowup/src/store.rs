@@ -23,7 +23,7 @@ use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock, Weak};
 
-use onetaskgraph_core::config::{self, Layer, SourceVisibility};
+use onetaskgraph_core::config::{self, Layer, Routes, SourceVisibility};
 use onetaskgraph_core::{
     BATCH_SCHEMA_VERSION, Body, CommentBatch, CommentBatchItem, CommentsSinceRequest, CopyAction,
     CopyConditions, CopyItems, CopyRequest, CopyScope, Engine, EngineError, Environment, Filters,
@@ -609,6 +609,13 @@ pub struct Store {
     runtime: tokio::runtime::Runtime,
     local: Option<String>,
     log: RefCell<Vec<StoreOperation>>,
+    /// Every source's routes, as the configuration states them.
+    routes: Routes,
+    /// The classification of each task the store answered, as onetaskgraph holds it: what a
+    /// ticket about it would be placed as.
+    classified: RefCell<HashMap<String, Classification>>,
+    /// What the verb's phases have sent, and where their lines go.
+    progress: Arc<Progress>,
 }
 
 /// The directory holding the onetaskgraph configuration `store` names, or the nearest one at
@@ -739,6 +746,11 @@ impl Store {
                 engine: Arc::clone(&engine_of_readings),
             })
         });
+        let progress = Arc::new(Progress::new(Arc::clone(&parts.notices)));
+        let readings: Arc<dyn Readings> = Arc::new(Watched {
+            readings,
+            progress: Arc::clone(&progress),
+        });
         let governor = Arc::new(Governor::new(
             crate::config::defaults("").governor,
             parts.clock,
@@ -747,12 +759,18 @@ impl Store {
         ));
         governor.set_backends(backends);
         let engine = Arc::new(
-            Engine::build(&loaded.config, &loaded.secrets)
-                .with_request_gate(Arc::new(Gate(Arc::clone(&governor)))),
+            Engine::build(&loaded.config, &loaded.secrets).with_request_gate(Arc::new(Gate {
+                governor: Arc::clone(&governor),
+                progress: Arc::clone(&progress),
+            })),
         );
         // Set once, here, before any call can ask for a reading.
         let _ = engine_of_readings.set(Arc::downgrade(&engine));
+        let routes = loaded.config.routes();
         Ok(Self {
+            routes,
+            classified: RefCell::new(HashMap::new()),
+            progress,
             engine,
             governor,
             settings,
@@ -910,10 +928,84 @@ impl Store {
         Ok(())
     }
 
+    /// Where a ticket about each of `inputs` — `(id, repository)` — written to `source` lands:
+    /// the source onetaskgraph's routes place it in, by its repository and its classification,
+    /// read from configuration alone. An input's classification is what the store holds for
+    /// the task it names — a draft, read in the same verb, or read here, in one read of every
+    /// one not yet read, only when `source` routes anything — and public for an input naming
+    /// no task, as a ticket about it is created. Answers one source per input, in order.
+    ///
+    /// # Errors
+    ///
+    /// A source or repository the store does not take, or its refusal of the read.
+    pub fn routed(
+        &self,
+        source: &str,
+        inputs: &[(&str, Option<&str>)],
+    ) -> Result<Vec<String>, StoreError> {
+        let name = source_name(source)?;
+        if !self.routes.routes(&name) {
+            return Ok(vec![source.to_owned(); inputs.len()]);
+        }
+        let unread: Vec<String> = inputs
+            .iter()
+            .map(|(id, _)| *id)
+            .filter(|id| !self.classified.borrow().contains_key(*id))
+            .filter(|id| {
+                id.parse::<GlobalId>()
+                    .is_ok_and(|global| self.declares(global.source.as_str()))
+            })
+            .map(str::to_owned)
+            .collect();
+        if !unread.is_empty() {
+            self.read(&unread, false)?;
+        }
+        inputs
+            .iter()
+            .map(|(id, repository)| {
+                let classification = self
+                    .classified
+                    .borrow()
+                    .get(*id)
+                    .copied()
+                    .unwrap_or(Classification::Public);
+                let repositories = repositories(
+                    &repository
+                        .map(str::to_owned)
+                        .into_iter()
+                        .collect::<Vec<_>>(),
+                )?;
+                Ok(self
+                    .routes
+                    .place_classified(&name, classification, &repositories)
+                    .destination
+                    .to_string())
+            })
+            .collect()
+    }
+
+    /// Start one phase of `verb`: one line on standard error naming it and `what` it covers,
+    /// then one every [`PROGRESS_EVERY`] requests its calls send, with the requests and points
+    /// spent so far, until it is finished. For people: no record holds these lines.
+    #[must_use]
+    pub fn phase(&self, verb: &str, name: &str, what: &str) -> Phase<'_> {
+        self.progress
+            .start(&format!("onefollowup {verb}: {name}"), what);
+        Phase { store: self }
+    }
+
     /// Every operation made so far, in order.
     #[must_use]
     pub fn operations(&self) -> Vec<StoreOperation> {
         self.log.borrow().clone()
+    }
+
+    /// `task` as a store item, its classification remembered.
+    fn item(&self, task: Qualified<Task>) -> StoreItem {
+        self.classified
+            .borrow_mut()
+            .insert(task.id.to_string(), task.item.classification);
+        StoreItem::of(task)
     }
 
     fn count(&self, op: &str, source: &str, items: usize) {
@@ -1015,7 +1107,7 @@ impl Store {
                         .items
                         .into_iter()
                         .take(limit)
-                        .map(StoreItem::of)
+                        .map(|task| self.item(task))
                         .collect(),
                     total,
                     incomplete: answer.reason,
@@ -1063,7 +1155,11 @@ impl Store {
             return Err(Self::failed("a task listing", source, failure.error));
         }
         self.count("list", source, listed.items.len());
-        Ok(listed.items.into_iter().map(StoreItem::of).collect())
+        Ok(listed
+            .items
+            .into_iter()
+            .map(|task| self.item(task))
+            .collect())
     }
 
     /// Every task of `ids`, all of one source, each with its comments when `comments` is set,
@@ -1106,7 +1202,12 @@ impl Store {
                         .join("; ")
                 });
                 ReadItem {
-                    item: detail.response.items.into_iter().next().map(StoreItem::of),
+                    item: detail
+                        .response
+                        .items
+                        .into_iter()
+                        .next()
+                        .map(|task| self.item(task)),
                     comments: detail.comments.map(|list| {
                         list.into_iter()
                             .map(|comment| StoreComment {
@@ -1847,13 +1948,18 @@ fn reading(reading: &QuotaReading) -> Reading {
 }
 
 /// The governor as the engine's request gate: asked before every backend request a call sends,
-/// told every response's reading. It only ever waits, never refuses.
-struct Gate(Arc<Governor>);
+/// told every response's reading. It only ever waits, never refuses. Each request is counted
+/// toward the phase in progress, too.
+struct Gate {
+    governor: Arc<Governor>,
+    progress: Arc<Progress>,
+}
 
 #[async_trait::async_trait]
 impl RequestGate for Gate {
     async fn before_request(&self, request: &GatedRequest) -> Result<(), SourceError> {
-        self.0
+        self.progress.hinted(request.cost_hint);
+        self.governor
             .before_request(&Request {
                 resource: request.resource.clone(),
                 cost_hint: request.cost_hint,
@@ -1864,12 +1970,160 @@ impl RequestGate for Gate {
     }
 
     fn after_response(&self, readings: &[QuotaReading]) {
-        self.0
-            .after_response(&readings.iter().map(reading).collect::<Vec<_>>());
+        let readings: Vec<Reading> = readings.iter().map(reading).collect();
+        self.progress.answered(&readings);
+        self.governor.after_response(&readings);
     }
 
     fn request_ended(&self) {
-        self.0.request_ended();
+        self.progress.ended();
+        self.governor.request_ended();
+    }
+}
+
+/// The governor's quota readings, watched by the progress count too, so the first response of
+/// a phase has a reading to measure what it cost against.
+struct Watched {
+    readings: Arc<dyn Readings>,
+    progress: Arc<Progress>,
+}
+
+impl Readings for Watched {
+    fn read<'a>(&'a self, source: &'a str) -> Pending<'a, Result<Vec<Reading>, String>> {
+        Box::pin(async move {
+            let read = self.readings.read(source).await;
+            if let Ok(readings) = &read {
+                self.progress.seen(readings);
+            }
+            read
+        })
+    }
+}
+
+/// How many requests a phase sends between two of its progress lines.
+pub const PROGRESS_EVERY: u64 = 20;
+
+/// What the phase in progress has sent: its requests, and the points they spent — each
+/// response's fall in remaining from the last reading of its window, or, for a window not read
+/// before, the request's own hint.
+#[derive(Default)]
+struct Counted {
+    phase: Option<String>,
+    requests: u64,
+    points: u64,
+    /// The hint of the request last sent, until its response measures it.
+    hint: Option<u64>,
+    /// The last remaining read of each window, by resource and reset.
+    remaining: HashMap<(String, chrono::DateTime<chrono::Utc>), u64>,
+}
+
+/// Progress lines for people: one as each phase starts and ends, and one every
+/// [`PROGRESS_EVERY`] requests while it runs, on the governor's notices.
+struct Progress {
+    notices: governor::Notices,
+    counted: std::sync::Mutex<Counted>,
+}
+
+impl Progress {
+    fn new(notices: governor::Notices) -> Self {
+        Self {
+            notices,
+            counted: std::sync::Mutex::new(Counted::default()),
+        }
+    }
+
+    fn counted(&self) -> std::sync::MutexGuard<'_, Counted> {
+        self.counted
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn start(&self, phase: &str, what: &str) {
+        {
+            let mut counted = self.counted();
+            counted.phase = Some(phase.to_owned());
+            counted.requests = 0;
+            counted.points = 0;
+        }
+        (self.notices)(&format!("{phase}: started: {what}"));
+    }
+
+    fn finish(&self) {
+        let line = {
+            let mut counted = self.counted();
+            counted.phase.take().map(|phase| {
+                format!(
+                    "{phase}: finished: {} requests, {} points",
+                    counted.requests, counted.points
+                )
+            })
+        };
+        if let Some(line) = line {
+            (self.notices)(&line);
+        }
+    }
+
+    fn hinted(&self, hint: Option<u64>) {
+        self.counted().hint = hint;
+    }
+
+    /// Readings taken outside any response: what later falls are measured from.
+    fn seen(&self, readings: &[Reading]) {
+        let mut counted = self.counted();
+        for reading in readings {
+            counted.remaining.insert(
+                (reading.resource.clone(), reading.resets_at),
+                reading.remaining,
+            );
+        }
+    }
+
+    fn answered(&self, readings: &[Reading]) {
+        let mut counted = self.counted();
+        let mut cost = None;
+        for reading in readings {
+            let window = (reading.resource.clone(), reading.resets_at);
+            if let Some(before) = counted.remaining.insert(window, reading.remaining) {
+                *cost.get_or_insert(0) += before.saturating_sub(reading.remaining);
+            }
+        }
+        let hint = counted.hint.take();
+        if counted.phase.is_some() {
+            counted.points += cost.or(hint).unwrap_or(0);
+        }
+    }
+
+    fn ended(&self) {
+        let line = {
+            let mut counted = self.counted();
+            match counted.phase.clone() {
+                Some(phase) => {
+                    counted.requests += 1;
+                    counted.requests.is_multiple_of(PROGRESS_EVERY).then(|| {
+                        format!(
+                            "{phase}: {} requests, {} points so far",
+                            counted.requests, counted.points
+                        )
+                    })
+                }
+                None => None,
+            }
+        };
+        if let Some(line) = line {
+            (self.notices)(&line);
+        }
+    }
+}
+
+/// One phase of a verb in progress, from [`Store::phase`]: finished, it prints its line.
+pub struct Phase<'a> {
+    store: &'a Store,
+}
+
+impl Phase<'_> {
+    /// The phase is over: one line naming the requests and points it spent.
+    pub fn finish(self) {
+        self.store.progress.finish();
     }
 }
 

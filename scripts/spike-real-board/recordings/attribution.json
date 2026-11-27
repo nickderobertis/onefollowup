@@ -1,9 +1,9 @@
 {
   "spend": {
-    "github_reported_points": 720.0,
+    "github_reported_points": 739.0,
     "dry_run_points_assumed_at_1_each": 52.0,
-    "total_counted_against_the_1500_cap": 772.0,
-    "this_dispatch_reported_requests": 409,
+    "total_counted_against_the_1500_cap": 791.0,
+    "this_dispatch_reported_requests": 428,
     "this_dispatch_dry_runs": 27,
     "note": "the first two ledger lines carry the earlier dispatch's totals (243 reported, 25 dry runs); its recordings were discarded"
   },

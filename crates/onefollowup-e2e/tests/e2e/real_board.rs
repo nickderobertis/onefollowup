@@ -259,65 +259,91 @@ fn strings<'a>(value: &'a Value, key: &'a str, out: &mut Vec<(&'a str, &'a str)>
     }
 }
 
-#[test]
-fn the_recorded_requests_hold_no_board_id_and_no_issue_of_a_repository_github_does_not_report_public()
- {
-    let public: std::collections::BTreeSet<String> = recorded::repositories()
+/// The repositories GitHub reports PUBLIC, as the fixture records its answer.
+fn public_repositories() -> std::collections::BTreeSet<String> {
+    recorded::repositories()
         .into_iter()
         .filter(|(_, visibility)| visibility == "PUBLIC")
         .map(|(name, _)| name)
-        .collect();
+        .collect()
+}
+
+/// The first privacy violation `bytes`, the recording `label`, holds — a real board or item
+/// id, or an issue or a name of a repository not in `public` — or why it cannot be read whole:
+/// `None` when it holds none. A gzip-compressed recording is decompressed first, layer by
+/// layer, so its payload is what is scanned.
+fn privacy_problem(
+    label: &str,
+    bytes: &[u8],
+    public: &std::collections::BTreeSet<String>,
+) -> Option<String> {
+    let mut bytes = bytes.to_vec();
+    while bytes.starts_with(&[0x1f, 0x8b]) {
+        let mut inflated = Vec::new();
+        if let Err(error) = std::io::Read::read_to_end(
+            &mut flate2::read::MultiGzDecoder::new(&bytes[..]),
+            &mut inflated,
+        ) {
+            return Some(format!(
+                "{label}: a compressed recording that does not decompress: {error}"
+            ));
+        }
+        bytes = inflated;
+    }
+    let Ok(text) = String::from_utf8(bytes) else {
+        return Some(format!("{label}: a recording is UTF-8 JSON"));
+    };
+    let value: Value = match serde_json::from_str(&text) {
+        Ok(value) => value,
+        Err(error) => return Some(format!("{label}: a recording is JSON: {error}")),
+    };
     let board_id = Regex::new(r"\bPVT[A-Z]*_[A-Za-z0-9_-]+").expect("valid");
     let placeholder = Regex::new(r"^PVT[A-Z]*_placeholder_(board|[0-9]{4})$").expect("valid");
     let named = [
         Regex::new(r"github\.com/([A-Za-z0-9-]+/[A-Za-z0-9._-]*[A-Za-z0-9_-])").expect("valid"),
         Regex::new(r"\b([A-Za-z0-9-]+/[A-Za-z0-9._-]*[A-Za-z0-9_-])#[0-9]+").expect("valid"),
     ];
+    let mut held = Vec::new();
+    strings(&value, "", &mut held);
+    for (key, text) in held {
+        for id in board_id.find_iter(text) {
+            if !placeholder.is_match(id.as_str()) {
+                return Some(format!(
+                    "{label}: `{}` under `{key}` is a real board id, not a placeholder",
+                    id.as_str()
+                ));
+            }
+        }
+        if key == "nameWithOwner" && !public.contains(text) {
+            return Some(format!(
+                "{label}: an issue of {text}, which GitHub does not report PUBLIC"
+            ));
+        }
+        for pattern in &named {
+            for name in pattern.captures_iter(text) {
+                if !public.contains(&name[1]) {
+                    return Some(format!(
+                        "{label}: `{}` names {}, which GitHub does not report PUBLIC",
+                        &name[0], &name[1]
+                    ));
+                }
+            }
+        }
+    }
+    None
+}
+
+#[test]
+fn the_recorded_requests_hold_no_board_id_and_no_issue_of_a_repository_github_does_not_report_public()
+ {
+    let public = public_repositories();
     let directory = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/e2e/fixtures/real-board");
     let mut scanned = 0;
     for entry in std::fs::read_dir(&directory).expect("the recordings") {
         let path = entry.expect("an entry").path();
         let bytes = std::fs::read(&path).expect("readable");
-        // Nothing recorded is kept where this check cannot read it whole: a compressed file
-        // would hide what it holds.
-        assert!(
-            !bytes.starts_with(&[0x1f, 0x8b]),
-            "{}: a recording is kept uncompressed, so every byte of it is scanned",
-            path.display()
-        );
-        let text = String::from_utf8(bytes)
-            .unwrap_or_else(|_| panic!("{}: a recording is UTF-8 JSON", path.display()));
-        let value: Value = serde_json::from_str(&text)
-            .unwrap_or_else(|error| panic!("{}: a recording is JSON: {error}", path.display()));
-        let mut held = Vec::new();
-        strings(&value, "", &mut held);
-        for (key, text) in held {
-            for id in board_id.find_iter(text) {
-                assert!(
-                    placeholder.is_match(id.as_str()),
-                    "{}: `{}` under `{key}` is a real board id, not a placeholder",
-                    path.display(),
-                    id.as_str()
-                );
-            }
-            if key == "nameWithOwner" {
-                assert!(
-                    public.contains(text),
-                    "{}: an issue of {text}, which GitHub does not report PUBLIC",
-                    path.display()
-                );
-            }
-            for pattern in &named {
-                for name in pattern.captures_iter(text) {
-                    assert!(
-                        public.contains(&name[1]),
-                        "{}: `{}` names {}, which GitHub does not report PUBLIC",
-                        path.display(),
-                        &name[0],
-                        &name[1]
-                    );
-                }
-            }
+        if let Some(problem) = privacy_problem(&path.display().to_string(), &bytes, &public) {
+            panic!("{problem}");
         }
         scanned += 1;
     }
@@ -329,4 +355,69 @@ fn the_recorded_requests_hold_no_board_id_and_no_issue_of_a_repository_github_do
             .contains("\"(dropped)\",\"number\":3"),
         "the board's project id is a placeholder"
     );
+}
+
+/// `text` gzip-compressed, as a recording could be kept.
+fn gzipped(text: &str) -> Vec<u8> {
+    let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    std::io::Write::write_all(&mut encoder, text.as_bytes()).expect("compressed");
+    encoder.finish().expect("compressed")
+}
+
+#[test]
+fn a_compressed_recording_is_scanned_for_what_it_holds_not_refused_for_being_compressed() {
+    let public = public_repositories();
+    let fixture = recorded::FIXTURE.to_string();
+    // The committed, sanitized recording compressed — once, and twice over — holds nothing
+    // the board's privacy keeps out of a public tree.
+    assert_eq!(
+        privacy_problem("sanitized.json.gz", &gzipped(&fixture), &public),
+        None
+    );
+    assert_eq!(
+        privacy_problem(
+            "sanitized.json.gz.gz",
+            &{
+                let once = gzipped(&fixture);
+                let mut twice =
+                    flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+                std::io::Write::write_all(&mut twice, &once).expect("compressed");
+                twice.finish().expect("compressed")
+            },
+            &public
+        ),
+        None
+    );
+    // The same recording with one real board item id, or one issue of a repository GitHub
+    // does not report PUBLIC, compressed: refused for what its payload holds.
+    let real_item = fixture.replacen("PVTI_placeholder_0001", "PVTI_lADOASiiG84BjXXyzgAAAAA", 1);
+    assert_ne!(real_item, fixture, "the fixture holds an item placeholder");
+    let problem = privacy_problem("item.json.gz", &gzipped(&real_item), &public)
+        .expect("a real board item id is refused");
+    assert!(
+        problem.contains("`PVTI_lADOASiiG84BjXXyzgAAAAA`") && problem.contains("real board id"),
+        "{problem}"
+    );
+    let real_board = fixture.replacen("PVT_placeholder_board", "PVT_kwHOASiiG84BjXXy", 1);
+    let problem = privacy_problem("board.json.gz", &gzipped(&real_board), &public)
+        .expect("the board's real project id is refused");
+    assert!(problem.contains("`PVT_kwHOASiiG84BjXXy`"), "{problem}");
+    let repository = public.iter().next().expect("a public repository").clone();
+    let private = fixture.replacen(
+        &format!("\"nameWithOwner\":\"{repository}\""),
+        "\"nameWithOwner\":\"nickderobertis/a-private-repository\"",
+        1,
+    );
+    assert_ne!(private, fixture, "the fixture names {repository}");
+    let problem = privacy_problem("private.json.gz", &gzipped(&private), &public)
+        .expect("an issue of a repository not reported PUBLIC is refused");
+    assert!(
+        problem.contains("nickderobertis/a-private-repository")
+            && problem.contains("does not report PUBLIC"),
+        "{problem}"
+    );
+    // A file that claims to be compressed but is not is refused, never skipped.
+    let problem = privacy_problem("broken.json.gz", &[0x1f, 0x8b, 0x08, 0x00], &public)
+        .expect("an unreadable compressed recording is refused");
+    assert!(problem.contains("does not decompress"), "{problem}");
 }

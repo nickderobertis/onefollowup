@@ -53,6 +53,9 @@ schemars = "1.2.2"
 # release and features onetaskgraph-core already resolves, so nothing new is built.
 jsonschema = { version = "0.50.1", default-features = false }
 tempfile = "3.24.0"
+# The e2e fixture check reads a gzip-compressed recording whole before scanning it; the pure-Rust
+# backend, so nothing links a C zlib.
+flate2 = { version = "1.1.11", default-features = false, features = ["rust_backend"] }
 
 [profile.release]
 strip = true

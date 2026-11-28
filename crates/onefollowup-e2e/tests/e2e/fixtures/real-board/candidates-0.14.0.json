@@ -1,0 +1,176 @@
+{
+  "about": "The open tickets onefollowup 0.14.0 (the v0.14.0 tag, on onetaskgraph 0.17.0) rendered as duplicate candidates for each draft, by draft, taken before onetaskgraph 0.17.3's find by candidates_baseline::record: the 50-draft batch at the real board's shape (real_workload) and the real clusters of fixtures/filing-duplicates.json (filing_duplicates::clusters_world).",
+  "version": "onefollowup 0.14.0",
+  "fifty_drafts": {
+    "drafts:a-dispatch-s-supervisor-tells-its-worker-to": [],
+    "drafts:ai-orchestrator-gobero-bibazi-budope-tidiva-pedefa": [],
+    "drafts:ai-orchestrator-nimodi-nuneta-konada-dinuku-vanopo": [],
+    "drafts:ai-orchestrator-rufese-mofabe-gifuga-befonu-bogego": [],
+    "drafts:ai-orchestrator-zopofa-sipimu-nepeso-noruli-kirore": [],
+    "drafts:attribute-worker-execution-time-so-delivery-overruns-can-be-diagnosed": [
+      "followups:I_example-org_01135",
+      "followups:I_example-org_00125",
+      "followups:I_example-org_00191",
+      "followups:I_example-org_00198",
+      "followups:I_example-org_00205",
+      "followups:I_example-org_00212",
+      "followups:I_example-org_00165",
+      "followups:I_example-org_00172"
+    ],
+    "drafts:delivery-recovery-must-surface-accumulating-decision-waits": [
+      "followups:I_example-org_00217",
+      "followups:I_example-org_00224",
+      "followups:I_example-org_00256",
+      "followups:I_example-org_00263",
+      "followups:I_example-org_00270",
+      "followups:I_example-org_00277",
+      "followups:I_example-org_00285"
+    ],
+    "drafts:e2e-adoption-journeys-inherit-the-host-s": [
+      "followups:I_example-org_00709",
+      "followups:I_example-org_00008",
+      "followups:I_example-org_00015",
+      "followups:I_example-org_00047",
+      "followups:I_example-org_00054",
+      "followups:I_example-org_00061",
+      "followups:I_example-org_00068"
+    ],
+    "drafts:fetch-churn-test-fails-under-host-load-16-fetch-runs-must-fit-its-10s-bound": [
+      "followups:I_example-org_01419",
+      "followups:I_example-org_00269",
+      "followups:I_example-org_00276",
+      "followups:I_example-org_00284",
+      "followups:I_example-org_00291",
+      "followups:I_example-org_00298",
+      "followups:I_example-org_00305",
+      "followups:I_example-org_00312"
+    ],
+    "drafts:just-channel-reply-runs-the-plan-edit-review-without-the-alternate": [
+      "followups:I_example-org_01845"
+    ],
+    "drafts:keep-playwright-s-error-context-from-a-failed": [
+      "followups:I_example-org_01703",
+      "followups:I_example-org_00427",
+      "followups:I_example-org_00434"
+    ],
+    "drafts:ledger-bababa-tozogu-pizino-lezeti-lobane": [],
+    "drafts:ledger-kulimo-dolesi-velabi-vomora-rimizu": [],
+    "drafts:ledger-rufese-mofabe-gifuga-befonu-bogego": [
+      "private-followups:I_example-private-org_00006"
+    ],
+    "drafts:ledger-zopofa-sipimu-nepeso-noruli-kirore": [],
+    "drafts:onebudgetspec-barado-topuki-tasibe-pureka-lorapu": [],
+    "drafts:onebudgetspec-metafe-gatula-busoru-tisizo-tutari": [],
+    "drafts:onebudgetspec-sagopu-nufivo-kofefo-kakute-dugode": [],
+    "drafts:onebudgetspec-zogugo-zalize-sukege-nokana-kikusu": [],
+    "drafts:onejudge-bababa-tozogu-pizino-lezeti-lobane": [],
+    "drafts:onejudge-e2e-pointer-test-inherits-the-host-s-oneharness-history-pointer": [],
+    "drafts:onejudge-firuto-fusini-zisete-sesade-nasuka": [],
+    "drafts:onejudge-kulimo-dolesi-velabi-vomora-rimizu": [],
+    "drafts:onejudge-panics-with-min-greater-than-max-mid": [],
+    "drafts:onejudge-potuve-litofe-fetima-fovafu-zevulo": [],
+    "drafts:onejudge-vigila-regeru-rokuko-mikopi-gekive": [],
+    "drafts:onepipeline-fibusa-zaboba-suzeku-sedabo-nadugi": [],
+    "drafts:onepipeline-golapa-bilutu-talodu-pukilo-pemadi": [],
+    "drafts:onepipeline-memegu-gamano-ginofi-benime-tumesa": [],
+    "drafts:onepipeline-nitibu-keteko-datapi-divoge-vavina": [],
+    "drafts:onepipeline-savori-sizele-nezara-kazuvu-duvofu": [],
+    "drafts:onepipeline-ui-debivi-vuzafi-rozule-radoda-mubilu": [],
+    "drafts:onepipeline-ui-kubone-kefega-dafanu-voduso-ridobo": [],
+    "drafts:onepipeline-ui-lamuke-fulopa-zilivu-zumapo-somuti": [],
+    "drafts:onepipeline-ui-pomaba-paporo-lunizi-fonegi-faruva": [],
+    "drafts:onepipeline-ui-rutetu-motadu-mazosi-guvibi-boveke": [],
+    "drafts:onevcs-deriza-vupega-vesuvo-rasofo-murimi": [],
+    "drafts:onevcs-ladamu-lifodo-fefili-zudere-zeguka": [],
+    "drafts:onevcs-tegani-paguse-pikima-lekesu-fakabu": [],
+    "drafts:onevcs-vipeki-repape-maputa-gunoda-gereto": [],
+    "drafts:packaging-launcher-without-carrier-journey-passes-or-fails-on-the-host": [
+      "followups:I_example-org_01987"
+    ],
+    "drafts:payroll-fibusa-zaboba-suzeku-sedabo-nadugi": [],
+    "drafts:payroll-memegu-gamano-ginofi-benime-tumesa": [],
+    "drafts:payroll-tegani-paguse-pikima-lekesu-fakabu": [],
+    "drafts:repeat-sweep-timing-bound-sits-at-its-own": [
+      "followups:I_example-org_00400",
+      "followups:I_example-org_00407",
+      "followups:I_example-org_00414",
+      "followups:I_example-org_00421",
+      "followups:I_example-org_00374",
+      "followups:I_example-org_00381",
+      "followups:I_example-org_00388"
+    ],
+    "drafts:session-setup-journeys-fail-on-a-dangling-python-shim-in-local": [
+      "followups:I_example-org_00993",
+      "followups:I_example-org_00099",
+      "followups:I_example-org_00106",
+      "followups:I_example-org_00113",
+      "followups:I_example-org_00073",
+      "followups:I_example-org_00080",
+      "followups:I_example-org_00087",
+      "followups:I_example-org_00094"
+    ],
+    "drafts:unit-tests-read-the-host-s-onetaskgraph-config": [
+      "followups:I_example-org_00709",
+      "followups:I_example-org_00003",
+      "followups:I_example-org_01135",
+      "followups:I_example-org_01419"
+    ],
+    "drafts:vault-kubone-kefega-dafanu-voduso-ridobo": [],
+    "drafts:vault-pomaba-paporo-lunizi-fonegi-faruva": [],
+    "drafts:vault-zogugo-zalize-sukege-nokana-kikusu": []
+  },
+  "clusters": {
+    "drafts:a-branch-name-ending-in-a-dot-truncates-the-publish-summary": [
+      "followups:onebudgetspec-51",
+      "followups:onejudge-188"
+    ],
+    "drafts:a-dispatch-s-supervisor-tells-its-worker-to": [
+      "followups:ai-orchestrator-1887",
+      "followups:onepipeline-1072"
+    ],
+    "drafts:attribute-worker-execution-time-so-delivery-overruns-can-be-diagnosed": [
+      "followups:ai-orchestrator-1887"
+    ],
+    "drafts:delivery-recovery-must-surface-accumulating-decision-waits": [
+      "followups:ai-orchestrator-1887"
+    ],
+    "drafts:e2e-adoption-journeys-inherit-the-host-s": [
+      "followups:onepipeline-934"
+    ],
+    "drafts:fetch-churn-test-fails-under-host-load-16-fetch-runs-must-fit-its-10s-bound": [
+      "followups:onevcs-678",
+      "followups:onepipeline-ui-727"
+    ],
+    "drafts:just-channel-reply-runs-the-plan-edit-review-without-the-alternate": [
+      "followups:ai-orchestrator-2547",
+      "followups:ai-orchestrator-1887",
+      "followups:onepipeline-1072"
+    ],
+    "drafts:keep-playwright-s-error-context-from-a-failed": [
+      "followups:onepipeline-ui-727",
+      "followups:ai-orchestrator-2004"
+    ],
+    "drafts:onejudge-e2e-pointer-test-inherits-the-host-s-oneharness-history-pointer": [],
+    "drafts:onejudge-panics-with-min-greater-than-max-mid": [
+      "followups:onejudge-188",
+      "followups:onepipeline-1072"
+    ],
+    "drafts:packaging-launcher-without-carrier-journey-passes-or-fails-on-the-host": [
+      "followups:onebudgetspec-51",
+      "followups:onepipeline-934"
+    ],
+    "drafts:repeat-sweep-timing-bound-sits-at-its-own": [
+      "followups:onevcs-678"
+    ],
+    "drafts:session-setup-journeys-fail-on-a-dangling-python-shim-in-local": [
+      "followups:ai-orchestrator-2004",
+      "followups:onepipeline-ui-727"
+    ],
+    "drafts:unit-tests-read-the-host-s-onetaskgraph-config": [
+      "followups:onepipeline-934",
+      "followups:onepipeline-ui-727",
+      "followups:ai-orchestrator-1887",
+      "followups:onevcs-678"
+    ]
+  }
+}

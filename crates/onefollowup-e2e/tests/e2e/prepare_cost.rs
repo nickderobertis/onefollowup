@@ -1,26 +1,25 @@
 //! What one `onefollowup prepare` of a 50-draft batch costs in GitHub GraphQL points and in
 //! seconds, measured by running the built binary's `prepare` end to end over the loopback
-//! GitHub (`loopback_github`, `loopback_boards`), which charges every request by GitHub's
-//! published calculation (`graphql_cost`): the telemetry of `prepare-graphql-points-per-draft`
-//! and `prepare-seconds-per-batch` (`budgets.yaml`).
+//! GitHub (`loopback_github`, `loopback_boards`): the telemetry of
+//! `prepare-graphql-points-per-draft` and `prepare-seconds-per-batch` (`budgets.yaml`).
 //!
-//! The workload is the one those budgets state: 50 drafts under the shipped `root-cause` kind,
-//! which judges duplicates, so each searches its title, up to 5 terms and up to 2 file names.
-//! 40 are about public repositories and land on the public board `followups` (2,000 tickets
-//! across 6 repositories, about 470 open); 10 are about private repositories, which a route by
-//! repository sends to the private board `private-followups` (400 tickets). The 13 real
-//! clusters of `fixtures/filing-duplicates.json` give 13 of the public drafts and their earlier
-//! members on the public board; the rest of both boards come from `duplicate_boards`' crowd
-//! generator, and at least three unstoplisted terms the drafts search each match 1,000 public
-//! tickets or more. The loopback reports a fresh window — 5,000 of 5,000 points, resetting
-//! 1,800 s after the start — and the governor starts from a host state carried over from many
-//! earlier windows, about the 910 KB this host's held on 2026-11-25.
+//! The workload is the one those budgets state (`real_workload`): 50 drafts under the shipped
+//! `root-cause` kind, which judges duplicates, so each searches its title, up to 5 terms and up
+//! to 2 file names, keeping 21 hits a query — 40 routed to a public board at the real
+//! `followups` board's shape, 10 to a 400-ticket private board. The loopback charges each
+//! request the points GitHub charged and the seconds GitHub took for the recorded real request
+//! of the same document and page sizes (`recorded`), and answers from one token's two
+//! interleaved 5,000-point windows, the first resetting 1,800 s after the start, which other
+//! work spends at 105 points a minute. The governor keeps its 20% floor and seeded reserve,
+//! from a host state carried over from many earlier windows, about the 910 KB this host held.
 //!
-//! Seconds are the process's wall clock from spawn to exit, timed here with a monotonic clock,
-//! plus every request it sent, in sequence, times a stated 0.5 s GitHub round trip; nothing
-//! sleeps for it. The journey asserts no point or time threshold — the budgets are
-//! onebudgetspec's to judge — only where each draft was searched, what the progress lines
-//! said, and exact counts of what prepare did.
+//! Points are prepare's own: what its progress lines count, each request at the cost its
+//! response reported, held equal to what the loopback charged its GraphQL requests. Seconds
+//! are the process's wall clock from spawn to exit, timed here with a monotonic clock, any
+//! governor hold inside it as real time, plus the recorded seconds charged to each request,
+//! once each; nothing sleeps for them. The journey asserts no point or time threshold — the
+//! budgets are onebudgetspec's to judge — only where each draft was searched, what the
+//! progress lines said, that every hold was the own request's, and exact counts.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Instant;
@@ -31,21 +30,16 @@ use crate::duplicate_boards::{
     Crowd, CrowdTicket, REPOSITORIES, clusters, crowd_tickets, origin, record, slug_of,
 };
 use crate::loopback_boards::{Board, BoardIssue};
-use crate::loopback_github::{Charged, LoopbackGitHub, Pricing, Quota};
+use crate::loopback_github::{Charged, LoopbackGitHub, Pricing, Shared};
+use crate::real_workload;
 use crate::telemetry;
 use crate::world::World;
 
-const BATCH: &str = "nightly-2026-11-25";
-/// GitHub's own round trip per request, which the loopback cannot reproduce.
-const ROUND_TRIP: f64 = 0.5;
 pub const PUBLIC_OWNER: &str = "example-org";
 pub const PRIVATE_OWNER: &str = "example-private-org";
 /// The private repositories, `github.com/example-private/<name>`, the route sends away.
 pub const PRIVATE_REPOSITORIES: [&str; 3] = ["ledger", "payroll", "vault"];
 const PUBLIC_TICKETS: usize = 2000;
-const PUBLIC_OPEN: usize = 470;
-const PRIVATE_TICKETS: usize = 400;
-const PRIVATE_OPEN: usize = 95;
 
 /// Board vocabulary the generated drafts search, with how many public crowd tickets carry
 /// each: the first three are the common unstoplisted terms the workload requires.
@@ -210,6 +204,7 @@ pub fn board(owner: &str, number: u64, tickets: Vec<BoardTicket>) -> Board {
         owner: owner.to_owned(),
         number,
         issues,
+        recorded: None,
     }
 }
 
@@ -337,7 +332,12 @@ pub fn carry_governor_state(state_home: &std::path::Path, every: i64) -> u64 {
         let mut held = Vec::new();
         while at < last - chrono::Duration::seconds(every) {
             let to = at + chrono::Duration::seconds(every);
-            held.push(json!({"from": format(at), "to": format(to), "spend": spend}));
+            // Each interval fell in the window of its hour, as one window at a time answered.
+            let reset = to.timestamp() - to.timestamp().rem_euclid(3600) + 3600;
+            let window = chrono::DateTime::from_timestamp(reset, 0).expect("an instant");
+            held.push(json!({
+                "from": format(at), "to": format(to), "spend": spend, "window": format(window),
+            }));
             at = to;
         }
         held
@@ -346,14 +346,14 @@ pub fn carry_governor_state(state_home: &std::path::Path, every: i64) -> u64 {
     let resource = |spend: f64| {
         json!({
             "windows": {},
-            "own": 6298.0,
+            "unread": 0.0,
             "history": history(spend),
             "request_cost": mean,
             "call_cost": [{"sum": 5319.0, "count": 1}, {"sum": 0.0, "count": 0}],
         })
     };
     let state = json!({
-        "schema_version": 1,
+        "schema_version": 2,
         "resources": {"graphql": resource(1.0), "core": resource(0.5)},
         "in_flight": [],
         "content_writes": [],
@@ -391,36 +391,6 @@ pub fn generated(at: usize, repository: &str) -> Draft {
         paths.push(format!("src/{}", FILES[(at + 3) % FILES.len()]));
     }
     (repository.to_owned(), title, paths, body)
-}
-
-/// Record the 50 drafts: the 13 clusters' later members, 27 generated public ones and 10
-/// private ones; answers each id with whether it is private.
-fn record_drafts(world: &mut World) -> Vec<(String, bool)> {
-    let mut drafts = Vec::new();
-    for cluster in clusters() {
-        let paths: Vec<&str> = cluster.draft.paths.iter().map(String::as_str).collect();
-        let id = world.draft_in(
-            BATCH,
-            &origin(&cluster.repository),
-            &cluster.draft.title,
-            &paths,
-            &format!("{}\n", cluster.draft.body),
-        );
-        drafts.push((id, false));
-    }
-    for at in 0..37 {
-        let private = at >= 27;
-        let repository = if private {
-            private_origin(PRIVATE_REPOSITORIES[at % PRIVATE_REPOSITORIES.len()])
-        } else {
-            origin(REPOSITORIES[at % REPOSITORIES.len()])
-        };
-        let (repository, title, paths, body) = generated(at, &repository);
-        let paths: Vec<&str> = paths.iter().map(String::as_str).collect();
-        let id = world.draft_in(BATCH, &repository, &title, &paths, &body);
-        drafts.push((id, private));
-    }
-    drafts
 }
 
 /// The phases prepare's stderr named: each one's `started` detail and its `finished` counts,
@@ -470,42 +440,113 @@ pub fn phases(stderr: &str) -> Phases {
 fn phase_of(charged: &Charged) -> &'static str {
     match charged.document.as_str() {
         "SEARCH_BATCH" | "SEARCH_ISSUES" => "duplicate find rounds",
-        "ISSUE_DETAILS" | "ISSUE_DETAIL" => "kept-hit detail reads",
+        "ISSUE_DETAILS" | "ISSUE_DETAIL" | "ISSUE" => "detail reads",
         "ISSUE_RELATIONS" => "relation reads",
         "rate_limit" => "quota reads",
         _ => "other",
     }
 }
 
+/// One hold the governor's line on standard error stated: the destination, the remaining of
+/// the window that held it, the floor and reserve, the own request's estimated cost, and that
+/// window by its reset.
+#[derive(Debug)]
+struct Hold {
+    remaining: f64,
+    floor: f64,
+    reserve: f64,
+    cost: f64,
+    resets_at: i64,
+}
+
+fn holds(stderr: &str) -> Vec<Hold> {
+    let line = regex::Regex::new(
+        r"holding requests to \S+ on graphql: remaining (\d+) of \d+, floor (\d+), reserve (\d+); this request ([0-9.]+) of the window resetting (\S+);",
+    )
+    .expect("valid");
+    line.captures_iter(stderr)
+        .map(|held| Hold {
+            remaining: held[1].parse().expect("a figure"),
+            floor: held[2].parse().expect("a figure"),
+            reserve: held[3].parse().expect("a figure"),
+            cost: held[4].parse().expect("a figure"),
+            resets_at: chrono::DateTime::parse_from_rfc3339(&held[5])
+                .expect("an instant")
+                .timestamp(),
+        })
+        .collect()
+}
+
+/// The quantile `at` of `sizes`, sorted.
+fn quantile(sizes: &[usize], at: f64) -> usize {
+    sizes[((sizes.len() - 1) as f64 * at).round() as usize]
+}
+
 #[test]
-fn a_50_draft_prepare_searches_each_draft_where_it_lands_and_records_its_points_and_seconds() {
+fn a_50_draft_prepare_at_the_real_board_s_shape_spends_and_waits_for_its_own_requests_alone() {
     let boards = vec![
-        public_board(PUBLIC_TICKETS, PUBLIC_OPEN, PUBLIC_WORDS),
-        private_board(PRIVATE_TICKETS, PRIVATE_OPEN, PUBLIC_WORDS),
+        real_workload::public_board(),
+        real_workload::private_board(),
     ];
-    let public_open = boards[0].issues.iter().filter(|one| one.open).count();
-    let reset_in = 1800;
-    let github = LoopbackGitHub::serving(
-        Quota {
-            remaining: 5000,
-            reset: chrono::Utc::now().timestamp() + reset_in,
-            charge: 0,
+    // The public board at the real board's shape.
+    let public = &boards[0];
+    let public_open = public.issues.iter().filter(|one| one.open).count();
+    assert_eq!(
+        (public.issues.len(), public_open),
+        (real_workload::PUBLIC_TICKETS, real_workload::PUBLIC_OPEN)
+    );
+    assert_eq!(
+        (
+            boards[1].issues.len(),
+            boards[1].issues.iter().filter(|one| one.open).count()
+        ),
+        (real_workload::PRIVATE_TICKETS, real_workload::PRIVATE_OPEN)
+    );
+    let mut sizes: Vec<usize> = public.issues.iter().map(|one| one.body.len()).collect();
+    sizes.sort_unstable();
+    for (at, size) in real_workload::BODY_QUANTILES {
+        let measured = quantile(&sizes, at);
+        assert!(
+            measured.abs_diff(size) * 100 <= size,
+            "body bytes at {at}: {measured}, the real board's {size}"
+        );
+    }
+    let labelled = public.issues.iter().filter(|one| one.labels == 1).count();
+    assert_eq!(
+        (
+            labelled,
+            public.issues.iter().filter(|one| one.labels == 0).count()
+        ),
+        (
+            real_workload::LABELLED,
+            real_workload::PUBLIC_TICKETS - real_workload::LABELLED
+        ),
+        "one label on 22 issues, none on the rest"
+    );
+
+    let start = chrono::Utc::now().timestamp();
+    let resets = [start + 1800, start + 1800 + 1550];
+    let github = LoopbackGitHub::sharing(
+        &Shared {
+            windows: vec![(2600, resets[0]), (4700, resets[1])],
+            others_per_minute: 105.0,
         },
         boards.clone(),
-        Pricing::Published,
+        Pricing::Recorded,
     );
     let (mut world, state) = loopback_world(&github);
-    let drafts = record_drafts(&mut world);
+    let drafts = real_workload::record_drafts(&mut world);
     assert_eq!(drafts.len(), 50);
     assert!(github.charged().is_empty(), "drafting reached GitHub");
     // A host that has governed many earlier windows: about this host's 910 KB.
-    let carried = carry_governor_state(state.path(), 17);
-    assert!(carried > 900_000, "{carried} bytes");
+    let carried = carry_governor_state(state.path(), 25);
+    assert!((880_000..950_000).contains(&carried), "{carried} bytes");
+    let windows_before = github.windows();
 
     // One prepare, timed from spawn to exit.
     let mut command =
         crate::isolated::command(crate::isolated::binary(), &world.root, world.environment());
-    command.args(["prepare", "--batch", BATCH]);
+    command.args(["prepare", "--batch", real_workload::BATCH]);
     let started = Instant::now();
     let output = command.output().expect("the binary runs");
     let elapsed = started.elapsed().as_secs_f64();
@@ -513,17 +554,30 @@ fn a_50_draft_prepare_searches_each_draft_where_it_lands_and_records_its_points_
     assert!(output.status.success(), "prepare: {stderr}");
     let prepared: Value = serde_json::from_slice(&output.stdout).expect("JSON");
     let after = governor_state_size(state.path());
+    let windows_after = github.windows();
 
     let charged = github.charged();
     let requests = charged.len() as u64;
-    let points: u64 = charged.iter().map(|one| one.points).sum();
-    let mut by_phase: BTreeMap<&str, (u64, u64)> = BTreeMap::new();
+    let graphql: Vec<&Charged> = charged
+        .iter()
+        .filter(|one| one.document != "rate_limit")
+        .collect();
+    let points: u64 = graphql.iter().map(|one| one.points).sum();
+    let mut by_phase: BTreeMap<&str, (u64, u64, f64)> = BTreeMap::new();
     for one in &charged {
         let held = by_phase.entry(phase_of(one)).or_default();
         held.0 += 1;
         held.1 += one.points;
+        held.2 += one.seconds;
     }
     assert_eq!(by_phase.get("other"), None, "{by_phase:?}");
+    assert!(
+        charged
+            .iter()
+            .filter(|one| one.document == "rate_limit")
+            .all(|one| one.points == 0),
+        "a rate-limit read costs no GraphQL points"
+    );
 
     // Where each draft was searched: one find a board, carrying exactly the searches of the
     // drafts routed there, and every search the private board was asked scoped to it alone.
@@ -571,18 +625,24 @@ fn a_50_draft_prepare_searches_each_draft_where_it_lands_and_records_its_points_
         "{}",
         prepared["store_operations"]
     );
-    let asked = |owner: &str, number: u64| -> Vec<&String> {
-        charged
-            .iter()
-            .flat_map(|one| &one.searches)
+    let sent: Vec<&String> = charged.iter().flat_map(|one| &one.searches).collect();
+    let scoped = |owner: &str, number: u64| -> BTreeSet<&String> {
+        sent.iter()
+            .copied()
             .filter(|text| text.contains(&format!("project:{owner}/{number}")))
             .collect()
     };
-    let all_searches: usize = charged.iter().map(|one| one.searches.len()).sum();
+    let (public_sent, private_sent) = (scoped(PUBLIC_OWNER, 7), scoped(PRIVATE_OWNER, 8));
+    let distinct: BTreeSet<&String> = sent.iter().copied().collect();
     assert_eq!(
-        asked(PUBLIC_OWNER, 7).len() + asked(PRIVATE_OWNER, 8).len(),
-        all_searches,
+        public_sent.len() + private_sent.len(),
+        distinct.len(),
         "every search is scoped to one of the boards"
+    );
+    assert_eq!(
+        distinct.len(),
+        sent.len(),
+        "each distinct text is sent once"
     );
     // Each search stopped once it held the 21 hits prepare keeps.
     let first_asked: Vec<u64> = github
@@ -600,20 +660,61 @@ fn a_50_draft_prepare_searches_each_draft_where_it_lands_and_records_its_points_
         !first_asked.is_empty() && first_asked.iter().all(|first| *first <= 21),
         "every page asks at most the 21 hits kept: {first_asked:?}"
     );
-    let distinct: BTreeSet<&String> = charged.iter().flat_map(|one| &one.searches).collect();
-    let limited = distinct
+    // The texts searched on the public board match as many issues as the real board's did.
+    let hits: Vec<usize> = public_sent
         .iter()
-        .filter(|text| crate::loopback_boards::matching(&boards, text) > 21)
-        .count();
-    let common = distinct
-        .iter()
-        .filter(|text| text.contains(&format!("project:{PUBLIC_OWNER}/7")))
-        .filter(|text| crate::loopback_boards::matching(&boards, text) >= 1000)
-        .count();
+        .map(|text| crate::loopback_boards::counted(&boards, text))
+        .collect();
+    let share = |from: usize, to: usize, of: usize, total: usize| -> (f64, f64) {
+        let measured = hits.iter().filter(|hit| (from..to).contains(hit)).count();
+        (
+            measured as f64 / hits.len() as f64,
+            of as f64 / total as f64,
+        )
+    };
+    let real: usize = real_workload::REAL_HITS.iter().map(|(_, _, of)| of).sum();
+    let mut spread = Vec::new();
+    for (from, to, of) in real_workload::REAL_HITS {
+        let (measured, wanted) = share(from, to, of, real);
+        let range = if to == usize::MAX {
+            format!("{from} or more")
+        } else {
+            format!("{from} to {}", to - 1)
+        };
+        spread.push(format!(
+            "{range}: {:.1}% (real {:.1}%)",
+            measured * 100.0,
+            wanted * 100.0
+        ));
+    }
+    for (from, to, of) in real_workload::REAL_HITS {
+        let (measured, wanted) = share(from, to, of, real);
+        assert!(
+            (measured - wanted).abs() <= 0.06,
+            "texts matching {from} to {to} issues: {:.1}% of {}, the real board's {:.1}%",
+            measured * 100.0,
+            hits.len(),
+            wanted * 100.0
+        );
+    }
+    assert_eq!(hits.iter().max(), Some(&real_workload::MOST_HITS));
+    let mut ordered = hits.clone();
+    ordered.sort_unstable();
+    let median = (ordered[(ordered.len() - 1) / 2] + ordered[ordered.len() / 2]) as f64 / 2.0;
     assert!(
-        common >= 3,
-        "at least 3 searched terms match 1,000 public tickets or more"
+        (median - real_workload::MEDIAN_HITS).abs() <= real_workload::MEDIAN_HITS / 2.0,
+        "the median text matched {median} issues, the real board's {}",
+        real_workload::MEDIAN_HITS
     );
+    spread.push(format!(
+        "median {median} (real {})",
+        real_workload::MEDIAN_HITS
+    ));
+    let limited = hits.iter().filter(|hit| **hit > 21).count()
+        + private_sent
+            .iter()
+            .filter(|text| crate::loopback_boards::counted(&boards, text) > 21)
+            .count();
     let rows: u64 = charged
         .iter()
         .filter(|one| !one.searches.is_empty())
@@ -645,7 +746,10 @@ fn a_50_draft_prepare_searches_each_draft_where_it_lands_and_records_its_points_
             .map(|(_, detail)| detail.clone())
             .unwrap_or_default()
     };
-    assert_eq!(detail("snapshot read"), format!("batch {BATCH}"));
+    assert_eq!(
+        detail("snapshot read"),
+        format!("batch {}", real_workload::BATCH)
+    );
     assert!(
         detail("duplicate find on followups").starts_with("40 drafts (")
             && detail("duplicate find on followups")
@@ -659,15 +763,27 @@ fn a_50_draft_prepare_searches_each_draft_where_it_lands_and_records_its_points_
         "{stderr}"
     );
     let state_reads: Value = serde_json::from_str(
-        &std::fs::read_to_string(world.work().join(format!("state/{BATCH}.json")))
-            .expect("the batch state"),
+        &std::fs::read_to_string(
+            world
+                .work()
+                .join(format!("state/{}.json", real_workload::BATCH)),
+        )
+        .expect("the batch state"),
     )
     .expect("JSON");
-    let items = state_reads["reads"].as_array().map_or(0, Vec::len);
+    // Read again with comments: every read an answer can relate, each draft's rendered
+    // candidates among them; every other hit keeps the find's answer.
+    let items = state_reads["reads"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|read| !read["comments"].is_null())
+        .count();
     assert!(
         detail("kept-hit detail read").starts_with(&format!("{items} items (")),
         "{stderr}"
     );
+    let mut ticked = 0;
     for (phase, (sent, _)) in &said.finished {
         let ticks: Vec<u64> = said
             .progress
@@ -679,29 +795,145 @@ fn a_50_draft_prepare_searches_each_draft_where_it_lands_and_records_its_points_
             ticks, expected,
             "{phase}: a line every 20 requests: {stderr}"
         );
+        ticked += ticks.len();
     }
+    assert!(ticked >= 1, "a phase sent 20 requests or more: {stderr}");
     let (said_requests, said_points) = said
         .finished
         .values()
         .fold((0, 0), |(requests, points), (one, two)| {
             (requests + one, points + two)
         });
+    // The progress lines count every request prepare sent, its rate-limit reads among them,
+    // and the points GitHub reported its own GraphQL requests cost — nothing for a reading.
     assert_eq!(
         said_requests, requests,
         "every request in a phase: {stderr}"
     );
-    assert_eq!(said_points, points, "every point in a phase: {stderr}");
+    assert_eq!(
+        said_points, points,
+        "the points the progress lines count are what the loopback charged prepare's own GraphQL requests: {stderr}"
+    );
 
-    // The figures, and how they were counted.
+    // Every hold, and what caused it: the own request's projected spend crossing floor plus
+    // reserve in the window that answered, as that window last read.
+    let held = holds(&stderr);
+    for hold in &held {
+        let window = resets
+            .iter()
+            .position(|reset| *reset == hold.resets_at)
+            .unwrap_or_else(|| panic!("{hold:?} names one of the token's windows"));
+        assert!(
+            hold.remaining - hold.cost < hold.floor + hold.reserve + 1.0,
+            "held while its own request left room: {hold:?}"
+        );
+        assert!(
+            charged
+                .iter()
+                .any(|one| one.window == window && one.remaining as f64 == hold.remaining),
+            "{hold:?}: the remaining the window that answered reported"
+        );
+    }
     let waits = prepared["governor"]["waits"]
         .as_array()
         .cloned()
         .unwrap_or_default();
+    assert_eq!(waits.len(), held.len(), "one wait a hold line: {stderr}");
     let held_seconds: u64 = waits
         .iter()
         .filter_map(|wait| wait["seconds"].as_u64())
         .sum();
-    let seconds = elapsed + requests as f64 * ROUND_TRIP;
+    assert!(
+        held_seconds as f64 <= elapsed + 1.0,
+        "every hold is real time inside the process's elapsed"
+    );
+    // Others' burn the governor booked, window by window, is no more than other work spent.
+    let host: Value = serde_json::from_str(
+        &std::fs::read_to_string(
+            state
+                .path()
+                .join("onefollowup/governor/github-projects.json"),
+        )
+        .expect("the host state"),
+    )
+    .expect("JSON");
+    let booked: Vec<f64> = resets
+        .iter()
+        .map(|reset| {
+            host["resources"]["graphql"]["history"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter(|interval| {
+                    interval["window"]
+                        .as_str()
+                        .and_then(|at| chrono::DateTime::parse_from_rfc3339(at).ok())
+                        .is_some_and(|at| at.timestamp() == *reset)
+                })
+                .map(|interval| interval["spend"].as_f64().unwrap_or_default())
+                .sum()
+        })
+        .collect();
+    let others: Vec<u64> = windows_after
+        .iter()
+        .zip(&windows_before)
+        .map(|(after, before)| after.others - before.others)
+        .collect();
+    for (window, (booked, spent)) in booked.iter().zip(&others).enumerate() {
+        assert!(
+            *booked <= *spent as f64 + 1.0,
+            "window {window}: the governor booked {booked} of others' burn, others spent {spent}"
+        );
+    }
+    let own: Vec<u64> = (0..resets.len())
+        .map(|window| {
+            graphql
+                .iter()
+                .filter(|one| one.window == window)
+                .map(|one| one.points)
+                .sum()
+        })
+        .collect();
+
+    // The seconds: the process's elapsed, holds inside it, plus each request's recorded
+    // seconds, charged once — recomputed here from the recording, request by request.
+    // Every recorded figure is whole milliseconds, so the charges are summed as integer
+    // milliseconds: the figure is then one exact sum, independent of the order it is
+    // added in, and a charge counted twice or dropped moves it by at least the smallest
+    // recorded request's 191 ms.
+    let millis = |seconds: f64| (seconds * 1000.0).round() as u64;
+    let charged_millis: u64 = charged.iter().map(|one| millis(one.seconds)).sum();
+    let recorded_millis: u64 = charged
+        .iter()
+        .map(|one| {
+            millis(if one.document == "rate_limit" {
+                crate::recorded::rate_limit_seconds()
+            } else {
+                crate::recorded::price(&one.document, &one.variables).seconds
+            })
+        })
+        .sum();
+    assert_eq!(
+        requests,
+        github.received().len() as u64 + by_phase.get("quota reads").map_or(0, |held| held.0),
+        "one charge a request"
+    );
+    assert!(
+        charged.iter().all(|one| millis(one.seconds) > 0),
+        "every request takes GitHub's time"
+    );
+    assert_eq!(
+        charged_millis, recorded_millis,
+        "each request charged the seconds recorded for its binding"
+    );
+    let charged_seconds = charged_millis as f64 / 1000.0;
+    let seconds = elapsed + charged_seconds;
+    assert_eq!(
+        millis(seconds - elapsed),
+        recorded_millis,
+        "the figure adds them once"
+    );
+
     let per_draft = points as f64 / drafts.len() as f64;
     let routed = format!(
         "followups {} drafts, private-followups {} drafts",
@@ -710,32 +942,66 @@ fn a_50_draft_prepare_searches_each_draft_where_it_lands_and_records_its_points_
     );
     let phase_points = by_phase
         .iter()
-        .map(|(phase, (sent, spent))| format!("{phase} {spent} points in {sent} requests"))
+        .map(|(phase, (sent, spent, _))| format!("{phase} {spent} points in {sent} requests"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let falls = windows_before
+        .iter()
+        .zip(&windows_after)
+        .enumerate()
+        .map(|(at, (before, after))| {
+            format!(
+                "window {} fell {} ({} of it prepare's own, {} other work's)",
+                ["A", "B"][at],
+                before.remaining - after.remaining,
+                own[at],
+                others[at]
+            )
+        })
         .collect::<Vec<_>>()
         .join(", ");
     telemetry::record(
         "prepare-graphql-points-per-draft",
         per_draft.ceil() as usize,
         &format!(
-            "{per_draft:.2} points a draft, rounded up: {points} points in {requests} requests for {} drafts; by phase: {phase_points}; {} searches asked, {rows} rows read, {limited} searches ended limited at 21 hits; drafts per routed destination: {routed}; boards: followups {} tickets ({public_open} open), private-followups {} tickets",
+            "{per_draft:.2} of prepare's own points a draft, rounded up: {points} points, each request at the cost its response reported, in {requests} requests for {} drafts; by phase: {phase_points}; {} searches asked, {} distinct searches sent, {rows} rows read, {limited} searches ended limited at 21 hits; drafts per routed destination: {routed}; beside them, {falls}; boards: followups {} tickets ({public_open} open), private-followups {} tickets; hits per searched public text: {}",
             drafts.len(),
             public_searches + private_searches,
+            distinct.len(),
             boards[0].issues.len(),
             boards[1].issues.len(),
+            spread.join(", "),
         ),
     );
-    let phase_requests = by_phase
+    let phase_seconds = by_phase
         .iter()
-        .map(|(phase, (sent, _))| format!("{phase} {sent}"))
+        .map(|(phase, (sent, _, seconds))| format!("{phase} {sent} requests, {seconds:.1} s"))
         .collect::<Vec<_>>()
         .join(", ");
+    let caused = held
+        .iter()
+        .map(|hold| {
+            format!(
+                "{:.1} own points against {} left, floor {} and reserve {} of the window resetting at {}",
+                hold.cost, hold.remaining, hold.floor, hold.reserve, hold.resets_at - start
+            )
+        })
+        .collect::<Vec<_>>();
     telemetry::record(
         "prepare-seconds-per-batch",
         seconds.ceil() as usize,
         &format!(
-            "{seconds:.1} s, rounded up: the process's measured elapsed {elapsed:.1} s plus {requests} requests in sequence at a stated {ROUND_TRIP} s round trip ({:.1} s); governor holds reported: {} totalling {held_seconds} s, inside the elapsed; governor state {carried} bytes at start, {after} at end; requests by phase: {phase_requests}; a fresh window, 5,000 of 5,000 points, resetting {reset_in} s after the start",
-            requests as f64 * ROUND_TRIP,
+            "{seconds:.1} s, rounded up: the process's measured elapsed {elapsed:.1} s plus the recorded seconds of its {requests} requests in sequence ({charged_seconds:.1} s); governor holds: {} totalling {held_seconds} s, inside the elapsed{}; other work's burn the governor attributed: {:.0} points of window A, {:.0} of window B, beside the {} and {} other work spent; governor state {carried} bytes at start, {after} at end; requests and seconds by phase: {phase_seconds}; two interleaved windows, 2,600 and 4,700 of 5,000 points left, resetting 1,800 s and 3,350 s after the start, other work spending 105 points a minute",
             waits.len(),
+            if caused.is_empty() {
+                String::new()
+            } else {
+                format!(", each caused by {}", caused.join("; "))
+            },
+            booked[0],
+            booked[1],
+            others[0],
+            others[1],
         ),
     );
     telemetry::record_journey(
@@ -744,8 +1010,10 @@ fn a_50_draft_prepare_searches_each_draft_where_it_lands_and_records_its_points_
             "points": points,
             "requests": requests,
             "elapsed_seconds": elapsed,
+            "request_seconds": charged_seconds,
             "seconds": seconds,
-            "by_phase": by_phase.iter().map(|(phase, (sent, spent))| json!({"phase": phase, "requests": sent, "points": spent})).collect::<Vec<_>>(),
+            "by_phase": by_phase.iter().map(|(phase, (sent, spent, seconds))| json!({"phase": phase, "requests": sent, "points": spent, "seconds": seconds})).collect::<Vec<_>>(),
+            "windows": {"before": windows_before.iter().map(|one| one.remaining).collect::<Vec<_>>(), "after": windows_after.iter().map(|one| one.remaining).collect::<Vec<_>>(), "own": own, "others": others, "booked_as_others": booked},
             "governor": prepared["governor"],
             "quota_reads": prepared["quota_reads"],
             "governor_state_bytes": {"start": carried, "end": after},

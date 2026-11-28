@@ -157,52 +157,72 @@ budgets:
     unit: operations
     direction: max
     threshold: 3
-  # The GitHub points one 50-draft `prepare` spends, recorded by tests/e2e/prepare_cost.rs over
-  # the loopback GitHub, which charges each request by GitHub's published calculation (each
-  # connection's requests, its `first` times its parents' page sizes, summed, over 100, rounded,
-  # at least 1), from a fresh window. Basis, a design target from the user's goal (manager
-  # ruling a4): a 50-draft batch at a tenth of an hour's 5,000 points, 500 points, 10 a draft.
-  # `spike-prepare-cost` measured the bounded design at 6.62 a draft (331 points), against 104.2
-  # for the unbounded search (5,210 points, more than an hour's allowance), on a loopback whose
-  # prices agreed with onetaskgraph's own hints within 2.4%. The journey records the figure
-  # rounded up to whole points. About 60 seconds to report, as above; the journey also asserts
-  # each draft's routing and prepare's progress lines.
+  # The GitHub points one 50-draft `prepare` spends of its own, recorded by
+  # tests/e2e/prepare_cost.rs over the loopback GitHub, which charges each request the points
+  # GitHub charged the recorded real request of the same document and page sizes
+  # (tests/e2e/fixtures/real-board/requests.json), and counted from prepare's own reported costs
+  # — what its progress lines count — never any window's fall. Basis, a design target from the
+  # user's goal (manager ruling a4): a 50-draft batch at a tenth of an hour's 5,000 points, 500
+  # points, 10 a draft. Evidence, `followup-prepare-real-board-cost-2026-11-27-spike-real-board-
+  # cost-report`: on the real board at 10 drafts prepare's own reported cost was 9.4 a draft in
+  # all three runs while its progress lines counted 31.3–83.8 and the shared windows fell
+  # 32.1–51.1; the live run's 13,331 points (about 270 a draft) were at most 22.8 a draft its
+  # own; projected at 50 drafts, today's find 7.75–8.15 a draft, the adopted design (scalar
+  # search slots, then detail batches) 1.78–2.18, with each repeated text sent once 1.76–2.16;
+  # the loopback priced all 86 recorded requests exactly as GitHub reported. The journey records
+  # the figure rounded up to whole points. About 60 seconds to report, as above; the journey also
+  # asserts each draft's routing and prepare's progress lines.
   # llmlint: ignore[budgets_track_product_owner_outcomes] Manager ruling a5: `follow-up-batch-store-operations` stays beside the new budget as a different measure. It counts store calls, and a batched find is one call whatever it reads, which is how this regression passed it; the points prepare spends are the figure that grew, held per draft at a workload of its own.
   - id: prepare-graphql-points-per-draft
     description: >-
-      GitHub GraphQL points one `onefollowup prepare` of a 50-draft batch spends, from its first
-      destination request to its result, per draft prepared — 40 drafts routed to a 2,000-ticket
-      public board, 10 to a 400-ticket private one, each searching its title, terms and file
-      names, at least 3 of the terms matching 1,000 tickets or more — with points by phase,
-      searches asked, rows read, searches ended at their limit and drafts per routed destination
-      in the detail. It protects the hourly GitHub allowance every run on the host's token
-      shares, by holding prepare's cost to its drafts rather than to how many tickets match a
-      common term.
+      Prepare's own GitHub points per draft: the GitHub GraphQL points one 50-draft `onefollowup
+      prepare` spends of its own, from its first destination request to its result, per draft,
+      each request charged as GitHub charged the recorded real request of the same document and
+      page sizes, and counted from prepare's own reported costs rather than any window's fall.
+      The workload: 50 drafts under the shipped `root-cause` kind, each searching its title, up
+      to 5 terms and up to 2 file names and keeping 21 hits a query — 40 routed to a public board
+      of 2,138 issues (465 open) whose body sizes, labels, memberships and hits per query text
+      are as `spike-real-board-cost` measured (of 74 texts, 44 above 21 hits, 24 above 100, one
+      at 1,305), 10 to a 400-ticket private board (95 open) — while other work spends the same
+      token at 105 points a minute across two interleaved 5,000-point windows, the first
+      resetting 1,800 s after the start. The detail gives points by phase, searches asked and
+      distinct searches sent, rows read, searches ended at their limit, drafts per routed
+      destination, and each window's fall beside prepare's own spend. It protects the hourly
+      GitHub allowance every run on the host's token shares.
     measure: reported
     command: ["cargo", "test", "--quiet", "-p", "onefollowup-e2e", "--locked", "--test", "e2e", "--", "budget_runner::report", "--exact", "--nocapture", "../../target/debug/telemetry/onefollowup-e2e"]
     unit: points
     direction: max
     threshold: 10
-  # The same journey's seconds: the built `prepare` process's wall clock from spawn to exit,
-  # timed with a monotonic clock, every governor hold inside it as real time, plus each request
-  # it sent in sequence at a stated 0.5 s GitHub round trip, which a loopback answering in
-  # microseconds cannot reproduce; nothing sleeps for it. The loopback reports a fresh window,
-  # 5,000 of 5,000 points resetting 1,800 s after the start, and the governor keeps its 20% floor
-  # and seeded reserve, starting from a host state carried over from many earlier windows, about
-  # the 910 KB this host's held. Basis, a design target from the user's goal (manager ruling a4):
-  # a 50-draft batch prepares in minutes, 300 s. `spike-prepare-cost` measured the bounded design
-  # at 161 s with the governor off; a fresh window leaves about 2,800 points above the floor and
-  # reserve, so with the governor's estimate and state fixes it is expected near that. The
-  # journey records the figure rounded up to whole seconds. About 60 seconds to report, as above.
+  # The same journey's seconds: the built `prepare` process's elapsed from spawn to exit, timed
+  # with a monotonic clock, every governor hold inside it as real time, plus its GitHub requests
+  # in sequence, each at the seconds GitHub took for the recorded real request of the same
+  # document and page sizes (a rate-limit read at the seconds GitHub took for one), which a
+  # loopback answering in milliseconds cannot reproduce; nothing sleeps for them. Basis, a design
+  # target from the user's goal (manager ruling a4): a 50-draft batch prepares in minutes, 300 s;
+  # the per-request seconds replace a stated 0.5 s round trip by manager ruling a2. Evidence,
+  # `followup-prepare-real-board-cost-2026-11-27-spike-real-board-cost-report`, on the real board:
+  # 10 drafts took 290 s governor off and 320 s and 259 s governor on with no holds; today's
+  # round took 3.85 s, a scalar 21-row round 5.58 s, a detail batch of 24 2.04 s; projected at 50
+  # drafts, today's find 1,214–1,255 s, the adopted design 249–290 s, and 243–284 s with each
+  # repeated text sent once, mostly in 70–90 detail batches. The live run under 0.14.0 took about
+  # 90 minutes, mostly governor holds on falls 3–4 times its own cost. The journey records the
+  # figure rounded up to whole seconds. About 60 seconds to report, as above.
   # llmlint: ignore[budgets_track_product_owner_outcomes] Manager ruling a5: `follow-up-batch-store-operations` stays beside the new budget as a different measure. It counts store calls, and a batched find is one call whatever it reads, which is how this regression passed it; the points prepare spends are the figure that grew, held per draft at a workload of its own.
   - id: prepare-seconds-per-batch
     description: >-
-      Seconds one `onefollowup prepare` of the same 50-draft batch takes to reach its result:
-      the process's measured elapsed, governor holds included, plus its GitHub requests in
-      sequence at a stated 0.5 s round trip, from a fresh quota window and a governor state
-      carried over from many earlier windows, with the holds, the state's size at start and end
-      and the requests by phase in the detail. It protects follow-up verification as something a
-      person can wait on.
+      Seconds one 50-draft prepare takes: one `onefollowup prepare` of the same 50-draft batch
+      to its result — the built process's elapsed from spawn to exit, timed with a monotonic
+      clock, governor holds included as real time, plus its GitHub requests in sequence, each at
+      the seconds GitHub took for the recorded real request of the same document and page sizes
+      — while other work spends the same token. The workload: the 50-draft batch and boards of
+      `prepare-graphql-points-per-draft`, across two interleaved 5,000-point windows, the first
+      resetting 1,800 s after the start, that other work spends at 105 points a minute, with the
+      governor's 20% floor and seeded reserve and a host state carried over from many earlier
+      windows, about the 910 KB this host held. The detail gives the holds and the own projected
+      spend and window that caused each, other work's burn the governor attributed, the
+      governor state's size at start and end, and requests and seconds by phase. It protects
+      follow-up verification as something a person can wait on.
     measure: reported
     command: ["cargo", "test", "--quiet", "-p", "onefollowup-e2e", "--locked", "--test", "e2e", "--", "budget_runner::report", "--exact", "--nocapture", "../../target/debug/telemetry/onefollowup-e2e"]
     unit: seconds

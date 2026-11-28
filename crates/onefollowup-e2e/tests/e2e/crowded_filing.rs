@@ -8,6 +8,8 @@
 //! member is rendered and related, and the batch's destination work stays a handful of
 //! batched store calls, recorded as `follow-up-batch-store-operations`' second workload.
 
+use std::collections::BTreeSet;
+
 use onefollowup::formats::batch::Input;
 use onefollowup::verify::candidates::{self, BOUND, HIT_CAP, QueryKind, RETAINED};
 use serde_json::{Value, json};
@@ -367,7 +369,8 @@ fn a_crowded_destination_still_renders_and_relates_every_duplicate_within_a_hand
         ));
     }
     // The overflow stays out of the store's answer and the batch's reads: the find stops each
-    // query at the hits it keeps, and prepare's comments read reads exactly what it answered.
+    // query at the hits it keeps, and prepare's comments read reads, of what it answered, the
+    // candidates every draft renders — each one read with its comments — and nothing more.
     let prepared_ops: Vec<(String, u64)> = world
         .destination_operations()
         .into_iter()
@@ -393,9 +396,34 @@ fn a_crowded_destination_still_renders_and_relates_every_duplicate_within_a_hand
         .map(|query| query["retained"].as_u64().unwrap_or_default())
         .sum();
     let kept_bound = u64::try_from(retained_total).unwrap_or(u64::MAX) + fresh_kept;
+    let state: Value = serde_json::from_str(
+        &std::fs::read_to_string(world.work().join(format!("state/{BATCH}.json")))
+            .expect("the batch state"),
+    )
+    .expect("JSON");
+    let reads = state["reads"].as_array().cloned().unwrap_or_default();
+    let commented: BTreeSet<&str> = reads
+        .iter()
+        .filter(|one| !one["comments"].is_null())
+        .filter_map(|one| one["item"]["id"].as_str())
+        .collect();
+    let rendered: BTreeSet<&str> = searches
+        .iter()
+        .flat_map(|search| search["candidates"].as_array().into_iter().flatten())
+        .filter_map(|candidate| candidate["item"].as_str())
+        .collect();
+    assert_eq!(
+        commented, rendered,
+        "prepare read with comments exactly the candidates the drafts render"
+    );
     assert!(
-        read == answered && answered <= kept_bound,
+        read == rendered.len() as u64 && read < answered && answered <= kept_bound,
         "prepare read {read} items of the {answered} its find was answered with, the find stopping each query at the hits it keeps ({kept_bound}): {prepared_ops:?}"
+    );
+    assert_eq!(
+        reads.len() as u64,
+        answered,
+        "the batch keeps every item the find answered"
     );
     let find_searches: Vec<u64> = world
         .phases

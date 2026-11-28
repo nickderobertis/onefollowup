@@ -5,10 +5,15 @@
 //!
 //! Serving generated boards ([`LoopbackGitHub::serving`]), it answers what one `onefollowup
 //! prepare` asks instead — the find's batched search rounds, the detail and relation reads —
-//! from them (`loopback_boards`), charging each request by GitHub's published calculation
-//! (`graphql_cost`) and reporting what is left through the `x-ratelimit-*` headers every
-//! response carries and `GET /rate_limit`, its window rolling over to a whole allowance at
-//! each reset.
+//! from them (`loopback_boards`), charging each request as its [`Pricing`] says, telling the
+//! request what it cost in the `actualCost` it selects, and reporting what is left through the
+//! `x-ratelimit-*` headers every response carries and `GET /rate_limit`, each window rolling
+//! over to a whole allowance at its reset.
+//!
+//! A token can be shared ([`LoopbackGitHub::sharing`]) as GitHub was measured answering one:
+//! from two windows of 5,000 points with different resets, interleaved request by request —
+//! every response and every rate-limit read answered by the next window in turn — while other
+//! work spends both at a steady rate in real time.
 //!
 //! Grown from the loopback `crates/onefollowup/tests/governor_loopback.rs` serves in process;
 //! onetaskgraph's own loopback board is not published for other repositories to use.
@@ -16,7 +21,9 @@
 use std::io::{BufRead as _, BufReader, Read as _, Write as _};
 use std::net::TcpListener;
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
+use onetaskgraph_github_projects::graphql as documents;
 use serde_json::{Value, json};
 
 /// One GraphQL request the loopback answered: its document and variables.
@@ -42,6 +49,14 @@ pub struct Quota {
     pub charge: u64,
 }
 
+/// One token GitHub answers from several GraphQL windows in turn, `(remaining, reset)` each,
+/// which other work spends at `others_per_minute` points a minute, shared evenly among them.
+#[derive(Debug, Clone)]
+pub struct Shared {
+    pub windows: Vec<(u64, i64)>,
+    pub others_per_minute: f64,
+}
+
 /// What each GraphQL request a loopback serving boards takes from the quota.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Pricing {
@@ -50,6 +65,10 @@ pub enum Pricing {
     /// The first search round at this many points, a board whose find is dear; every other
     /// request at its published price.
     FirstSearchAt(u64),
+    /// The points GitHub charged, and the seconds it took, for the recorded real request of the
+    /// same document and page sizes (`recorded`); a rate-limit read at the seconds GitHub took
+    /// for one.
+    Recorded,
 }
 
 #[derive(Default)]
@@ -72,25 +91,118 @@ struct Held {
 pub struct Charged {
     /// The onetaskgraph document it sent, by name, or `rate_limit` for the REST read.
     pub document: String,
+    /// The variables it sent; none for the REST read.
+    pub variables: Value,
     /// What it took from the quota, in points (0 for the REST read, which GraphQL's
     /// allowance does not meter).
     pub points: u64,
+    /// The seconds GitHub takes to answer it, as its pricing says: charged, never slept.
+    pub seconds: f64,
     /// The issue rows its answer held.
     pub rows: u64,
     /// The searches (aliased search slots) it asked, by their text.
     pub searches: Vec<String>,
+    /// The GraphQL window that answered it, and what that window had left once it had.
+    pub window: usize,
+    pub remaining: u64,
+}
+
+/// One GraphQL window as the loopback holds it.
+#[derive(Debug, Clone, Copy)]
+pub struct Window {
+    pub remaining: u64,
+    pub reset: i64,
+    /// What other work has spent of it, in all.
+    pub others: u64,
+}
+
+/// The token's windows, the next to answer, and other work's spend.
+struct Token {
+    windows: Vec<Window>,
+    turn: usize,
+    others_per_minute: f64,
+    /// When other work's spend was last taken, and what of a point each window still owes.
+    burned_at: Instant,
+    owed: Vec<f64>,
+    /// What every GraphQL request takes, on the single-issue loopback.
+    charge: u64,
+}
+
+impl Token {
+    fn single(quota: Quota) -> Self {
+        Self {
+            windows: vec![Window {
+                remaining: quota.remaining,
+                reset: quota.reset,
+                others: 0,
+            }],
+            turn: 0,
+            others_per_minute: 0.0,
+            burned_at: Instant::now(),
+            owed: vec![0.0],
+            charge: quota.charge,
+        }
+    }
+
+    fn shared(shared: &Shared) -> Self {
+        Self {
+            windows: shared
+                .windows
+                .iter()
+                .map(|(remaining, reset)| Window {
+                    remaining: *remaining,
+                    reset: *reset,
+                    others: 0,
+                })
+                .collect(),
+            turn: 0,
+            others_per_minute: shared.others_per_minute,
+            burned_at: Instant::now(),
+            owed: vec![0.0; shared.windows.len()],
+            charge: 0,
+        }
+    }
+
+    /// The windows as GitHub would report them now: other work's spend since it was last
+    /// taken taken from each, and — where `roll` — a window past its reset a fresh one, the
+    /// whole allowance left until its period on.
+    fn now(&mut self, period: i64, roll: bool) {
+        let spent = self.burned_at.elapsed().as_secs_f64() * self.others_per_minute / 60.0;
+        self.burned_at = Instant::now();
+        let share = spent / self.windows.len() as f64;
+        let now = chrono::Utc::now().timestamp();
+        for (window, owed) in self.windows.iter_mut().zip(&mut self.owed) {
+            while roll && window.reset <= now {
+                window.remaining = 5000;
+                window.reset += period;
+            }
+            *owed += share;
+            let whole = owed.floor();
+            *owed -= whole;
+            let whole = whole as u64;
+            window.others += whole.min(window.remaining);
+            window.remaining = window.remaining.saturating_sub(whole);
+        }
+    }
+
+    /// The window that answers next, in turn.
+    fn next(&mut self) -> usize {
+        let window = self.turn % self.windows.len();
+        self.turn += 1;
+        window
+    }
 }
 
 /// The loopback GitHub.
 pub struct LoopbackGitHub {
     pub port: u16,
     held: Arc<Mutex<Held>>,
-    quota: Arc<Mutex<Quota>>,
+    token: Arc<Mutex<Token>>,
 }
 
 impl LoopbackGitHub {
     pub fn start(quota: Quota) -> Self {
-        Self::listening(quota, Held::default())
+        Self::listening(Token::single(quota), Held::default())
     }
 
     /// A loopback answering board-scoped searches and node reads from `boards`, each GraphQL
@@ -102,7 +214,23 @@ impl LoopbackGitHub {
         pricing: Pricing,
     ) -> Self {
         Self::listening(
-            quota,
+            Token::single(quota),
+            Held {
+                boards: Some((Arc::new(boards), pricing)),
+                ..Held::default()
+            },
+        )
+    }
+
+    /// [`Self::serving`] `boards` on a token `shared` with other work, answered from its
+    /// windows in turn.
+    pub fn sharing(
+        shared: &Shared,
+        boards: Vec<crate::loopback_boards::Board>,
+        pricing: Pricing,
+    ) -> Self {
+        Self::listening(
+            Token::shared(shared),
             Held {
                 boards: Some((Arc::new(boards), pricing)),
                 ..Held::default()
@@ -116,12 +244,12 @@ impl LoopbackGitHub {
         self
     }
 
-    fn listening(quota: Quota, held: Held) -> Self {
+    fn listening(token: Token, held: Held) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").expect("a loopback port");
         let port = listener.local_addr().expect("its address").port();
         let held = Arc::new(Mutex::new(held));
-        let quota = Arc::new(Mutex::new(quota));
-        let (serving, quoting) = (Arc::clone(&held), Arc::clone(&quota));
+        let token = Arc::new(Mutex::new(token));
+        let (serving, quoting) = (Arc::clone(&held), Arc::clone(&token));
         std::thread::spawn(move || {
             for stream in listener.incoming() {
                 let Ok(stream) = stream else { return };
@@ -129,7 +257,7 @@ impl LoopbackGitHub {
                 std::thread::spawn(move || serve(stream, &serving, &quoting));
             }
         });
-        Self { port, held, quota }
+        Self { port, held, token }
     }
 
     /// The GraphQL endpoint a source of this loopback names.
@@ -142,28 +270,28 @@ impl LoopbackGitHub {
     }
 
     pub fn set_quota(&self, quota: Quota) {
-        *self.quota.lock().expect("the quota") = quota;
+        *self.token.lock().expect("the token") = Token::single(quota);
     }
 
     /// Every request answered so far, as charged: a loopback serving boards only.
     pub fn charged(&self) -> Vec<Charged> {
         self.held.lock().expect("the log").charged.clone()
     }
-}
 
-/// The quota as GitHub would report it now: a window past its reset is a fresh one, the whole
-/// allowance left until its period on.
-fn rolled(quota: &mut Quota, period: i64) -> Quota {
-    let now = chrono::Utc::now().timestamp();
-    while quota.reset <= now {
-        quota.remaining = 5000;
-        quota.reset += period;
+    /// Each window of the token now, other work's spend so far included.
+    pub fn windows(&self) -> Vec<Window> {
+        let period = {
+            let held = self.held.lock().expect("the log");
+            if held.period > 0 { held.period } else { 3600 }
+        };
+        let mut token = self.token.lock().expect("the token");
+        token.now(period, true);
+        token.windows.clone()
     }
-    *quota
 }
 
 /// Serve one connection, request after request, until the client closes it.
-fn serve(stream: std::net::TcpStream, held: &Mutex<Held>, quota: &Mutex<Quota>) {
+fn serve(stream: std::net::TcpStream, held: &Mutex<Held>, token: &Mutex<Token>) {
     let mut writer = stream.try_clone().expect("a stream");
     let mut reader = BufReader::new(stream);
     loop {
@@ -196,23 +324,35 @@ fn serve(stream: std::net::TcpStream, held: &Mutex<Held>, quota: &Mutex<Quota>) 
             )
         };
         let rate_limit = line.starts_with("GET /rate_limit");
-        let answer = if rate_limit {
-            let quota = if boards.is_some() {
-                let mut held = held.lock().expect("the log");
-                held.charged.push(Charged {
+        // The window that answers this request, and what it has left once it has.
+        let (answer, window) = if rate_limit {
+            let mut token = token.lock().expect("the token");
+            token.now(period, boards.is_some());
+            let at = token.next();
+            let window = token.windows[at];
+            if let Some((_, pricing)) = &boards {
+                held.lock().expect("the log").charged.push(Charged {
                     document: "rate_limit".to_owned(),
+                    variables: Value::Null,
                     points: 0,
+                    seconds: if *pricing == Pricing::Recorded {
+                        crate::recorded::rate_limit_seconds()
+                    } else {
+                        0.0
+                    },
                     rows: 0,
                     searches: Vec::new(),
+                    window: at,
+                    remaining: window.remaining,
                 });
-                rolled(&mut quota.lock().expect("the quota"), period)
-            } else {
-                *quota.lock().expect("the quota")
-            };
-            json!({"resources": {
-                "graphql": {"limit": 5000, "used": 5000 - quota.remaining, "remaining": quota.remaining, "reset": quota.reset},
-                "core": {"limit": 5000, "used": 0, "remaining": 5000, "reset": quota.reset},
-            }})
+            }
+            (
+                json!({"resources": {
+                    "graphql": {"limit": 5000, "used": 5000 - window.remaining, "remaining": window.remaining, "reset": window.reset},
+                    "core": {"limit": 5000, "used": 0, "remaining": 5000, "reset": window.reset},
+                }}),
+                window,
+            )
         } else {
             let request: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
             let received = Received {
@@ -224,46 +364,70 @@ fn serve(stream: std::net::TcpStream, held: &Mutex<Held>, quota: &Mutex<Quota>) 
                     let answered = crate::loopback_boards::answer(boards, &received);
                     let mut held = held.lock().expect("the log");
                     let searching = !answered.searches.is_empty();
-                    let points = match pricing {
-                        Pricing::FirstSearchAt(points) if searching && !held.searched => *points,
-                        _ => answered.points,
+                    let (points, seconds) = match pricing {
+                        Pricing::FirstSearchAt(points) if searching && !held.searched => {
+                            (*points, 0.0)
+                        }
+                        Pricing::Recorded => {
+                            let price =
+                                crate::recorded::price(&answered.document, &received.variables);
+                            (price.points, price.seconds)
+                        }
+                        _ => (
+                            crate::graphql_cost::points(&received.document, &received.variables),
+                            0.0,
+                        ),
                     };
                     held.searched |= searching;
-                    {
-                        let mut quota = quota.lock().expect("the quota");
-                        rolled(&mut quota, period);
-                        quota.remaining = quota.remaining.saturating_sub(points);
+                    let (at, window) = {
+                        let mut token = token.lock().expect("the token");
+                        token.now(period, true);
+                        let at = token.next();
+                        let window = &mut token.windows[at];
+                        window.remaining = window.remaining.saturating_sub(points);
+                        (at, *window)
+                    };
+                    let mut answer = answered.answer;
+                    // What GitHub says the request cost, where the document asks.
+                    if documents::without_reported_cost(&received.document).is_some() {
+                        documents::answer_reported_cost(&mut answer["data"], points);
                     }
-                    held.received.push(received);
                     held.charged.push(Charged {
                         document: answered.document,
+                        variables: received.variables.clone(),
                         points,
+                        seconds,
                         rows: answered.rows,
                         searches: answered.searches,
+                        window: at,
+                        remaining: window.remaining,
                     });
-                    answered.answer
+                    held.received.push(received);
+                    (answer, window)
                 }
                 None => {
-                    {
-                        let mut quota = quota.lock().expect("the quota");
-                        quota.remaining = quota.remaining.saturating_sub(quota.charge);
-                    }
+                    let window = {
+                        let mut token = token.lock().expect("the token");
+                        let charge = token.charge;
+                        let window = &mut token.windows[0];
+                        window.remaining = window.remaining.saturating_sub(charge);
+                        *window
+                    };
                     let mut held = held.lock().expect("the log");
                     held.received.push(received.clone());
-                    graphql(&received, &mut held)
+                    (graphql(&received, &mut held), window)
                 }
             }
         };
         let text = answer.to_string();
         // Serving boards, every GraphQL answer carries the rate-limit headers GitHub sends on
-        // each response: the governor learns a request's cost from them.
+        // each response, of the window that answered it: the governor reads its windows there.
         let limits = if boards.is_some() && !rate_limit {
-            let quota = rolled(&mut quota.lock().expect("the quota"), period);
             format!(
                 "x-ratelimit-limit: 5000\r\nx-ratelimit-remaining: {}\r\nx-ratelimit-used: {}\r\nx-ratelimit-reset: {}\r\nx-ratelimit-resource: graphql\r\n",
-                quota.remaining,
-                5000 - quota.remaining,
-                quota.reset
+                window.remaining,
+                5000 - window.remaining,
+                window.reset
             )
         } else {
             String::new()

@@ -495,7 +495,37 @@ pub fn run(settings: &Settings, args: PrepareArgs) -> Result<Prepared, Error> {
         })
         .filter(|end| batch.is_destination_item(end))
         .collect();
-    let mut ids: Vec<String> = reads.iter().map(|read| read.item.id.clone()).collect();
+    // Read with their comments — which a re-estimate counts occurrences from — every read an
+    // answer can relate: each input's rendered candidates and whatever a search other than a
+    // duplicate query found. The find already answered every hit whole, and candidates are a
+    // pure function of the reads, so a hit no input renders keeps the find's answer alone, as a
+    // `ticket search` hit does; the reads, and so the candidates `check` recomputes, are the same.
+    let commented: Option<std::collections::BTreeSet<String>> = judged.then(|| {
+        let mut commented: std::collections::BTreeSet<String> = reads
+            .iter()
+            .filter(|read| {
+                read.found_by
+                    .iter()
+                    .any(|key| !candidates::is_duplicate_query(key))
+            })
+            .map(|read| read.item.id.clone())
+            .collect();
+        for (input, plan) in &plans {
+            for candidate in candidates::ranked(&batch, input, plan, &reads).rendered {
+                commented.insert(candidate.item);
+            }
+        }
+        commented
+    });
+    let mut ids: Vec<String> = reads
+        .iter()
+        .map(|read| read.item.id.clone())
+        .filter(|id| {
+            commented
+                .as_ref()
+                .is_none_or(|commented| commented.contains(id))
+        })
+        .collect();
     for end in named {
         if !ids.contains(&end) {
             ids.push(end);
@@ -509,11 +539,11 @@ pub fn run(settings: &Settings, args: PrepareArgs) -> Result<Prepared, Error> {
         );
         let details = store.read(&ids, true)?;
         phase.finish();
-        for (at, detail) in details.into_iter().enumerate() {
+        for (id, detail) in ids.iter().zip(details) {
             let Some(item) = detail.item else {
                 continue;
             };
-            match reads.get_mut(at) {
+            match reads.iter_mut().find(|read| read.item.id == *id) {
                 Some(read) => {
                     read.item = item;
                     read.comments = detail.comments;

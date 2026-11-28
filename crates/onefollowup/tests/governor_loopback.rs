@@ -8,7 +8,7 @@ use std::net::TcpListener;
 use std::sync::{Arc, Mutex};
 
 use chrono::{DateTime, Utc};
-use onefollowup::governor::{self, Clock as _, Parts, Reason};
+use onefollowup::governor::{self, Clock as _, Parts};
 use onefollowup::store::{Search, Store};
 
 mod support;
@@ -100,14 +100,14 @@ impl Loopback {
 }
 
 #[test]
-fn a_request_held_on_exhausted_headroom_goes_once_when_a_rate_limit_read_while_held_finds_it_back()
-{
-    // Floor 1000 and no reserve, so the line is the floor; the loopback says 1002 left in a
+fn a_call_its_estimate_leaves_no_headroom_is_read_again_and_goes_once_on_the_reading_that_finds_it_back()
+ {
+    // Floor 1000 and no reserve, so the line is the floor; the loopback says 1001 left in a
     // window resetting in an hour, and never less: it charges nothing.
     let start = DateTime::from_timestamp(Utc::now().timestamp(), 0).expect("now");
     let reset = start.timestamp() + 3600;
     let clock = Virtual::at(start);
-    let loopback = Loopback::start(Arc::clone(&clock), 1002, reset);
+    let loopback = Loopback::start(Arc::clone(&clock), 1001, reset);
 
     let directory = tempfile::tempdir().expect("a directory");
     let root = directory.path();
@@ -148,9 +148,9 @@ fn a_request_held_on_exhausted_headroom_goes_once_when_a_rate_limit_read_while_h
     .with_local("drafts")
     .with_governor(&settings);
 
-    // A read: one GraphQL request, hinted at 1 point, admitted against the 1002 read first.
-    // The loopback charges nothing and its answer carries no reading, so the governor's
-    // estimate is 1001 left.
+    // A read: one GraphQL request, hinted at 1 point, admitted against the 1001 read first.
+    // The loopback charges nothing and its answer carries no reading nor any reported cost, so
+    // the governor counts its hint as spent and estimates 1000 left.
     store
         .read(&["board:I_kwDOAAAA".to_owned()], false)
         .expect("the read is answered");
@@ -164,10 +164,11 @@ fn a_request_held_on_exhausted_headroom_goes_once_when_a_rate_limit_read_while_h
         "{after_read:?}"
     );
 
-    // A two-search find: one GraphQL request hinted at 2 points. The call goes (the boundary
-    // estimates a read call at the 1 point the last one spent), but its request is held: 1001
-    // estimated is above floor plus reserve, 1000, and under it plus the hint, 1002 —
-    // admission headroom exhausted.
+    // A two-search find: one GraphQL request hinted at 1 point, its search slots selecting
+    // scalar fields alone. At its boundary the estimate, 1000 less the 1 point a read call was
+    // admitted at, is under floor plus reserve, so the governor reads again before sending:
+    // 1001, the read's spend shown to have been less than its hint. The find goes on that
+    // reading, at once.
     let found = store
         .find(
             "board",
@@ -197,53 +198,34 @@ fn a_request_held_on_exhausted_headroom_goes_once_when_a_rate_limit_read_while_h
             "GET /rate_limit HTTP/1.1",
             "POST /graphql HTTP/1.1",
         ],
-        "held, a rate-limit read while held, then the held request: {received:?}"
+        "a rate-limit read before the find, then the find: {received:?}"
     );
-    let (refresh, held) = (&received[2], &received[3]);
+    let (refresh, find) = (&received[2], &received[3]);
     assert!(
-        held.body.contains("first search") && held.body.contains("second search"),
-        "the held request is the find's: {}",
-        held.body
+        find.body.contains("first search") && find.body.contains("second search"),
+        "the last request is the find's: {}",
+        find.body
     );
-    assert_eq!(
-        refresh.at,
-        start + chrono::Duration::seconds(30),
-        "the rate-limit read reached the loopback while the request was held, at the first 30 s refresh"
-    );
-    assert_eq!(
-        held.at, refresh.at,
-        "the held request went on the reading that found headroom back"
-    );
-    assert!(held.at.timestamp() < reset, "before the reset");
+    assert_eq!(refresh.at, start, "read again at once, with no wait");
+    assert_eq!(find.at, refresh.at, "the find went on that reading");
     assert_eq!(
         received
             .iter()
             .filter(|one| one.body.contains("second search"))
             .count(),
         1,
-        "the held request was received once"
+        "the find was received once"
     );
 
     let report = store.governor_report().expect("governed");
-    assert_eq!(report.waits.len(), 1, "{report:?}");
-    assert_eq!(report.waits[0].source, "board");
-    assert_eq!(report.waits[0].resource, "graphql");
-    assert_eq!(report.waits[0].seconds, 30);
-    assert_eq!(report.waits[0].reason, Reason::Floor);
+    assert_eq!(report.waits, Vec::new(), "{report:?}");
     assert_eq!(
         store.quota_reads(),
         2,
-        "one at the first call, one while held"
+        "one at the first call, one before the find"
     );
     let notices = notices.lock().expect("notices").clone();
-    assert_eq!(notices.len(), 1, "{notices:?}");
-    assert!(
-        notices[0].starts_with(
-            "onefollowup: holding requests to board on graphql: remaining 1001 of 5000, floor 1000, reserve 0;"
-        ),
-        "{}",
-        notices[0]
-    );
+    assert!(notices.is_empty(), "{notices:?}");
     // Two store operations, the quota reads counted in neither.
     let operations: Vec<(String, String)> = store
         .operations()

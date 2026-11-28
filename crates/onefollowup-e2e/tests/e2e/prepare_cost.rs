@@ -897,15 +897,20 @@ fn a_50_draft_prepare_at_the_real_board_s_shape_spends_and_waits_for_its_own_req
 
     // The seconds: the process's elapsed, holds inside it, plus each request's recorded
     // seconds, charged once — recomputed here from the recording, request by request.
-    let charged_seconds: f64 = charged.iter().map(|one| one.seconds).sum();
-    let recorded_seconds: f64 = charged
+    // Every recorded figure is whole milliseconds, so the charges are summed as integer
+    // milliseconds: the figure is then one exact sum, independent of the order it is
+    // added in, and a charge counted twice or dropped moves it by at least the smallest
+    // recorded request's 191 ms.
+    let millis = |seconds: f64| (seconds * 1000.0).round() as u64;
+    let charged_millis: u64 = charged.iter().map(|one| millis(one.seconds)).sum();
+    let recorded_millis: u64 = charged
         .iter()
         .map(|one| {
-            if one.document == "rate_limit" {
+            millis(if one.document == "rate_limit" {
                 crate::recorded::rate_limit_seconds()
             } else {
                 crate::recorded::price(&one.document, &one.variables).seconds
-            }
+            })
         })
         .sum();
     assert_eq!(
@@ -914,17 +919,18 @@ fn a_50_draft_prepare_at_the_real_board_s_shape_spends_and_waits_for_its_own_req
         "one charge a request"
     );
     assert!(
-        charged.iter().all(|one| one.seconds > 0.0),
+        charged.iter().all(|one| millis(one.seconds) > 0),
         "every request takes GitHub's time"
     );
     assert_eq!(
-        charged_seconds, recorded_seconds,
+        charged_millis, recorded_millis,
         "each request charged the seconds recorded for its binding"
     );
+    let charged_seconds = charged_millis as f64 / 1000.0;
     let seconds = elapsed + charged_seconds;
     assert_eq!(
-        seconds - elapsed,
-        recorded_seconds,
+        millis(seconds - elapsed),
+        recorded_millis,
         "the figure adds them once"
     );
 

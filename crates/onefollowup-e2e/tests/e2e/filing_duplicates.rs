@@ -14,7 +14,8 @@ use crate::journey::{comments, front, record};
 use crate::telemetry;
 use crate::world::{Ticket, World, answer};
 
-const BATCH: &str = "nightly-2026-11-21";
+/// The batch every cluster draft is recorded under.
+pub const BATCH: &str = "nightly-2026-11-21";
 
 /// What the scripted agent did with each draft.
 pub enum Fate {
@@ -168,9 +169,15 @@ pub fn assert_fates(world: &World, destination: &str, batch: &str, fates: &[(Str
     assert_eq!(filed, new, "only the drafts with no duplicate were filed");
 }
 
-#[test]
-fn differently_worded_duplicates_are_rendered_and_related_to_their_earlier_tickets_open_or_closed()
-{
+/// One cluster's earlier members as placed on the destination: `(item, root cause, status)`.
+pub type Placed = Vec<(String, String, String)>;
+
+/// The clusters' world: a destination holding a crowd of 300 unrelated tickets (70 open) and
+/// every cluster's earlier members, open and closed, and the batch's drafts — each cluster's
+/// later member, then one fresh draft. Answers the world, each cluster draft's id, the
+/// earlier members placed for each cluster (`(item, root cause, status)`), and the fresh
+/// draft's id.
+pub fn clusters_world() -> (World, Vec<String>, Vec<Placed>, String) {
     let mut world = World::new(&["followups"], "host_label: build-host-1\n");
     duplicate_boards::crowd(
         &world,
@@ -221,6 +228,14 @@ fn differently_worded_duplicates_are_rendered_and_related_to_their_earlier_ticke
         &["crates/onevcs/src/summary.rs"],
         "Publishing a branch whose name ends in a dot prints a summary that cuts the name short, so a reviewer cannot find the change from it.\n",
     );
+    (world, drafts, earlier_of, fresh)
+}
+
+#[test]
+fn differently_worded_duplicates_are_rendered_and_related_to_their_earlier_tickets_open_or_closed()
+{
+    let (mut world, drafts, earlier_of, fresh) = clusters_world();
+    let clusters = clusters();
     let prepared = world.ok("prepare", &["prepare", "--batch", BATCH], "");
 
     let mut fates = Vec::new();

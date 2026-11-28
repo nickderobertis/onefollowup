@@ -118,6 +118,14 @@ fn key(kind: QueryKind, input: &str, at: usize) -> String {
     }
 }
 
+/// Whether `key` is any input's duplicate query: its title, a term or a file name.
+#[must_use]
+pub fn is_duplicate_query(key: &str) -> bool {
+    [QueryKind::Title, QueryKind::Term, QueryKind::File]
+        .iter()
+        .any(|kind| key.starts_with(&format!("{}:", kind.prefix())))
+}
+
 /// Whether `key` is one of `input`'s duplicate queries.
 fn is_query_of(key: &str, input: &str) -> bool {
     key == format!("input:{input}")

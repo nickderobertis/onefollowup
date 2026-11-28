@@ -668,7 +668,14 @@ fn a_50_draft_prepare_searches_each_draft_where_it_lands_and_records_its_points_
             .expect("the batch state"),
     )
     .expect("JSON");
-    let items = state_reads["reads"].as_array().map_or(0, Vec::len);
+    // Read again with comments: every read an answer can relate, each draft's rendered
+    // candidates among them; every other hit keeps the find's answer.
+    let items = state_reads["reads"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|read| !read["comments"].is_null())
+        .count();
     assert!(
         detail("kept-hit detail read").starts_with(&format!("{items} items (")),
         "{stderr}"

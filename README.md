@@ -789,7 +789,11 @@ its classification (`sources route`), read from configuration alone, so a draft 
 repository whose ticket a route sends to a private board is searched there, and never on the
 public one. The
 first 8 are rendered into the task under their draft or input and printed as
-`duplicate_searches`; these numbers are onefollowup's constants, not settings. `check` refuses
+`duplicate_searches`; these numbers are onefollowup's constants, not settings. The find answers
+every hit whole, so the kept-hit read reads again, with its comments, only what an answer can
+relate — each input's rendered candidates and whatever a search other than a duplicate query
+found; every other hit stays in the batch state as the find answered it, and the candidates
+`check` recomputes from those reads are the ones `prepare` rendered. `check` refuses
 an answer whose disposition requires a ticket while a rendered candidate of its input is neither
 **related** — this batch's evidence comment staged or published on it, under a root cause the
 answer names — nor **dismissed** in the answer's `dismissed` (`[{"item", "reason"}]`) with a
@@ -803,8 +807,10 @@ on each source searched with its drafts and searches (`duplicate find on <source
 drafts (<ids>), <M> searches`), the read of the kept hits with its items, and, under relations,
 the relation reads with their tickets — each ending `finished: <R> requests, <P> points`. While
 a phase runs it writes one line every 20 store requests it sent, `<R> requests, <P> points so
-far`: the points each response's rate-limit reading shows it cost, or, where none does, the
-source's own estimate. A phase that does not run prints nothing. The lines are for people, not
+far`: the points each request's own response reported it cost (GitHub's `rateLimit { cost }`),
+or, where none reported one, the source's own estimate — never a window's fall, which other
+work on a shared token moves too, so a rate-limit read counts none. A phase that does not run
+prints nothing. The lines are for people, not
 a format: stdout and every record are the same with stderr discarded.
 
 **The shipped ticket shape.** The verifying agent writes every part plain

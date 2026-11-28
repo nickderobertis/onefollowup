@@ -118,10 +118,9 @@ fn a_search_over_more_than_21_matches_stops_at_21_and_its_candidates_and_capping
                 .as_str()
                 .unwrap_or_default()
                 .to_owned();
-            let after = received.variables[format!("after{slot}")]
-                .as_str()
-                .and_then(|cursor| cursor.strip_prefix("cursor:"))
-                .map_or(0, |at| at.parse::<u64>().expect("a cursor"));
+            let after =
+                crate::loopback_boards::offset_of(&received.variables[format!("after{slot}")])
+                    as u64;
             let first = received.variables[format!("first{slot}")]
                 .as_u64()
                 .expect("a page size");
@@ -290,7 +289,7 @@ fn prepare_prints_each_phase_and_its_progress_on_stderr_and_stdout_and_records_a
     }
     // A line for every 20 requests a phase sends, naming the requests and points so far.
     let charged = github.charged();
-    let mut ticked = 0;
+    // A phase of 20 requests or more, and its lines, is `prepare_cost`'s 50-draft batch's.
     for (phase, (sent, spent)) in &said.finished {
         let ticks = said.progress.get(phase).cloned().unwrap_or_default();
         let expected: Vec<u64> = (1..=sent / 20).map(|at| at * 20).collect();
@@ -304,9 +303,7 @@ fn prepare_prints_each_phase_and_its_progress_on_stderr_and_stdout_and_records_a
                 && ticks.iter().all(|(_, so_far)| so_far <= spent),
             "{phase}: points so far grow to the phase's: {ticks:?} of {spent}"
         );
-        ticked += ticks.len();
     }
-    assert!(ticked >= 1, "a phase sent 20 requests or more: {stderr}");
     let (requests, points) = said
         .finished
         .values()

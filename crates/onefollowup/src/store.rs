@@ -33,8 +33,8 @@ use onetaskgraph_core::{
 };
 use onetaskgraph_plugin_api::{
     AuthorKind, Classification, CommentBody, GatedRequest, LinkDirection, Location, MetadataKey,
-    MetadataMatch, NativeId, Priority, QuotaReading, Repository, RequestGate, SourceError,
-    SourceName, Status, StatusCategory, Task, TaskLink, TaskUpdate,
+    MetadataMatch, NativeId, Priority, QuotaReading, ReportedCost, Repository, RequestGate,
+    SourceError, SourceName, Status, StatusCategory, Task, TaskLink, TaskUpdate,
 };
 use serde::Serialize;
 use serde_json::Value;
@@ -57,7 +57,7 @@ pub const STATUS_CATEGORIES: &[&str] = &[
 
 /// The store a snapshot records it was gathered through: onetaskgraph at the version this
 /// crate pins. `tests/store.rs` holds it to the workspace's pin.
-pub const STORE_LINE: &str = "onetaskgraph 0.17.2";
+pub const STORE_LINE: &str = "onetaskgraph 0.17.3";
 
 /// The name of the onetaskgraph configuration document a `store` directory holds.
 pub const STORE_DOCUMENT: &str = "onetaskgraph.yaml";
@@ -747,10 +747,6 @@ impl Store {
             })
         });
         let progress = Arc::new(Progress::new(Arc::clone(&parts.notices)));
-        let readings: Arc<dyn Readings> = Arc::new(Watched {
-            readings,
-            progress: Arc::clone(&progress),
-        });
         let governor = Arc::new(Governor::new(
             crate::config::defaults("").governor,
             parts.clock,
@@ -1948,8 +1944,8 @@ fn reading(reading: &QuotaReading) -> Reading {
 }
 
 /// The governor as the engine's request gate: asked before every backend request a call sends,
-/// told every response's reading. It only ever waits, never refuses. Each request is counted
-/// toward the phase in progress, too.
+/// told every response's reading and what the response said the request cost. It only ever
+/// waits, never refuses. Each request is counted toward the phase in progress, too.
 struct Gate {
     governor: Arc<Governor>,
     progress: Arc<Progress>,
@@ -1958,7 +1954,6 @@ struct Gate {
 #[async_trait::async_trait]
 impl RequestGate for Gate {
     async fn before_request(&self, request: &GatedRequest) -> Result<(), SourceError> {
-        self.progress.hinted(request.cost_hint);
         self.governor
             .before_request(&Request {
                 resource: request.resource.clone(),
@@ -1966,13 +1961,19 @@ impl RequestGate for Gate {
                 content_creating: request.content_creating,
             })
             .await;
+        // Once admitted: any reading its admission took passed the gate, and ended, first.
+        self.progress.hinted(request.cost_hint);
         Ok(())
     }
 
     fn after_response(&self, readings: &[QuotaReading]) {
         let readings: Vec<Reading> = readings.iter().map(reading).collect();
-        self.progress.answered(&readings);
         self.governor.after_response(&readings);
+    }
+
+    fn cost_reported(&self, cost: &ReportedCost) {
+        self.progress.reported(cost.cost);
+        self.governor.cost_reported(&cost.resource, cost.cost);
     }
 
     fn request_ended(&self) {
@@ -1981,31 +1982,13 @@ impl RequestGate for Gate {
     }
 }
 
-/// The governor's quota readings, watched by the progress count too, so the first response of
-/// a phase has a reading to measure what it cost against.
-struct Watched {
-    readings: Arc<dyn Readings>,
-    progress: Arc<Progress>,
-}
-
-impl Readings for Watched {
-    fn read<'a>(&'a self, source: &'a str) -> Pending<'a, Result<Vec<Reading>, String>> {
-        Box::pin(async move {
-            let read = self.readings.read(source).await;
-            if let Ok(readings) = &read {
-                self.progress.seen(readings);
-            }
-            read
-        })
-    }
-}
-
 /// How many requests a phase sends between two of its progress lines.
 pub const PROGRESS_EVERY: u64 = 20;
 
 /// What the phase in progress has sent: its requests, and the points they spent — each
-/// response's fall in remaining from the last reading of its window, or, for a window not read
-/// before, the request's own hint.
+/// request's own cost as its response reported it, or, where none reported one, the request's
+/// own hint. Never a window's fall, which every other user of a shared token moves too: a
+/// rate-limit read, whose hint is nothing, counts nothing.
 #[derive(Default)]
 struct Counted {
     phase: Option<String>,
@@ -2013,10 +1996,8 @@ struct Counted {
     points: u64,
     /// The hint of the request last sent, until it ends.
     hint: Option<u64>,
-    /// What its response's reading showed it cost, when one did.
-    measured: Option<u64>,
-    /// The last remaining read of each window, by resource and reset.
-    remaining: HashMap<(String, chrono::DateTime<chrono::Utc>), u64>,
+    /// What its response said it cost, when it said.
+    reported: Option<u64>,
 }
 
 /// Progress lines for people: one as each phase starts and ends, and one every
@@ -2068,38 +2049,18 @@ impl Progress {
     fn hinted(&self, hint: Option<u64>) {
         let mut counted = self.counted();
         counted.hint = hint;
-        counted.measured = None;
+        counted.reported = None;
     }
 
-    /// Readings taken outside any response: what later falls are measured from.
-    fn seen(&self, readings: &[Reading]) {
-        let mut counted = self.counted();
-        for reading in readings {
-            counted.remaining.insert(
-                (reading.resource.clone(), reading.resets_at),
-                reading.remaining,
-            );
-        }
-    }
-
-    fn answered(&self, readings: &[Reading]) {
-        let mut counted = self.counted();
-        let mut cost = None;
-        for reading in readings {
-            let window = (reading.resource.clone(), reading.resets_at);
-            if let Some(before) = counted.remaining.insert(window, reading.remaining) {
-                *cost.get_or_insert(0) += before.saturating_sub(reading.remaining);
-            }
-        }
-        if cost.is_some() {
-            counted.measured = cost;
-        }
+    /// What the response to the request last sent said it cost.
+    fn reported(&self, cost: u64) {
+        self.counted().reported = Some(cost);
     }
 
     fn ended(&self) {
         let line = {
             let mut counted = self.counted();
-            let cost = counted.measured.take().or(counted.hint.take()).unwrap_or(0);
+            let cost = counted.reported.take().or(counted.hint.take()).unwrap_or(0);
             match counted.phase.clone() {
                 Some(phase) => {
                     counted.requests += 1;

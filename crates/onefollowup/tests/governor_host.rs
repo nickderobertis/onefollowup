@@ -22,7 +22,7 @@ use onefollowup::governor::{
 use onefollowup::store::{CommentPost, NewTask, Store};
 
 mod support;
-use support::{Killed, Participant, Simulated, T0, instant, reading, shipped};
+use support::{Killed, Participant, Simulated, T0, Virtual, instant, reading, shipped};
 
 /// GitHub's rate-limit state as ample throughout: full windows resetting on the hour, which
 /// nothing the floor or the seeded reserve holds.
@@ -910,7 +910,11 @@ fn carried_state(now: DateTime<Utc>, every: i64) -> serde_json::Value {
         let mut held = Vec::new();
         while at < last - chrono::Duration::seconds(every) {
             let to = at + chrono::Duration::seconds(every);
-            held.push(serde_json::json!({"from": format(at), "to": format(to), "spend": spend}));
+            // Each interval fell in the window of its hour, as one window at a time answered.
+            let window = instant(to.timestamp() - to.timestamp().rem_euclid(3600) + 3600);
+            held.push(serde_json::json!({
+                "from": format(at), "to": format(to), "spend": spend, "window": format(window),
+            }));
             at = to;
         }
         held
@@ -919,14 +923,14 @@ fn carried_state(now: DateTime<Utc>, every: i64) -> serde_json::Value {
     let resource = |spend: f64| {
         serde_json::json!({
             "windows": {},
-            "own": 6298.0,
+            "unread": 0.0,
             "history": history(spend),
             "request_cost": mean,
             "call_cost": [{"sum": 5319.0, "count": 1}, {"sum": 0.0, "count": 0}],
         })
     };
     serde_json::json!({
-        "schema_version": 1,
+        "schema_version": 2,
         "resources": {"graphql": resource(1.0), "core": resource(0.5)},
         "in_flight": [],
         "content_writes": [],
@@ -1025,4 +1029,267 @@ fn a_state_carried_over_from_many_earlier_windows_is_kept_to_a_bound_its_history
     }
     // The bound is the same for both, and the busier host keeps no more than it allows.
     eprintln!("kept (interval s, graphql entries, bytes): {kept:?}");
+}
+
+/// What happened on a token two windows answer, in order.
+#[derive(Debug, Clone)]
+enum Told {
+    /// A response or a reading, from window `0` (A) or `1` (B), with what it said was left.
+    Answered(usize, u64),
+    /// A request admitted, about to be sent.
+    Admitted,
+    /// A hold line.
+    Held(String),
+}
+
+/// One token answered from two GraphQL windows interleaved, as GitHub was measured answering
+/// one: `A` resetting at 1,800 s, `B` at 3,300 s, each request and each reading answered by the
+/// next window of `pattern`, round and round. Another consumer spends of both; each process's
+/// requests cost what their responses report, never their hint.
+struct TwoWindows {
+    clock: Arc<Virtual>,
+    left: Mutex<[u64; 2]>,
+    pattern: Vec<usize>,
+    turn: Mutex<usize>,
+    /// Others' spend of each window so far, and what of it the window's last reading showed.
+    others: Mutex<[u64; 2]>,
+    shown: Mutex<[u64; 2]>,
+    told: Arc<Mutex<Vec<Told>>>,
+}
+
+const RESETS: [i64; 2] = [T0 + 1800, T0 + 3300];
+
+impl TwoWindows {
+    fn new(clock: &Arc<Virtual>, left: [u64; 2], pattern: &[usize]) -> Arc<Self> {
+        Arc::new(Self {
+            clock: Arc::clone(clock),
+            left: Mutex::new(left),
+            pattern: pattern.to_vec(),
+            turn: Mutex::new(0),
+            others: Mutex::new([0, 0]),
+            shown: Mutex::new([0, 0]),
+            told: Arc::new(Mutex::new(Vec::new())),
+        })
+    }
+
+    /// A process of the host sharing `state`, its hold lines told here.
+    fn process(self: &Arc<Self>, settings: &GovernorSettings) -> Governor {
+        let told = Arc::clone(&self.told);
+        Governor::new(
+            settings.clone(),
+            self.clock.clone(),
+            self.clone(),
+            Arc::new(move |line: &str| told.lock().unwrap().push(Told::Held(line.to_owned()))),
+        )
+    }
+
+    /// The window that answers next.
+    fn next(&self) -> usize {
+        let mut turn = self.turn.lock().unwrap();
+        let window = self.pattern[*turn % self.pattern.len()];
+        *turn += 1;
+        window
+    }
+
+    /// Another consumer spends `points` of `window`.
+    fn others_spend(&self, window: usize, points: u64) {
+        self.left.lock().unwrap()[window] -= points;
+        self.others.lock().unwrap()[window] += points;
+    }
+
+    /// `window`'s reading now, which shows everything spent of it so far.
+    fn reading(&self, window: usize) -> Reading {
+        self.shown.lock().unwrap()[window] = self.others.lock().unwrap()[window];
+        let left = self.left.lock().unwrap()[window];
+        self.told.lock().unwrap().push(Told::Answered(window, left));
+        reading("graphql", left, RESETS[window])
+    }
+
+    /// One request of `governor`'s process, hinted `hint`, costing `cost` of the window that
+    /// answers it, which its response reports: whether it was held.
+    fn request(&self, governor: &Governor, hint: u64, cost: u64) -> bool {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let before = self.clock.now();
+        runtime.block_on(async {
+            governor
+                .admit_call(&["followups".to_owned()], Kind::Read)
+                .await;
+            governor
+                .before_request(&Request {
+                    resource: "graphql".to_owned(),
+                    cost_hint: Some(hint),
+                    content_creating: false,
+                })
+                .await;
+        });
+        self.told.lock().unwrap().push(Told::Admitted);
+        let held = self.clock.now() > before;
+        let window = self.next();
+        let mut left = self.left.lock().unwrap();
+        left[window] = left[window].saturating_sub(cost);
+        drop(left);
+        governor.after_response(&[self.reading(window)]);
+        governor.cost_reported("graphql", cost);
+        governor.request_ended();
+        governor.end_call();
+        held
+    }
+}
+
+impl Readings for TwoWindows {
+    fn read<'a>(&'a self, _: &'a str) -> Pending<'a, Result<Vec<Reading>, String>> {
+        let window = self.next();
+        let readings = vec![self.reading(window), reading("core", 5000, T0 + 3600)];
+        Box::pin(async move { Ok(readings) })
+    }
+}
+
+/// The host state's GraphQL resource, as written.
+fn graphql_state(state: &Path) -> serde_json::Value {
+    let written: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(state.join("followups.json")).unwrap())
+            .unwrap();
+    written["resources"]["graphql"].clone()
+}
+
+#[test]
+fn two_processes_on_one_token_book_only_each_window_s_fall_less_their_reported_costs_as_others_burn()
+ {
+    // Two processes share one host state and one token, which two windows answer in turn.
+    // Every request is hinted 16 and its response reports 3; another consumer spends 7 of A and
+    // 4 of B between requests. Whatever window answered, and whichever process read it last,
+    // each process's own spend and learned costs are the 3 points reported, and others' burn
+    // booked is exactly what the other consumer spent of each window before its last reading.
+    let state = tempfile::tempdir().unwrap();
+    let settings = GovernorSettings {
+        min_peak_per_minute: BTreeMap::new(),
+        ..sharing(state.path())
+    };
+    let clock = Virtual::at(instant(T0));
+    let token = TwoWindows::new(&clock, [4600, 4900], &[0, 1]);
+    let processes = [token.process(&settings), token.process(&settings)];
+    for at in 0..40 {
+        clock.advance(6.0);
+        token.others_spend(0, 7);
+        token.others_spend(1, 4);
+        let held = token.request(&processes[(at / 3) % 2], 16, 3);
+        assert!(
+            !held,
+            "request {at} was held, with both windows far above floor plus reserve"
+        );
+    }
+    let graphql = graphql_state(state.path());
+    let learned = &graphql["request_cost"][0];
+    assert_eq!(learned["count"], 40, "{graphql}");
+    assert_eq!(
+        learned["sum"].as_f64().unwrap(),
+        3.0 * 40.0,
+        "every learned cost is the cost reported, never a fall: {graphql}"
+    );
+    let history = graphql["history"].as_array().unwrap();
+    let booked = |window: usize| -> f64 {
+        history
+            .iter()
+            .filter(|interval| {
+                interval["window"]
+                    .as_str()
+                    .and_then(|at| DateTime::parse_from_rfc3339(at).ok())
+                    .is_some_and(|at| at.timestamp() == RESETS[window])
+            })
+            .map(|interval| interval["spend"].as_f64().unwrap())
+            .sum()
+    };
+    let shown = *token.shown.lock().unwrap();
+    // What each window's first reading already showed is no interval's: 7 of A, 4 of B.
+    assert_eq!(
+        (booked(0), booked(1)),
+        ((shown[0] - 7) as f64, (shown[1] - 4) as f64),
+        "others' burn booked is each window's own fall less the reported costs: {graphql}"
+    );
+    assert_eq!(
+        booked(0) + booked(1),
+        history
+            .iter()
+            .map(|interval| interval["spend"].as_f64().unwrap())
+            .sum::<f64>(),
+        "every interval is booked to one of the two windows"
+    );
+    assert_eq!(
+        graphql["unread"], 0.0,
+        "every own point was shown by a reading"
+    );
+    for process in &processes {
+        assert_eq!(process.report().unwrap().waits, Vec::new());
+    }
+}
+
+#[test]
+fn a_request_is_held_only_while_the_window_that_answered_leaves_no_room_for_its_own_spend() {
+    // A has room for one request of 200 over the 1,000 floor (1,300 left; no reserve), B far
+    // more. Two processes sharing the host state send six requests in turn, each reported at
+    // its hint, the windows answering readings and requests A, A, B, round and round, so A is
+    // spent and read again while B is answering too. Each request goes
+    // exactly when the window that answered last leaves its 200 above the floor — whatever the
+    // other window read — and is held exactly when that window does not.
+    let state = tempfile::tempdir().unwrap();
+    let settings = GovernorSettings {
+        min_peak_per_minute: BTreeMap::new(),
+        reserve_factor: 0.0,
+        ..sharing(state.path())
+    };
+    let clock = Virtual::at(instant(T0));
+    let token = TwoWindows::new(&clock, [1300, 4900], &[0, 0, 1]);
+    let processes = [token.process(&settings), token.process(&settings)];
+    for at in 0..6 {
+        clock.advance(31.0);
+        token.request(&processes[at % 2], 200, 200);
+    }
+    let told = token.told.lock().unwrap().clone();
+    let mut last: Option<(usize, u64)> = None;
+    let mut other: [Option<u64>; 2] = [None, None];
+    let (mut admitted_beside_a_low_window, mut holds) = (0, 0);
+    for event in &told {
+        match event {
+            Told::Answered(window, left) => {
+                last = Some((*window, *left));
+                other[*window] = Some(*left);
+            }
+            Told::Admitted => {
+                let (window, left) = last.expect("a reading before any admission");
+                assert!(
+                    left >= 1000 + 200,
+                    "admitted though the window that answered ({window}) had {left}: {told:?}"
+                );
+                if other[1 - window].is_some_and(|low| low < 1200) {
+                    admitted_beside_a_low_window += 1;
+                }
+            }
+            Told::Held(line) => {
+                let (window, left) = last.expect("a reading before any hold");
+                assert!(left < 1000 + 200, "held though {window} had {left}: {line}");
+                assert!(
+                    line.contains(&format!("remaining {left} of 5000"))
+                        && line.contains(&format!(
+                            "this request 200.0 of the window resetting {}",
+                            instant(RESETS[window])
+                                .to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+                        )),
+                    "the line names the window that answered: {line}"
+                );
+                holds += 1;
+            }
+        }
+    }
+    assert!(holds > 0, "A, once spent, held a request: {told:?}");
+    assert!(
+        admitted_beside_a_low_window > 0,
+        "a request went while B answered, A low: {told:?}"
+    );
+    let waits = processes
+        .iter()
+        .flat_map(|process| process.report().unwrap().waits)
+        .collect::<Vec<_>>();
+    assert_eq!(waits.len(), holds, "one wait a hold line: {waits:?}");
 }

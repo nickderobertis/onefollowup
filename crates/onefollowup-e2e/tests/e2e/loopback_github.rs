@@ -17,6 +17,7 @@ use std::io::{BufRead as _, BufReader, Read as _, Write as _};
 use std::net::TcpListener;
 use std::sync::{Arc, Mutex};
 
+use onetaskgraph_github_projects::graphql as documents;
 use serde_json::{Value, json};
 
 /// One GraphQL request the loopback answered: its document and variables.
@@ -234,6 +235,11 @@ fn serve(stream: std::net::TcpStream, held: &Mutex<Held>, quota: &Mutex<Quota>) 
                         rolled(&mut quota, period);
                         quota.remaining = quota.remaining.saturating_sub(points);
                     }
+                    let mut answer = answered.answer;
+                    // What GitHub says the request cost, where the document asks.
+                    if documents::without_reported_cost(&received.document).is_some() {
+                        documents::answer_reported_cost(&mut answer["data"], points);
+                    }
                     held.received.push(received);
                     held.charged.push(Charged {
                         document: answered.document,
@@ -241,7 +247,7 @@ fn serve(stream: std::net::TcpStream, held: &Mutex<Held>, quota: &Mutex<Quota>) 
                         rows: answered.rows,
                         searches: answered.searches,
                     });
-                    answered.answer
+                    answer
                 }
                 None => {
                     {

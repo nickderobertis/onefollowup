@@ -16,7 +16,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 /// The host state's one schema: a file of another is read as no history and overwritten.
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 2;
 
 /// Where this process's liveness locks live, under the state directory.
 const PROCESSES: &str = "processes";

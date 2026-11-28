@@ -337,7 +337,12 @@ pub fn carry_governor_state(state_home: &std::path::Path, every: i64) -> u64 {
         let mut held = Vec::new();
         while at < last - chrono::Duration::seconds(every) {
             let to = at + chrono::Duration::seconds(every);
-            held.push(json!({"from": format(at), "to": format(to), "spend": spend}));
+            // Each interval fell in the window of its hour, as one window at a time answered.
+            let reset = to.timestamp() - to.timestamp().rem_euclid(3600) + 3600;
+            let window = chrono::DateTime::from_timestamp(reset, 0).expect("an instant");
+            held.push(json!({
+                "from": format(at), "to": format(to), "spend": spend, "window": format(window),
+            }));
             at = to;
         }
         held
@@ -346,14 +351,14 @@ pub fn carry_governor_state(state_home: &std::path::Path, every: i64) -> u64 {
     let resource = |spend: f64| {
         json!({
             "windows": {},
-            "own": 6298.0,
+            "unread": 0.0,
             "history": history(spend),
             "request_cost": mean,
             "call_cost": [{"sum": 5319.0, "count": 1}, {"sum": 0.0, "count": 0}],
         })
     };
     let state = json!({
-        "schema_version": 1,
+        "schema_version": 2,
         "resources": {"graphql": resource(1.0), "core": resource(0.5)},
         "in_flight": [],
         "content_writes": [],
@@ -668,6 +673,7 @@ fn a_50_draft_prepare_searches_each_draft_where_it_lands_and_records_its_points_
         detail("kept-hit detail read").starts_with(&format!("{items} items (")),
         "{stderr}"
     );
+    let mut ticked = 0;
     for (phase, (sent, _)) in &said.finished {
         let ticks: Vec<u64> = said
             .progress
@@ -679,7 +685,9 @@ fn a_50_draft_prepare_searches_each_draft_where_it_lands_and_records_its_points_
             ticks, expected,
             "{phase}: a line every 20 requests: {stderr}"
         );
+        ticked += ticks.len();
     }
+    assert!(ticked >= 1, "a phase sent 20 requests or more: {stderr}");
     let (said_requests, said_points) = said
         .finished
         .values()

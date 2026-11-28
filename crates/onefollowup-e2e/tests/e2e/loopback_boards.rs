@@ -1,8 +1,9 @@
 //! Generated GitHub Projects boards the loopback answers from: board-scoped issue searches,
 //! one at a time (`SEARCH_ISSUES`) or batched (`SEARCH_BATCH`), issue reads by node id
 //! (`ISSUE_DETAILS`, `ISSUE_DETAIL`) and their relations (`ISSUE_RELATIONS`, every issue
-//! without sub-issues), each answer shaped as onetaskgraph 0.17.2's documents select it, and
-//! each request priced by [`crate::graphql_cost`].
+//! without sub-issues), each answer shaped as onetaskgraph 0.17.3's documents select it — a
+//! batched search's rows its scalar fields alone, every read's own `actualCost` beside what it
+//! asked — and each request priced by [`crate::graphql_cost`].
 //!
 //! Search follows GitHub's own rules as far as the walk needs them: the `project:<owner>/<n>`
 //! and `is:` qualifiers scope it, `in:title`, `in:body` or `in:title,body` pick the fields, each
@@ -319,24 +320,84 @@ fn childless(boards: &[Board], id: &str) -> Option<Value> {
     })
 }
 
-/// One page of `search`, after the cursor `after`, of `first` rows: its connection, and the
-/// rows it holds.
-fn page(boards: &[Board], text: &str, first: u64, after: &Value) -> (Value, u64) {
+/// `issue` as one row of a batched search slot selects it: its scalar fields alone.
+fn hit(issue: &BoardIssue) -> Value {
+    json!({
+        "__typename": "Issue",
+        "id": issue.id,
+        "number": issue.number,
+        "title": issue.title,
+        "state": if issue.open { "OPEN" } else { "CLOSED" },
+        "updatedAt": "2026-10-01T00:00:00Z",
+        "repository": {"nameWithOwner": issue.repository},
+    })
+}
+
+const BASE64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+/// A search cursor as GitHub spells one: `cursor:<rows so far>`, base64-encoded.
+pub fn cursor(at: usize) -> String {
+    let bytes = format!("cursor:{at}").into_bytes();
+    let mut out = String::new();
+    for chunk in bytes.chunks(3) {
+        let word = chunk.iter().enumerate().fold(0_u32, |word, (at, byte)| {
+            word | u32::from(*byte) << (16 - 8 * at)
+        });
+        for at in 0..4 {
+            if at <= chunk.len() {
+                out.push(char::from(BASE64[(word >> (18 - 6 * at) & 63) as usize]));
+            } else {
+                out.push('=');
+            }
+        }
+    }
+    out
+}
+
+/// The rows before the cursor `after` names, as [`cursor`] spells it.
+pub fn offset_of(after: &Value) -> usize {
+    let Some(text) = after.as_str() else {
+        return 0;
+    };
+    let mut bytes = Vec::new();
+    let (mut word, mut bits) = (0_u32, 0);
+    for one in text.bytes().take_while(|one| *one != b'=') {
+        let Some(value) = BASE64.iter().position(|known| *known == one) else {
+            return 0;
+        };
+        word = word << 6 | value as u32;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            bytes.push((word >> bits & 255) as u8);
+        }
+    }
+    String::from_utf8(bytes)
+        .ok()
+        .and_then(|text| text.strip_prefix("cursor:")?.parse().ok())
+        .unwrap_or(0)
+}
+
+/// One page of `search`, after the cursor `after`, of `first` rows, each row as `row` shapes
+/// it: its connection, and the rows it holds.
+fn page(
+    boards: &[Board],
+    text: &str,
+    first: u64,
+    after: &Value,
+    row: fn(&Board, &BoardIssue) -> Value,
+) -> (Value, u64) {
     let found = search(boards, text);
     let query = parse_search(text);
     let board = boards
         .iter()
         .find(|board| board.owner == query.owner && board.number == query.number);
-    let offset = after
-        .as_str()
-        .and_then(|cursor| cursor.strip_prefix("cursor:"))
-        .and_then(|at| at.parse::<usize>().ok())
-        .unwrap_or(0);
+    let offset = offset_of(after);
     let end = (offset + usize::try_from(first).unwrap_or(0)).min(found.len());
     let nodes: Vec<Value> = match board {
         Some(board) => found[offset.min(end)..end]
             .iter()
-            .map(|at| node(board, &board.issues[*at]))
+            .map(|at| row(board, &board.issues[*at]))
             .collect(),
         None => Vec::new(),
     };
@@ -344,7 +405,7 @@ fn page(boards: &[Board], text: &str, first: u64, after: &Value) -> (Value, u64)
     let more = end < found.len();
     (
         json!({
-            "pageInfo": {"hasNextPage": more, "endCursor": if more { json!(format!("cursor:{end}")) } else { Value::Null }},
+            "pageInfo": {"hasNextPage": more, "endCursor": if end > 0 { json!(cursor(end)) } else { Value::Null }},
             "nodes": nodes,
         }),
         rows,
@@ -361,8 +422,11 @@ pub struct Answered {
     pub searches: Vec<String>,
 }
 
-/// The name onetaskgraph gives `document`, or a prefix of it.
-fn name_of(document: &str) -> String {
+/// The name onetaskgraph gives `document` — as it was written, without the `actualCost` every
+/// read it sends selects — or a prefix of it.
+pub fn name_of(document: &str) -> String {
+    let written = documents::without_reported_cost(document);
+    let document = written.as_deref().unwrap_or(document);
     for (name, known) in [
         ("SEARCH_BATCH", documents::SEARCH_BATCH),
         ("SEARCH_ISSUES", documents::SEARCH_ISSUES),
@@ -400,6 +464,7 @@ pub fn answer(boards: &[Board], received: &Received) -> Answered {
                     text,
                     variables[format!("first{slot}")].as_u64().unwrap_or(0),
                     &variables[format!("after{slot}")],
+                    |_, issue| hit(issue),
                 );
                 rows += held;
                 result.insert(format!("s{slot}"), connection);
@@ -420,6 +485,7 @@ pub fn answer(boards: &[Board], received: &Received) -> Answered {
                 variables["search"].as_str().unwrap_or_default(),
                 variables["first"].as_u64().unwrap_or(0),
                 &variables["after"],
+                node,
             );
             rows = held;
             json!({"search": connection})

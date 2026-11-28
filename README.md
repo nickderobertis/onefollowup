@@ -824,29 +824,40 @@ nothing — local-md, a stdio peer without `quota` — is never held.
   has been admitted at — never a whole earlier call's spend, which no window might leave room
   for. It only ever waits, never refuses: a batch it paces completes, however long it takes. No
   verb knows it is there.
-- **The line.** For each resource (`graphql`, `core`, …) and each rate-limit window of it that
-  has not reset, a request estimated to cost `c` goes at once while
-  `remaining - own spend since that reading - c >= floor + reserve`. The floor is
-  `floor_percent` of the window's limit; the reserve is others' peak burn rate × the seconds
-  until that window resets × `reserve_factor`, so it shrinks to nothing as the reset nears and
-  a pass may then spend down to the floor. A request's cost is the destination's hint when it
-  gives one, else the mean cost observed of a read or a write on that resource (1 before any).
+- **The line.** For each resource (`graphql`, `core`, …), against the window of it that
+  answered last, a request estimated to cost `c` goes at once while
+  `remaining - own spend no reading has shown - c >= floor + reserve`. Own spend no reading
+  has shown is every onefollowup process's requests in flight and any answered with no reading
+  of that resource. The floor is `floor_percent` of the window's limit; the reserve is others'
+  peak burn rate × the seconds until that window resets × `reserve_factor`, so it shrinks to
+  nothing as the reset nears and a pass may then spend down to the floor. A request's cost is
+  the destination's hint when it gives one, else the mean cost its responses reported of a read
+  or a write on that resource (1 before any).
 - **Windows.** One token can be answered from two windows of one resource, each with its own
-  reset, and `GET /rate_limit` now and then reports the other's figures. Readings are kept per
-  window: admission is against the least of the windows not yet past their reset, and a
-  remaining that rises inside one window before its reset is ignored.
-- **Others' burn.** The fall in remaining between two readings of one window, less
-  onefollowup's own spend in between, over the interval. The reserve uses the peak over any
-  `peak_window_seconds` within the last `burn_history_seconds`, never less than
+  reset and its own remaining, interleaved request by request; `GET /rate_limit` reports
+  whichever answers it. Every reading, fall and hold is kept to the window that answered
+  (resource and reset): admission is against the live window that answered last, and no
+  reading of one window decides a hold on another. A remaining that rises inside one window
+  before its reset is ignored.
+- **Own spend.** What each request's response said that very request cost — GitHub's
+  `rateLimit { cost }`, which onetaskgraph reads on every GraphQL read it sends — else what it
+  was admitted at. A REST read, `GET /rate_limit` among them, spends no GraphQL points. Each
+  phase's progress lines count the same: the points of a request are its reported cost, else
+  its hint.
+- **Others' burn.** The fall in remaining between two readings of one window, less the cost
+  reported by the response carrying the later one and less own spend no reading showed in
+  between, over the interval, kept window by window. The reserve uses the peak in any one
+  window over any `peak_window_seconds` within the last `burn_history_seconds`, never less than
   `min_peak_per_minute` — 40 GraphQL and 60 core points a minute, just above the 5-minute peaks
   measured on the shared token (35.6 and 57.1) — so a fresh process is protected before it has
   measured anything, and a quiet hour cannot shrink the reserve to nothing.
 - **Waiting.** A held request prints one line on standard error naming the destination, the
-  resource, the remaining, the floor and reserve, others' mean and peak burn and the expected
-  resume, then re-reads every 30 seconds — that read itself passing the gate — and goes as soon
-  as a reading admits it, or the window resets.
-- **What it guarantees.** Each request is admitted only against the latest reading, less
-  onefollowup's own spend since. One process has at most one metered request in flight, even
+  resource, the remaining, the floor and reserve, the request's own estimated cost and the
+  window (by its reset) that held it, others' mean and peak burn and the expected resume, then
+  re-reads every 30 seconds — that read itself passing the gate — and goes as soon as a reading
+  admits it, or the window resets.
+- **What it guarantees.** Each request is admitted only against the latest reading of the
+  window that answered last, less onefollowup's own spend no reading has shown. One process has at most one metered request in flight, even
   where a destination sends several at once: the next waits for its response's reading, or
   for its store call to end when the response carried none. Every process on the host admits
   against the one host state, which counts every process's cost in flight. So onefollowup's own
@@ -866,14 +877,15 @@ nothing — local-md, a stdio peer without `quota` — is never held.
   order, and each call's first content-creating request is admitted only with room for all of
   them and counts all of them. A call refused after an earlier one of the same batch wrote
   answers each of its items as failed with that refusal.
-- **One state per host.** What the governor learns of a backend kind — its windows, the spend
-  every process was admitted and the cost still in flight, others' burn history, observed
+- **One state per host.** What the governor learns of a backend kind — its windows, the own
+  spend no reading has shown and the cost still in flight, others' burn history, reported
   costs and the content-write window — is one state in `state_dir`, one file per backend kind
   (`<kind>.json`, written by nothing but the governor, under a lock beside it), so every
   destination of one kind and every onefollowup process on the host, whatever its work
   directory, share it, and a fresh process starts from the burn estimate others learned.
-  Others' burn older than one `peak_window_seconds` is folded into one interval per fifth of
-  it, so the state holds at most one interval per bucket of `burn_history_seconds` however many
+  Others' burn older than one `peak_window_seconds` is folded into one interval per window per
+  fifth of it, so the state holds at most one interval per window a bucket of
+  `burn_history_seconds` answered from, however many
   requests earlier windows made, and a request's bookkeeping costs the same on a host that has
   run for a day as on a fresh one. A
   missing, unreadable or other-schema state is no history, never a refusal; the cost in flight

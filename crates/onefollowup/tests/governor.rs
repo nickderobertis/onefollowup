@@ -124,7 +124,7 @@ fn when_the_reserve_is_not_covered_a_request_waits_says_so_and_resumes_at_the_re
     assert_eq!(notices.len(), 1, "one line per wait: {notices:?}");
     assert_eq!(
         notices[0],
-        "onefollowup: holding requests to followups on graphql: remaining 1300 of 5000, floor 1000, reserve 400; others burn 0.0/min mean, 40.0/min peak; resuming by 2026-11-22T00:02:31Z"
+        "onefollowup: holding requests to followups on graphql: remaining 1300 of 5000, floor 1000, reserve 400; this request 1.0 of the window resetting 2026-11-22T00:10:00Z; others burn 0.0/min mean, 40.0/min peak; resuming by 2026-11-22T00:02:31Z"
     );
     // It read at the start, before refusing, then every 30 s while held: the admitting
     // reading is the last.
@@ -264,7 +264,7 @@ fn as_the_reset_nears_the_reserve_shrinks_and_spending_is_allowed_down_to_the_fl
 }
 
 #[test]
-fn two_windows_of_one_resource_answering_in_turn_admit_only_against_the_lower_until_its_reset() {
+fn two_windows_of_one_resource_answering_in_turn_each_decide_only_while_they_answer() {
     // Window A (at the floor, resets at 120 s) and window B (4800 left, resets in an hour)
     // answer in turn, as GitHub was measured answering one token.
     let harness = Harness::new(shipped(), instant(T0), |at| {
@@ -276,20 +276,30 @@ fn two_windows_of_one_resource_answering_in_turn_admit_only_against_the_lower_un
         };
         vec![graphql, reading("core", 5000, T0 + 3600)]
     });
-    // At 0 s A answers; B's reading at 30 s, with far more left, admits nothing A refuses:
-    // held until A resets at 120 s.
+    // At 0 s A answers, at the floor: held. B answers the refresh at 30 s with far above floor
+    // plus reserve, and it is B's reading that decides: the request goes then, A still live.
     let waited = harness.request(Kind::Read, "graphql", Some(1));
-    assert_eq!(waited, 120.0);
+    assert_eq!(waited, 30.0);
     assert_eq!(harness.waits()[0].reason, Reason::Floor);
-    // After A's reset only B is live, and admits at once.
+    assert!(
+        harness.notices()[0].contains("remaining 1000 of 5000")
+            && harness.notices()[0].contains("of the window resetting 2026-11-22T00:02:00Z"),
+        "{:?}",
+        harness.notices()
+    );
+    // B answered last, so the next request goes at once, whatever A last read.
+    harness.respond(&[reading("graphql", 4799, T0 + 3600)]);
     harness.end();
     assert_eq!(harness.request(Kind::Read, "graphql", Some(1)), 0.0);
+    assert_eq!(harness.waits().len(), 1);
 }
 
 #[test]
-fn a_rate_limit_reading_of_another_window_with_more_left_admits_nothing_the_lower_window_refuses() {
+fn a_rate_limit_reading_of_another_window_with_more_left_releases_what_the_lower_window_held() {
     // The lower window comes from a response's headers; GET /rate_limit then reports another
-    // window with more left, as it did 1 read in 121 and 1 in 23 on the traces.
+    // window with more left, as it did 1 read in 121 and 1 in 23 on the traces. The lower
+    // window holds the request while it is the one that answered last; the refresh that
+    // answers from the other window releases it, and no reading of one decides the other.
     let harness = Harness::new(shipped(), instant(T0), |_| {
         vec![
             reading("graphql", 4900, T0 + 3000),
@@ -300,11 +310,38 @@ fn a_rate_limit_reading_of_another_window_with_more_left_admits_nothing_the_lowe
     harness.respond(&[reading("graphql", 1050, T0 + 300)]);
     harness.end();
     let waited = harness.request(Kind::Read, "graphql", Some(1));
-    assert!(
-        waited >= 30.0,
-        "held, though every refresh reads 4900: {waited}"
-    );
+    assert_eq!(waited, 30.0, "held on 1050 until the refresh read 4900");
     assert!(harness.notices()[0].contains("remaining 1050 of 5000"));
+}
+
+#[test]
+fn a_request_goes_at_once_while_the_window_that_answered_admits_it_whatever_the_other_reads() {
+    // A low window (1010 left: under floor plus any reserve) and a high one (4800) both live;
+    // whichever answered last decides, and only that one.
+    let harness = Harness::new(shipped(), instant(T0), |_| {
+        vec![
+            reading("graphql", 4800, T0 + 3000),
+            reading("core", 5000, T0 + 3600),
+        ]
+    });
+    assert_eq!(harness.request(Kind::Read, "graphql", Some(1)), 0.0);
+    harness.respond(&[reading("graphql", 1010, T0 + 600)]);
+    assert_eq!(
+        harness.request(Kind::Read, "graphql", Some(1)),
+        30.0,
+        "the low window answered last"
+    );
+    harness.respond(&[reading("graphql", 4790, T0 + 3000)]);
+    for _ in 0..5 {
+        assert_eq!(
+            harness.request(Kind::Read, "graphql", Some(3)),
+            0.0,
+            "the high window answered last, the low one still live at 1010"
+        );
+        harness.respond(&[reading("graphql", 4780, T0 + 3000)]);
+    }
+    harness.end();
+    assert_eq!(harness.waits().len(), 1, "{:?}", harness.waits());
 }
 
 #[test]
@@ -427,7 +464,7 @@ fn a_fresh_process_with_no_history_reserves_from_the_seeded_peaks() {
     assert!(graphql.request(Kind::Read, "graphql", Some(1)) > 0.0);
     assert_eq!(
         graphql.notices()[0],
-        "onefollowup: holding requests to followups on graphql: remaining 1500 of 5000, floor 1000, reserve 600; others burn 0.0/min mean, 40.0/min peak; resuming by 2026-11-22T00:02:31Z"
+        "onefollowup: holding requests to followups on graphql: remaining 1500 of 5000, floor 1000, reserve 600; this request 1.0 of the window resetting 2026-11-22T00:15:00Z; others burn 0.0/min mean, 40.0/min peak; resuming by 2026-11-22T00:02:31Z"
     );
     let core = Harness::new(shipped(), instant(T0), |_| {
         vec![
@@ -437,7 +474,7 @@ fn a_fresh_process_with_no_history_reserves_from_the_seeded_peaks() {
     });
     assert!(core.request(Kind::Read, "core", Some(1)) > 0.0);
     assert!(
-        core.notices()[0].contains("on core: remaining 1500 of 5000, floor 1000, reserve 900; others burn 0.0/min mean, 60.0/min peak"),
+        core.notices()[0].contains("on core: remaining 1500 of 5000, floor 1000, reserve 900; this request 1.0 of the window resetting 2026-11-22T00:15:00Z; others burn 0.0/min mean, 60.0/min peak"),
         "{:?}",
         core.notices()
     );

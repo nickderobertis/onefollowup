@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.1](https://github.com/nickderobertis/onefollowup/compare/v0.14.0...v0.14.1) - 2026-11-28
+
+### Fixed
+
+- *(deps)* link onetaskgraph 0.17.2, the release carrying nested Linear collapsible sections ([#97](https://github.com/nickderobertis/onefollowup/pull/97))
+
 ## [0.14.0](https://github.com/nickderobertis/onefollowup/compare/v0.13.4...v0.14.0) - 2026-11-27
 
 ### Added

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.0](https://github.com/nickderobertis/onefollowup/compare/v0.14.1...v0.15.0) - 2026-11-28
+
+### Added
+
+- *(prepare)* spend, count and wait for only prepare's own duplicate search on the real board ([#100](https://github.com/nickderobertis/onefollowup/pull/100))
+
 ## [0.14.1](https://github.com/nickderobertis/onefollowup/compare/v0.14.0...v0.14.1) - 2026-11-28
 
 ### Fixed

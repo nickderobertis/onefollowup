@@ -109,7 +109,10 @@ def percentiles(values: list[int]) -> dict:
     values = sorted(values)
     if not values:
         return {}
-    at = lambda q: values[min(len(values) - 1, int(q * len(values)))]  # noqa: E731
+
+    def at(q: float) -> int:
+        return values[min(len(values) - 1, int(q * len(values)))]
+
     return {
         "n": len(values),
         "min": values[0],

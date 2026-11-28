@@ -176,7 +176,10 @@ def per_draft(run: str) -> dict:
     requests = requests_of(run)
     answers = {one["seq"]: one["answer"] for one in analyze.load_jsonl(directory / "responses.jsonl.gz")}
     prepared = json.loads((directory / "prepare.stdout.json").read_text())
-    full = lambda text: f'project:nickderobertis/3 is:issue in:title,body "{text}"'  # noqa: E731
+
+    def full(text: str) -> str:
+        return f'project:nickderobertis/3 is:issue in:title,body "{text}"'
+
     askers: dict[str, list[str]] = defaultdict(list)
     everyone = [search["input"] for search in prepared["duplicate_searches"]]
     for search in prepared["duplicate_searches"]:
